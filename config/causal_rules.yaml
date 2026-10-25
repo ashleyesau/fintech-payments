@@ -1,29 +1,64 @@
 # Causal rules parameters.
-# Phase 4 and Phase 5 will consume these values.
-# Thresholds and deltas are from the Causal Dependency Rules doc.
+# Source: Causal Dependency Rules (Chains 2 to 5). Phase 4 and Phase 5 consume these values.
+# Where a value is not specified in that document it is marked as such.
 
-# Chain 2: merchant state transition thresholds
+# Chain 2: merchant health state
 state_transitions:
-  # Minimum trading days before state evaluation begins.
+  # Trading days required before any transition is evaluated.
   min_trading_days: 30
-  # new -> growing: MoM GPV growth >= threshold
-  new_to_growing_gpv_growth: 0.15
-  # growing -> stable: consecutive months in growing state
-  growing_to_stable_months: 3
-  # stable/growing -> stressed: 30-day GPV decline vs prior 30-day window
-  to_stressed_gpv_decline: 0.20
-  # stressed -> delinquent: days in stressed state
-  stressed_to_delinquent_days: 30
-  # delinquent -> churned: days in delinquent state without recovery
-  delinquent_to_churned_days: 60
+
+  # Multiplier fed back into Chain 1 event intensity.
+  stress_modifier:
+    new: 1.00
+    growing: 1.05
+    stable: 1.00
+    stressed: 0.80
+    delinquent: 0.60
+    churned: 0.00
+
+  # GPV thresholds, as fractions.
+  growth_threshold: 0.10            # gpv_mom_growth >= this counts as growing
+  stable_band: 0.10                 # +/- this around zero counts as flat
+  stressed_gpv_60d_decline: 0.20
+  delinquent_gpv_60d_decline: 0.40
+  stressed_recovery_band: 0.10      # within this of the prior 60-day baseline
+  churn_no_txn_days: 30
+  reactivation_min_months: 6
+
+  # Evaluated once per day; one transition per cycle.
+  # Priority when several conditions hold: churned > delinquent > stressed > growing > stable.
+  priority: [churned, delinquent, stressed, growing, stable]
+
+  # Consecutive months required before a transition condition is met.
+  growing_to_stable_months: 2       # gpv_mom_growth < growth_threshold
+  stable_to_growing_months: 2       # gpv_mom_growth >= growth_threshold
+
+  # Probability that a met condition produces the transition.
+  probabilities:
+    new_to_growing: 0.80            # months_on_platform >= 1
+    new_to_stable: 0.70             # months_on_platform >= 3, growth inside stable_band
+    growing_to_stable: 0.65
+    growing_to_stressed: 0.60
+    stable_to_growing: 0.75
+    stable_to_stressed: 0.65
+    stressed_to_delinquent_gpv: 0.70
+    stressed_to_delinquent_missed_repayment: 0.90
+    stressed_to_stable: 0.50
+    delinquent_to_churned: 0.85
 
 # Chain 3: lending eligibility gates
 lending_eligibility:
   min_months_on_platform: 3
-  min_gpv_90d_minor: 1500000  # R15,000 in cents
+  min_gpv_90d_minor: 1500000        # R15,000 in cents
   eligible_states: [growing, stable]
 
-# Chain 3: loan approval decision bands (risk score at application time)
+# Chain 3: monthly application probability for eligible merchants
+application_propensity:
+  growing: 0.08
+  stable: 0.04
+  prior_loan_repaid_multiplier: 2.0
+
+# Chain 3 and 4: loan approval decision bands (risk score at application time)
 loan_approval:
   # 0-30: approved (automated)
   auto_approve_max: 30
@@ -42,31 +77,80 @@ debicheck:
   first_strike_base_success_rate: 0.77
   max_retries: 3
   retry_window_days: 10
-  # State modifiers applied to first_strike_base_success_rate
+  # Multiplier on first_strike_base_success_rate by merchant state at the due date.
+  # New and churned are not specified: loans require growing or stable at
+  # application, and a churned merchant is forced to miss (see forced_missed).
   state_modifiers:
-    new: 0.90
-    growing: 1.00
-    stable: 1.05
-    stressed: 0.65
+    growing: 1.10
+    stable: 1.00
+    stressed: 0.70
     delinquent: 0.40
-    churned: 0.20
+
+# Chain 3: forced missed-repayment triggers, independent of the DebiCheck draw.
+forced_missed:
+  gpv_30d_decline_from_disbursement: 0.50
+  gpv_decline_p_increment: 0.30
+  delinquent_p_increment: 0.50
+  churned_p: 1.00
+
+# Chain 4: DPD migration. Monthly transition probabilities by bucket.
+dpd:
+  write_off_dpd: 150
+  transition_matrix:
+    current:  {current: 0.94, dpd_1_30: 0.06}
+    dpd_1_30: {current: 0.40, dpd_1_30: 0.30, dpd_31_60: 0.30}
+    dpd_31_60: {current: 0.15, dpd_31_60: 0.25, dpd_61_90: 0.60}
+    dpd_61_90: {current: 0.05, dpd_61_90: 0.15, dpd_90_plus: 0.80}
+    dpd_90_plus: {dpd_61_90: 0.03, dpd_90_plus: 0.94, write_off: 0.03}
+  # Stress scenario override.
+  stress_roll_forward_multiplier: 1.4
+  stress_cure_multiplier: 0.7
 
 # Chain 4: risk score deltas and decay
 risk_score:
   permanent_floor_written_off: 80
-  daily_decay: 1  # points recovered per day with no adverse events
-  # Deltas applied by event type
   deltas:
-    refund_spike: 15
-    velocity_breach: 12
-    chargeback_accumulation: 20
-    scheme_warning: 8
-    large_txn_flag: 5
-    otp_abuse: 10
+    repayment_successful: -2
+    repayment_missed_nsf: 8
+    repayment_disputed_md06: 15
+    dpd_bucket_increase: 10         # per bucket
+    dpd_bucket_cure: -5             # per bucket recovered
+    loan_repaid_in_full: -10
+    write_off: 50
+    three_consecutive_successful: -5  # additional to the per-repayment delta
+  decay:
+    # Applied once per period with no adverse events. Floor is 0.
+    period_days: 30
+    points_per_period: 1
+    # After this many consecutive days without adverse events, points_per_period is replaced.
+    sustained_good_days: 90
+    sustained_points_per_period: 3
+    # Written-off merchants do not decay below permanent_floor_written_off.
 
-# Chain 5: fraud trigger thresholds
-fraud_thresholds:
-  refund_spike_rate: 0.15          # refunds / completions in rolling 7 days
-  velocity_breach_count_1h: 50     # transactions in a 1-hour window
-  chargeback_accumulation_rate: 0.05  # chargebacks / completions in rolling 30 days
-  large_txn_zar: 50000             # single transaction >= R500 (50000 cents)
+# Chain 5: fraud triggers. Each fires a risk_events row and applies the delta.
+fraud_triggers:
+  refund_spike:
+    refund_rate_7d_multiple_of_baseline: 3.0
+    risk_score_delta: 10
+  velocity_breach:
+    sigma_above_archetype_mean: 3.0   # tx_count_1h > mean + 3 sigma
+    risk_score_delta: 12
+  chargeback_accumulation:
+    chargeback_count_90d: 3
+    risk_score_delta: 20
+  scheme_warning:
+    vamp_ratio: 0.015
+    risk_score_delta: 25
+  large_txn_flag:
+    multiple_of_archetype_mean_ticket: 5.0
+    risk_score_delta: 5
+  otp_abuse:
+    otp_failures_session: 3
+    risk_score_delta: 8
+
+# Chain 5: escalation after a refund spike.
+fraud_escalation:
+  manual_review_risk_score_above: 55
+  chargeback_followup_days: 30
+  chargeback_followup_delta: 20
+  stable_to_stressed_on_followup: true

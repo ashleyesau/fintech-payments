@@ -1,12 +1,12 @@
 # fintech-payments
 
-A synthetic-data platform for an SA SME fintech: merchant acquiring (card + instant EFT) and merchant cash advance. Generates stateful, causally coherent event data written to a local Postgres OLTP store, ready for a CDC pipeline downstream.
+A synthetic-data platform for an SA SME fintech: merchant acquiring (card + instant EFT) and term lending with DebiCheck collection. Generates stateful, causally coherent event data written to a local Postgres OLTP store, ready for a CDC pipeline downstream.
 
 ## What this demonstrates
 
 - Stateful event simulation with realistic merchant lifecycle, seasonal patterns, and causal cross-stream dependencies (payments, lending, risk)
 - Postgres as an OLTP source of truth with `wal_level=logical`, ready for CDC in V2
-- Pydantic-validated event schemas matching the [Event Schemas](https://www.notion.so/SA-Fintech-Project-Recon-35e86c781f668045b701e10a0e7bf089) contract
+- Pydantic-validated event schemas across five streams: `merchants`, `merchant_transactions`, `loan_applications`, `loan_repayments`, `risk_events`
 - Two generator modes: **backfill** (full date range as fast as possible) and **streaming** (real-time pace)
 
 ## Stack
@@ -46,7 +46,3 @@ migrations/         Postgres DDL (Phase 1)
 .github/workflows/  CI
 docker-compose.yml  Local Postgres stack
 ```
-
-## Documentation
-
-Full design lives in Notion: [SA Fintech Project Recon](https://www.notion.so/SA-Fintech-Project-Recon-35e86c781f668045b701e10a0e7bf089)

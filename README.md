@@ -23,17 +23,21 @@ A synthetic-data platform for an SA SME fintech: merchant acquiring (card + inst
 ## Quick start
 
 ```bash
-# 1. Start Postgres
-docker-compose up -d
+# 1. Start Postgres (Docker Desktop must be running)
+docker compose up -d
 
 # 2. Set up Python environment
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt
+cp .env.example .env
 
-# 3. Run schema migration (Phase 1)
-# psql -h localhost -U sim -d fintech -f migrations/001_initial_schema.sql
+# 3. Apply the schema migration (first time only)
+docker exec -i fintech_pg psql -U sim -d fintech < migrations/001_initial_schema.sql
 
-# 4. Run backfill (Phase 7)
+# 4. Run tests (DB tests are skipped if Postgres is not running)
+pytest tests/ -v
+
+# 5. Run backfill (Phase 7, not implemented yet)
 # python -m simulator.main --mode backfill --start-date 2025-01-01 --end-date 2026-01-01
 ```
 
@@ -41,8 +45,8 @@ pip install -r requirements.txt
 
 ```
 simulator/          Core simulation modules
-tests/              Schema compliance and reconciliation tests
-migrations/         Postgres DDL (Phase 1)
-.github/workflows/  CI
+config/             YAML calibration, archetypes, fees and causal rules
+tests/              Schema, calendar, config and DB tests
+migrations/         Postgres DDL
 docker-compose.yml  Local Postgres stack
 ```

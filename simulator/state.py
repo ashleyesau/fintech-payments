@@ -1,8 +1,8 @@
 """
-state.py — Stateful domain objects: Merchant, Loan, DebitMandate.
+state.py: Stateful domain objects: Merchant, Loan, DebitMandate.
 
 These classes hold the in-memory state that evolves across simulated days.
-State is never read from Postgres during a run — it lives here and is
+State is never read from Postgres during a run; it lives here and is
 checkpointed to disk at the end of each session.
 
 Phase 4 work: implement the full Chain 2 state machine (GPV-based transitions),
@@ -79,7 +79,7 @@ class Loan:
 
 
 # ---------------------------------------------------------------------------
-# Checkpoint helpers — Phase 7 will implement full serialisation
+# Checkpoint helpers: Phase 7 will implement full serialisation
 # ---------------------------------------------------------------------------
 
 def save_checkpoint(merchants: list[Merchant], path: str = "checkpoint.json") -> None:

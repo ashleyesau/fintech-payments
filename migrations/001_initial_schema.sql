@@ -13,7 +13,7 @@
 --   - wal_level=logical set in docker-compose.yml
 
 -- ---------------------------------------------------------------------------
--- 1. merchants (dimension snapshot — emitted daily by the generator)
+-- 1. merchants (dimension snapshot, emitted daily by the generator)
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS merchants (

@@ -1,5 +1,5 @@
 """
-risk.py — Fraud and risk rule evaluation.
+risk.py: Fraud and risk rule evaluation.
 
 Evaluates Chain 5 of the causal dependency rules: detects transaction
 anomalies (refund spikes, velocity breaches, chargeback accumulation),

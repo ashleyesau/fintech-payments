@@ -1,5 +1,5 @@
 """
-test_schema.py — Schema compliance tests.
+test_schema.py: Schema compliance tests.
 
 Validates that generated event dicts conform to the Pydantic models and
 the Event Schemas contract. Phase 8 work: flesh these out once the Pydantic

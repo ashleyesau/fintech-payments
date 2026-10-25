@@ -1,5 +1,5 @@
 """
-payout.py — Settlement and payout scheduling logic.
+payout.py: Settlement and payout scheduling logic.
 
 Calculates settlement_date for each completed transaction (T+1 or T+2 for
 card, same-day for instant EFT) and groups transactions into settlement
@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date
 
 
-# SA public holidays (static list — extend as needed)
+# SA public holidays (static list, extend as needed)
 SA_PUBLIC_HOLIDAYS_2025_2026: set[date] = {
     date(2025, 1, 1),   # New Year's Day
     date(2025, 3, 21),  # Human Rights Day
@@ -39,7 +39,7 @@ def settlement_date(completed_at: date, channel: str) -> date:
     - instant_eft / payshap: same day
     - card_present / card_ecom / payment_link: T+1 business day (T+2 for ecom)
 
-    Phase 5 implementation — currently returns a placeholder.
+    Phase 5 implementation: currently returns a placeholder.
     """
     raise NotImplementedError("Phase 5")
 

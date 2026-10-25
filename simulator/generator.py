@@ -1,10 +1,10 @@
 """
-generator.py — Core event generation functions.
+generator.py: Core event generation functions.
 
 simulate_day() is the main entry point: given a merchant and a calendar date,
 it returns the list of events that merchant would generate on that day.
 
-Phase 5 work: implement the full event generation logic — channel-dependent
+Phase 5 work: implement the full event generation logic: channel-dependent
 state machines, fee calculation from the SARB interchange schedule, loan
 application propensity, DebiCheck repayment attempts.
 """

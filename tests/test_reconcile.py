@@ -1,5 +1,5 @@
 """
-test_reconcile.py — Reconciliation and business-logic tests.
+test_reconcile.py: Reconciliation and business-logic tests.
 
 Covers the seven explicit failure modes from the Simulation Validation Targets:
   - Modifier stacking spikes

@@ -1,9 +1,9 @@
 """
-config.py — Simulation parameters, archetype definitions, and feature flags.
+config.py: Simulation parameters, archetype definitions, and feature flags.
 
 Loaded once at startup. All tuneable values live here so scenario changes
 (different archetype mix, simulation duration, peak-day overrides) never
-require code changes — only a config edit or env-var override.
+require code changes: only a config edit or env-var override.
 
 Phase 2 work: populate with real archetype parameters from the design docs.
 """

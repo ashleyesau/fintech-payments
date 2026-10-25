@@ -1,5 +1,5 @@
 """
-archetypes.py — Merchant archetype definitions and base parameters.
+archetypes.py: Merchant archetype definitions and base parameters.
 
 Each Archetype dataclass holds the calibrated parameters for one merchant
 category. These are the inputs to the event intensity function in Chain 1
@@ -29,11 +29,11 @@ class Archetype:
 
 
 # ---------------------------------------------------------------------------
-# Archetype registry — Phase 3 will fill in all 10 entries
+# Archetype registry: Phase 3 will fill in all 10 entries
 # ---------------------------------------------------------------------------
 
 ARCHETYPES: Dict[str, Archetype] = {
-    # Placeholder — replace with calibrated values in Phase 3
+    # Placeholder: replace with calibrated values in Phase 3
     "spaza_shop": Archetype(
         name="spaza_shop",
         mean_ticket_zar=50.0,

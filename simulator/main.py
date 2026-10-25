@@ -1,5 +1,5 @@
 """
-main.py — Simulation entry point.
+main.py: Simulation entry point.
 
 Usage
 -----
@@ -25,7 +25,7 @@ from datetime import date
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="SA Fintech event generator — writes to Postgres (V1)"
+        description="SA Fintech event generator: writes to Postgres (V1)"
     )
     parser.add_argument(
         "--mode",

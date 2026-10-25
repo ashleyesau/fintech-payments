@@ -1,11 +1,11 @@
 # fintech-payments
 
-A synthetic-data platform for an SA SME fintech — merchant acquiring (card + instant EFT) and merchant cash advance. Generates stateful, causally coherent event data written to a local Postgres OLTP store, ready for a CDC pipeline downstream.
+A synthetic-data platform for an SA SME fintech: merchant acquiring (card + instant EFT) and merchant cash advance. Generates stateful, causally coherent event data written to a local Postgres OLTP store, ready for a CDC pipeline downstream.
 
 ## What this demonstrates
 
-- Stateful event simulation with realistic merchant lifecycle, seasonal patterns, and causal cross-stream dependencies (payments ↔ lending ↔ risk)
-- Postgres as an OLTP source of truth with `wal_level=logical` — ready for CDC in V2
+- Stateful event simulation with realistic merchant lifecycle, seasonal patterns, and causal cross-stream dependencies (payments, lending, risk)
+- Postgres as an OLTP source of truth with `wal_level=logical`, ready for CDC in V2
 - Pydantic-validated event schemas matching the [Event Schemas](https://www.notion.so/SA-Fintech-Project-Recon-35e86c781f668045b701e10a0e7bf089) contract
 - Two generator modes: **backfill** (full date range as fast as possible) and **streaming** (real-time pace)
 
@@ -13,12 +13,12 @@ A synthetic-data platform for an SA SME fintech — merchant acquiring (card + i
 
 | Component | V1 | V2+ |
 |---|---|---|
-| Generator | Python + psycopg3 | — |
-| OLTP store | Postgres 16 (Docker) | — |
-| CDC | — | Python WAL reader / Debezium |
-| Lakehouse | — | Iceberg on GCS |
-| Warehouse | — | BigQuery |
-| Transforms | — | dbt |
+| Generator | Python + psycopg3 | |
+| OLTP store | Postgres 16 (Docker) | |
+| CDC | | Python WAL reader / Debezium |
+| Lakehouse | | Iceberg on GCS |
+| Warehouse | | BigQuery |
+| Transforms | | dbt |
 
 ## Quick start
 
@@ -50,7 +50,3 @@ docker-compose.yml  Local Postgres stack
 ## Documentation
 
 Full design lives in Notion: [SA Fintech Project Recon](https://www.notion.so/SA-Fintech-Project-Recon-35e86c781f668045b701e10a0e7bf089)
-
-## Licence
-
-MIT

@@ -1,6 +1,6 @@
 # Simulation calibration parameters.
-# Phase 3 will fill in the full archetype and seasonal values.
-# All monetary amounts are in ZAR cents (minor units) unless noted.
+# Sources: Calibration Doc Areas 2-4.
+# All monetary amounts in ZAR cents (minor units) unless noted.
 
 simulation:
   default_merchant_count: 1000
@@ -9,7 +9,6 @@ simulation:
   streaming_speed_factor: 3600  # simulated seconds per real second
 
 # S-curve onboarding ramp over the first 6 months.
-# Percentages of target merchant_count onboarded each month.
 # After month 6, onboarding runs at replacement rate only (churn offset).
 onboarding_ramp:
   month_1_pct: 0.10
@@ -19,31 +18,81 @@ onboarding_ramp:
   month_5_pct: 0.15
   month_6_pct: 0.12
 
-# Seasonal intensity modifiers (Chain 1).
-# All multiplicative; saturation_cap applies after stacking.
+# Day-of-month volume index (mid-month = 1.0 baseline).
+# Encodes SASSA grant paydays (days 2-4), private sector payday (25th),
+# PERSAL government salary (15th), and month-end patterns.
+# Source: Calibration Doc Area 2.
+daily_volume_index:
+  1: 1.05
+  2: 1.30
+  3: 1.45
+  4: 1.50
+  5: 1.40
+  6: 1.25
+  7: 1.10
+  8: 0.95
+  9: 0.85
+  10: 0.80
+  11: 0.80
+  12: 0.80
+  13: 0.85
+  14: 0.95
+  15: 1.20
+  16: 1.15
+  17: 1.00
+  18: 0.85
+  19: 0.85
+  20: 0.95
+  21: 0.90
+  22: 0.85
+  23: 0.95
+  24: 1.10
+  25: 1.40
+  26: 1.35
+  27: 1.25
+  28: 1.20
+  29: 1.15
+  30: 1.10
+  31: 1.05
+
+# Seasonal modifiers.
+# january_tx_count_modifier and january_ticket_size_modifier are applied
+# independently: more transactions AND smaller baskets in January.
+# Source: Calibration Doc Area 3, Capitec 2025, BankservAfrica BETI.
 seasonal:
   december_uplift: 1.30
-  january_tx_count_modifier: 1.07   # more transactions in January
-  january_ticket_size_modifier: 0.85  # smaller baskets in January
-  black_friday_multiplier: 2.50
-  saturation_cap: 2.50  # hard ceiling after all multipliers are stacked
+  january_tx_count_modifier: 1.07
+  january_ticket_size_modifier: 0.85
+  black_friday_day_multiplier: 2.50
+  black_friday_ecom_multiplier: 3.00
+  saturation_cap: 2.50
+
+# Geographic effects.
+# Applied on top of archetype multipliers for qualifying province+archetype combos.
+geographic:
+  western_cape_summer_lift: 1.45        # Dec-Feb, tourism-linked archetypes
+  western_cape_winter_dip: 0.70         # Jun-Aug, tourism-linked archetypes
+  western_cape_summer_archetypes: [restaurant, salon, seasonal_retail, fuel_station]
+  kzn_holiday_peak_months: [12, 4, 7]   # December, Easter month, July school holidays
+  kzn_holiday_lift: 1.20
+  township_sme_closure_rate: 0.65       # fraction closed during load shedding outages
 
 # Load shedding damper.
 # Set active: false for all V1 runs with start_date >= 2024-03-01.
-# The damper logic in calendar.py still exists for historical backfills.
 load_shedding:
   active: false
   stage_multipliers:
-    stage_0: 1.00
-    stage_1: 0.95
-    stage_2: 0.90
-    stage_3: 0.83
-    stage_4: 0.75
-    stage_5: 0.65
-    stage_6: 0.55
+    0: 1.00
+    1: 0.98
+    2: 0.97
+    3: 0.93
+    4: 0.88
+    5: 0.82
+    6: 0.77
 
-# Quality percentile distribution (Beta distribution parameters).
-# Drawn once at merchant creation; fixed for lifetime.
+# Quality percentile distribution drawn at merchant creation. Fixed for lifetime.
+# Beta(1.5, 4.0): right-skewed, ~60% of merchants below archetype mean.
+# Top decile runs at ~1.8-2.0x mean rate, producing ~35-40% of category GPV.
 quality_tier:
   beta_a: 1.5
   beta_b: 4.0

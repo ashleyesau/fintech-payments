@@ -1,0 +1,140 @@
+# Province distribution per archetype and metro probabilities.
+# Sources: Calibration Doc Area 4, Stats SA Community Survey, TIPS 2024, Shoprite SMME Report 2025.
+# Confidence: LOW for per-archetype distributions (engineered from provincial economic profiles).
+# All province_distributions entries must sum to 1.0.
+
+province_distributions:
+  spaza_shop:
+    gauteng: 0.25
+    western_cape: 0.15
+    kwazulu_natal: 0.25
+    eastern_cape: 0.20
+    limpopo: 0.05
+    mpumalanga: 0.04
+    free_state: 0.03
+    north_west: 0.02
+    northern_cape: 0.01
+
+  restaurant:
+    gauteng: 0.35
+    western_cape: 0.35
+    kwazulu_natal: 0.15
+    eastern_cape: 0.05
+    limpopo: 0.03
+    mpumalanga: 0.03
+    free_state: 0.02
+    north_west: 0.01
+    northern_cape: 0.01
+
+  salon:
+    gauteng: 0.35
+    western_cape: 0.25
+    kwazulu_natal: 0.20
+    eastern_cape: 0.10
+    limpopo: 0.03
+    mpumalanga: 0.02
+    free_state: 0.02
+    north_west: 0.02
+    northern_cape: 0.01
+
+  grocery:
+    gauteng: 0.30
+    western_cape: 0.25
+    kwazulu_natal: 0.20
+    eastern_cape: 0.10
+    limpopo: 0.05
+    mpumalanga: 0.04
+    free_state: 0.03
+    north_west: 0.02
+    northern_cape: 0.01
+
+  liquor_store:
+    gauteng: 0.30
+    western_cape: 0.20
+    kwazulu_natal: 0.25
+    eastern_cape: 0.10
+    limpopo: 0.05
+    mpumalanga: 0.04
+    free_state: 0.03
+    north_west: 0.02
+    northern_cape: 0.01
+
+  fuel_station:
+    gauteng: 0.30
+    western_cape: 0.20
+    kwazulu_natal: 0.20
+    eastern_cape: 0.10
+    limpopo: 0.06
+    mpumalanga: 0.05
+    free_state: 0.04
+    north_west: 0.03
+    northern_cape: 0.02
+
+  e_commerce:
+    gauteng: 0.50
+    western_cape: 0.30
+    kwazulu_natal: 0.10
+    eastern_cape: 0.03
+    limpopo: 0.02
+    mpumalanga: 0.02
+    free_state: 0.01
+    north_west: 0.01
+    northern_cape: 0.01
+
+  wholesale:
+    gauteng: 0.45
+    western_cape: 0.25
+    kwazulu_natal: 0.15
+    eastern_cape: 0.05
+    limpopo: 0.03
+    mpumalanga: 0.03
+    free_state: 0.02
+    north_west: 0.01
+    northern_cape: 0.01
+
+  salon_low_cost:
+    gauteng: 0.30
+    western_cape: 0.15
+    kwazulu_natal: 0.25
+    eastern_cape: 0.15
+    limpopo: 0.05
+    mpumalanga: 0.04
+    free_state: 0.03
+    north_west: 0.02
+    northern_cape: 0.01
+
+  tutor:
+    gauteng: 0.40
+    western_cape: 0.30
+    kwazulu_natal: 0.15
+    eastern_cape: 0.05
+    limpopo: 0.03
+    mpumalanga: 0.03
+    free_state: 0.02
+    north_west: 0.01
+    northern_cape: 0.01
+
+  seasonal_retail:
+    gauteng: 0.30
+    western_cape: 0.40
+    kwazulu_natal: 0.15
+    eastern_cape: 0.05
+    limpopo: 0.03
+    mpumalanga: 0.03
+    free_state: 0.02
+    north_west: 0.01
+    northern_cape: 0.01
+
+# Given a province, probability the merchant is in a metro area.
+# Metro areas: Johannesburg, Cape Town, Durban, Pretoria/Tshwane, Gqeberha, Bloemfontein.
+# Source: Calibration Doc Area 4.
+metro_probabilities:
+  gauteng: 0.85
+  western_cape: 0.75
+  kwazulu_natal: 0.55
+  eastern_cape: 0.45
+  free_state: 0.40
+  mpumalanga: 0.20
+  limpopo: 0.15
+  north_west: 0.15
+  northern_cape: 0.15

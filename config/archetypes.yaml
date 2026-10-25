@@ -1,0 +1,21 @@
+# Archetype definitions.
+# Phase 3 will fill in all 10 archetypes with calibrated values.
+# Only spaza_shop is populated here as a placeholder.
+
+spaza_shop:
+  mean_ticket_zar: 50.0
+  ticket_std_zar: 20.0
+  tx_per_day: 80.0
+  open_days: [Mon, Tue, Wed, Thu, Fri, Sat]
+  refund_rate: 0.005
+  fraud_rate: 0.001
+  monthly_churn_prob: 0.02
+  mcc: "5411"
+  bank_weights:
+    FNB: 0.40
+    ABSA: 0.30
+    Capitec: 0.20
+    Nedbank: 0.10
+
+# TODO Phase 3: restaurant, salon, grocery, liquor_store, fuel_station,
+#               e_commerce, wholesale, salon_low_cost, tutor, seasonal_retail

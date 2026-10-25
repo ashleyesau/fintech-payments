@@ -1,0 +1,49 @@
+# Simulation calibration parameters.
+# Phase 3 will fill in the full archetype and seasonal values.
+# All monetary amounts are in ZAR cents (minor units) unless noted.
+
+simulation:
+  default_merchant_count: 1000
+  start_date: "2025-01-01"
+  end_date: "2026-01-01"
+  streaming_speed_factor: 3600  # simulated seconds per real second
+
+# S-curve onboarding ramp over the first 6 months.
+# Percentages of target merchant_count onboarded each month.
+# After month 6, onboarding runs at replacement rate only (churn offset).
+onboarding_ramp:
+  month_1_pct: 0.10
+  month_2_pct: 0.18
+  month_3_pct: 0.25
+  month_4_pct: 0.20
+  month_5_pct: 0.15
+  month_6_pct: 0.12
+
+# Seasonal intensity modifiers (Chain 1).
+# All multiplicative; saturation_cap applies after stacking.
+seasonal:
+  december_uplift: 1.30
+  january_tx_count_modifier: 1.07   # more transactions in January
+  january_ticket_size_modifier: 0.85  # smaller baskets in January
+  black_friday_multiplier: 2.50
+  saturation_cap: 2.50  # hard ceiling after all multipliers are stacked
+
+# Load shedding damper.
+# Set active: false for all V1 runs with start_date >= 2024-03-01.
+# The damper logic in calendar.py still exists for historical backfills.
+load_shedding:
+  active: false
+  stage_multipliers:
+    stage_0: 1.00
+    stage_1: 0.95
+    stage_2: 0.90
+    stage_3: 0.83
+    stage_4: 0.75
+    stage_5: 0.65
+    stage_6: 0.55
+
+# Quality percentile distribution (Beta distribution parameters).
+# Drawn once at merchant creation; fixed for lifetime.
+quality_tier:
+  beta_a: 1.5
+  beta_b: 4.0

@@ -1,49 +1,85 @@
 """
-config.py: Simulation parameters, archetype definitions, and feature flags.
+config.py: Simulation parameters and YAML config loaders.
 
-Loaded once at startup. All tuneable values live here so scenario changes
-(different archetype mix, simulation duration, peak-day overrides) never
-require code changes: only a config edit or env-var override.
-
-Phase 2 work: populate with real archetype parameters from the design docs.
+SimSettings reads from environment variables (or a .env file). All tuneable
+values live in the config/ YAML files so scenario changes never require code
+edits: only a config file or env-var override.
 """
 from __future__ import annotations
 
-import os
-from dotenv import load_dotenv
+from pathlib import Path
+from typing import Any
 
-load_dotenv()
+import yaml
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-# ---------------------------------------------------------------------------
-# Database connection
-# ---------------------------------------------------------------------------
-
-DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
-DB_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
-DB_NAME = os.getenv("POSTGRES_DB", "fintech")
-DB_USER = os.getenv("POSTGRES_USER", "sim")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "sim")
-
-DSN = f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD}"
+CONFIG_DIR = Path(__file__).parent.parent / "config"
 
 
 # ---------------------------------------------------------------------------
-# Simulation defaults
+# Settings
 # ---------------------------------------------------------------------------
 
-DEFAULT_MERCHANT_COUNT = 1_000
-SIMULATION_START_DATE = "2025-01-01"
-SIMULATION_END_DATE = "2026-01-01"
+class SimSettings(BaseSettings):
+    # Database
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "fintech"
+    postgres_user: str = "sim"
+    postgres_password: str = "sim"
 
-# Streaming mode: target simulated seconds per real second
-STREAMING_SPEED_FACTOR = 3_600  # 1 real second = 1 simulated hour
+    # Runtime
+    log_level: str = "INFO"
+
+    # Simulation defaults (overridable via env or CLI flags)
+    default_merchant_count: int = 1_000
+    simulation_start_date: str = "2025-01-01"
+    simulation_end_date: str = "2026-01-01"
+    streaming_speed_factor: int = 3_600  # simulated seconds per real second
+
+    # Feature flags
+    enable_risk_events: bool = True
+    enable_loan_applications: bool = True
+    enable_payshap: bool = True
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @property
+    def dsn(self) -> str:
+        return (
+            f"host={self.postgres_host} port={self.postgres_port} "
+            f"dbname={self.postgres_db} user={self.postgres_user} "
+            f"password={self.postgres_password}"
+        )
+
+
+settings = SimSettings()
+
+# Module-level DSN kept for compatibility with tests/test_db.py.
+DSN = settings.dsn
 
 
 # ---------------------------------------------------------------------------
-# Feature flags
+# YAML config loaders
 # ---------------------------------------------------------------------------
 
-ENABLE_RISK_EVENTS = True
-ENABLE_LOAN_APPLICATIONS = True
-ENABLE_PAYSHAP = True  # PayShap as a payment channel
+def _load_yaml(name: str) -> dict[str, Any]:
+    path = CONFIG_DIR / name
+    with open(path) as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def load_calibration() -> dict[str, Any]:
+    return _load_yaml("calibration.yaml")
+
+
+def load_fees() -> dict[str, Any]:
+    return _load_yaml("fees.yaml")
+
+
+def load_causal_rules() -> dict[str, Any]:
+    return _load_yaml("causal_rules.yaml")
+
+
+def load_archetypes_config() -> dict[str, Any]:
+    return _load_yaml("archetypes.yaml")

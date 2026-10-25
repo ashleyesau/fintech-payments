@@ -1,0 +1,37 @@
+# Fee schedule by channel.
+# All rates in basis points (1 bps = 0.01%).
+# Phase 5 will implement the full SARB interchange schedule.
+# Values below are illustrative placeholders pending calibration.
+
+card_present:
+  interchange_bps: 125
+  scheme_bps: 30
+  acquirer_markup_bps: 115
+
+card_ecom:
+  interchange_bps: 150
+  scheme_bps: 35
+  acquirer_markup_bps: 140
+
+instant_eft:
+  interchange_bps: 0
+  scheme_bps: 0
+  acquirer_markup_bps: 100
+
+payshap:
+  interchange_bps: 0
+  scheme_bps: 0
+  acquirer_markup_bps: 75
+
+payment_link:
+  interchange_bps: 150
+  scheme_bps: 35
+  acquirer_markup_bps: 140
+
+# Settlement windows (business days).
+settlement_days:
+  card_present: 1
+  card_ecom: 2
+  instant_eft: 0
+  payshap: 0
+  payment_link: 2

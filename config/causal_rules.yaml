@@ -1,0 +1,72 @@
+# Causal rules parameters.
+# Phase 4 and Phase 5 will consume these values.
+# Thresholds and deltas are from the Causal Dependency Rules doc.
+
+# Chain 2: merchant state transition thresholds
+state_transitions:
+  # Minimum trading days before state evaluation begins.
+  min_trading_days: 30
+  # new -> growing: MoM GPV growth >= threshold
+  new_to_growing_gpv_growth: 0.15
+  # growing -> stable: consecutive months in growing state
+  growing_to_stable_months: 3
+  # stable/growing -> stressed: 30-day GPV decline vs prior 30-day window
+  to_stressed_gpv_decline: 0.20
+  # stressed -> delinquent: days in stressed state
+  stressed_to_delinquent_days: 30
+  # delinquent -> churned: days in delinquent state without recovery
+  delinquent_to_churned_days: 60
+
+# Chain 3: lending eligibility gates
+lending_eligibility:
+  min_months_on_platform: 3
+  min_gpv_90d_minor: 1500000  # R15,000 in cents
+  eligible_states: [growing, stable]
+
+# Chain 3: loan approval decision bands (risk score at application time)
+loan_approval:
+  # 0-30: approved (automated)
+  auto_approve_max: 30
+  # 31-55: manual review
+  manual_review_min: 31
+  manual_review_max: 55
+  # 56-75: counter-offer (60% of requested amount)
+  counter_offer_min: 56
+  counter_offer_max: 75
+  counter_offer_ratio: 0.60
+  # 76-100: declined (automated)
+  auto_decline_min: 76
+
+# Chain 3: DebiCheck collection parameters
+debicheck:
+  first_strike_base_success_rate: 0.77
+  max_retries: 3
+  retry_window_days: 10
+  # State modifiers applied to first_strike_base_success_rate
+  state_modifiers:
+    new: 0.90
+    growing: 1.00
+    stable: 1.05
+    stressed: 0.65
+    delinquent: 0.40
+    churned: 0.20
+
+# Chain 4: risk score deltas and decay
+risk_score:
+  permanent_floor_written_off: 80
+  daily_decay: 1  # points recovered per day with no adverse events
+  # Deltas applied by event type
+  deltas:
+    refund_spike: 15
+    velocity_breach: 12
+    chargeback_accumulation: 20
+    scheme_warning: 8
+    large_txn_flag: 5
+    otp_abuse: 10
+
+# Chain 5: fraud trigger thresholds
+fraud_thresholds:
+  refund_spike_rate: 0.15          # refunds / completions in rolling 7 days
+  velocity_breach_count_1h: 50     # transactions in a 1-hour window
+  chargeback_accumulation_rate: 0.05  # chargebacks / completions in rolling 30 days
+  large_txn_zar: 50000             # single transaction >= R500 (50000 cents)

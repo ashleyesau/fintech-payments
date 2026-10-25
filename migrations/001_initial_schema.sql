@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS merchants (
 
 CREATE TABLE IF NOT EXISTS merchant_transactions (
     transaction_id          TEXT        NOT NULL PRIMARY KEY,
-    merchant_id             TEXT        NOT NULL REFERENCES merchants (merchant_id, snapshot_at) DEFERRABLE,
+    merchant_id             TEXT        NOT NULL,
     event_type              TEXT        NOT NULL,
     channel                 TEXT        NOT NULL,
     status                  TEXT        NOT NULL,

@@ -31,8 +31,9 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 cp .env.example .env
 
-# 3. Apply the schema migration (first time only)
+# 3. Apply the schema migrations in order (first time only)
 docker exec -i fintech_pg psql -U sim -d fintech < migrations/001_initial_schema.sql
+docker exec -i fintech_pg psql -U sim -d fintech < migrations/002_loan_repayments_fk.sql
 
 # 4. Run tests (DB tests are skipped if Postgres is not running)
 pytest tests/ -v

@@ -71,3 +71,47 @@ def test_cdc_publication_exists():
         pytest.skip(f"Postgres not reachable: {exc}")
 
     assert row is not None, "Publication fintech_cdc not found"
+
+
+def test_loan_repayments_fk_declared():
+    """Migration 002: loan_repayments.loan_id references loan_applications.application_id."""
+    try:
+        with _connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT pg_get_constraintdef(oid)
+                    FROM pg_constraint
+                    WHERE conname = 'loan_repayments_loan_id_fkey'
+                    """
+                )
+                row = cur.fetchone()
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"Postgres not reachable: {exc}")
+
+    assert row is not None, "Apply migrations/002_loan_repayments_fk.sql"
+    assert row[0] == "FOREIGN KEY (loan_id) REFERENCES loan_applications(application_id)"
+
+
+def test_orphan_repayment_rejected():
+    """A repayment whose loan_id has no application row is refused."""
+    insert = """
+        INSERT INTO loan_repayments (
+            repayment_id, loan_id, merchant_id, installment_number, due_date,
+            principal_due, interest_due, total_due, outstanding_before,
+            outstanding_after, collection_status
+        ) VALUES (
+            'rep-orphan', 'no-such-application', 'm-1', 1, '2025-02-01',
+            100, 7, 107, 100, 0, 'success'
+        )
+    """
+    try:
+        conn = _connect()
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"Postgres not reachable: {exc}")
+
+    with conn:
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.ForeignKeyViolation):
+                cur.execute(insert)
+        conn.rollback()

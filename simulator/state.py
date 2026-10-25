@@ -321,7 +321,9 @@ class Merchant:
 
 @dataclass
 class Loan:
-    loan_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # A loan is its application: loan_id equals application_id, which is what the
+    # loan_repayments foreign key (migration 002) requires.
+    loan_id: str = ""
     merchant_id: str = ""
     application_id: str = ""
 
@@ -336,6 +338,11 @@ class Loan:
 
     mandate_id: Optional[str] = None
     mandate_status: str = "PDNG"   # ACCP | RJCT | PDNG | CANC
+
+    def __post_init__(self) -> None:
+        if not self.application_id:
+            self.application_id = self.loan_id or str(uuid.uuid4())
+        self.loan_id = self.application_id
 
 
 # ---------------------------------------------------------------------------

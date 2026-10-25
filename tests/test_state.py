@@ -4,7 +4,7 @@ from datetime import date, timedelta
 import numpy as np
 import pytest
 
-from simulator.state import Merchant, risk_delta
+from simulator.state import Loan, Merchant, risk_delta
 
 START = date(2025, 1, 1)
 
@@ -336,3 +336,17 @@ def test_written_off_merchant_cannot_cure_below_floor():
     m.write_off(START)
     m.apply_risk_delta(-20, START)
     assert m.risk_score == 80
+
+
+# ---------------------------------------------------------------------------
+# Loan identity
+# ---------------------------------------------------------------------------
+
+def test_loan_id_is_application_id():
+    loan = Loan(application_id="app-1")
+    assert loan.loan_id == "app-1"
+
+
+def test_loan_generates_one_id_when_none_given():
+    loan = Loan()
+    assert loan.application_id and loan.loan_id == loan.application_id

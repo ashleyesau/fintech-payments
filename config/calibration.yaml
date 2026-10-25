@@ -63,6 +63,10 @@ seasonal:
   december_uplift: 1.30
   january_tx_count_modifier: 1.07
   january_ticket_size_modifier: 0.85
+  # Dec 15, 22, 23 and 24 lift basket size for every archetype. Per Causal Rules this
+  # is a ticket-size effect, not a transaction-count effect.
+  december_peak_days: [15, 22, 23, 24]
+  december_peak_ticket_multiplier: 1.25
   black_friday_day_multiplier: 2.50
   black_friday_ecom_multiplier: 3.00
   saturation_cap: 2.50

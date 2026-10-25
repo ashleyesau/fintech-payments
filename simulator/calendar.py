@@ -4,7 +4,9 @@ simulator/calendar.py: SA public holiday calendar and intensity multiplier.
 Exports:
   get_sa_public_holidays(year) -> dict[date, str]
   get_black_friday(year) -> date
-  get_intensity_multiplier(sim_date, archetype_name) -> float
+  get_intensity_multiplier(sim_date, archetype_name, stress_modifier=1.0) -> float
+  get_tx_count_modifier(sim_date) -> float
+  get_ticket_size_modifier(sim_date) -> float
 """
 from __future__ import annotations
 
@@ -69,7 +71,9 @@ def get_black_friday(year: int) -> date:
     return d
 
 
-def get_intensity_multiplier(sim_date: date, archetype_name: str) -> float:
+def get_intensity_multiplier(
+    sim_date: date, archetype_name: str, stress_modifier: float = 1.0
+) -> float:
     """
     Composite intensity multiplier for one archetype on one simulated date.
 
@@ -79,6 +83,14 @@ def get_intensity_multiplier(sim_date: date, archetype_name: str) -> float:
       - monthly seasonal multiplier (archetype-specific, Jan-Dec)
       - public holiday multiplier (0.85 on holidays; B2B archetypes close at 0.0)
       - Black Friday multiplier (2.5x for retail; 3.0x for e_commerce)
+      - the merchant's Chain 2 stress modifier
+
+    The stress modifier sits inside the cap: Causal Rules caps the product of all
+    temporal modifiers and the stress modifier together, so a Growing merchant (1.05)
+    cannot exceed the saturation cap and a Churned one (0.0) always returns 0.0.
+
+    January count and ticket modifiers are not part of this value; they are applied
+    separately via get_tx_count_modifier() and get_ticket_size_modifier().
 
     Returns 0.0 if the archetype is closed on this day.
     """
@@ -125,5 +137,28 @@ def get_intensity_multiplier(sim_date: date, archetype_name: str) -> float:
     else:
         bf_mult = 1.0
 
-    composite = weekday_weight * dom_mult * month_mult * holiday_mult * bf_mult
+    composite = weekday_weight * dom_mult * month_mult * holiday_mult * bf_mult * stress_modifier
     return min(composite, saturation_cap)
+
+
+def get_tx_count_modifier(sim_date: date) -> float:
+    """January transaction-count modifier (more transactions). 1.0 in other months.
+
+    Applied to the Poisson lambda, independently of get_ticket_size_modifier(), so
+    January shows higher counts and lower GPV together.
+    """
+    seasonal = load_calibration().get("seasonal", {})
+    if sim_date.month == 1:
+        return seasonal.get("january_tx_count_modifier", 1.0)
+    return 1.0
+
+
+def get_ticket_size_modifier(sim_date: date) -> float:
+    """Ticket-size modifier: smaller baskets in January, larger on the December peak
+    days. 1.0 otherwise. Applied to the ticket draw, never to the transaction count."""
+    seasonal = load_calibration().get("seasonal", {})
+    if sim_date.month == 1:
+        return seasonal.get("january_ticket_size_modifier", 1.0)
+    if sim_date.month == 12 and sim_date.day in seasonal.get("december_peak_days", []):
+        return seasonal.get("december_peak_ticket_multiplier", 1.0)
+    return 1.0

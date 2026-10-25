@@ -199,3 +199,49 @@ def test_sample_quality_percentile_range():
     for _ in range(50):
         q = sample_quality_percentile()
         assert 0.0 <= q <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Stress modifier, January and December ticket modifiers
+# ---------------------------------------------------------------------------
+
+from simulator.calendar import get_ticket_size_modifier, get_tx_count_modifier  # noqa: E402
+
+
+def test_stress_modifier_scales_multiplier():
+    # A mid-month Wednesday in May: well under the cap.
+    d = date(2025, 5, 14)
+    base = get_intensity_multiplier(d, "spaza_shop")
+    assert get_intensity_multiplier(d, "spaza_shop", stress_modifier=0.8) == pytest.approx(base * 0.8)
+
+
+def test_churned_stress_modifier_zeroes_intensity():
+    assert get_intensity_multiplier(date(2025, 5, 14), "spaza_shop", stress_modifier=0.0) == 0.0
+
+
+def test_stress_modifier_applied_inside_cap():
+    # The Black Friday product is far above the cap, so even a stressed merchant (0.80)
+    # lands on the cap. Applying the modifier after the cap would give 2.5 * 0.80 = 2.0.
+    bf = get_black_friday(2025)
+    capped = get_intensity_multiplier(bf, "e_commerce")
+    assert get_intensity_multiplier(bf, "e_commerce", stress_modifier=1.05) == capped
+    assert get_intensity_multiplier(bf, "e_commerce", stress_modifier=0.80) == capped
+
+
+def test_january_count_up_and_ticket_down():
+    jan = date(2025, 1, 15)
+    assert get_tx_count_modifier(jan) == 1.07
+    assert get_ticket_size_modifier(jan) == 0.85
+
+
+def test_count_and_ticket_modifiers_neutral_outside_january():
+    assert get_tx_count_modifier(date(2025, 6, 15)) == 1.0
+    assert get_ticket_size_modifier(date(2025, 6, 15)) == 1.0
+
+
+def test_december_peak_days_lift_ticket_only():
+    for day in (15, 22, 23, 24):
+        d = date(2025, 12, day)
+        assert get_ticket_size_modifier(d) == 1.25
+        assert get_tx_count_modifier(d) == 1.0
+    assert get_ticket_size_modifier(date(2025, 12, 10)) == 1.0

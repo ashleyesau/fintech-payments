@@ -82,11 +82,11 @@ def test_black_friday_is_friday():
 # ---------------------------------------------------------------------------
 
 def test_intensity_multiplier_closed_day():
-    # Spaza shop is closed on Sunday.
+    # Wholesale is closed on Sunday; spaza shops trade on Sunday per Causal Rules.
     sunday = date(2025, 6, 1)  # A Sunday
     assert sunday.weekday() == 6
-    result = get_intensity_multiplier(sunday, "spaza_shop")
-    assert result == 0.0
+    assert get_intensity_multiplier(sunday, "wholesale") == 0.0
+    assert get_intensity_multiplier(sunday, "spaza_shop") > 0.0
 
 
 def test_intensity_multiplier_wholesale_on_holiday():
@@ -263,3 +263,83 @@ def test_black_friday_default_for_unlisted_archetype():
 
 def test_black_friday_does_not_change_tx_count_modifier():
     assert get_tx_count_modifier(get_black_friday(2025)) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Province effects and load shedding
+# ---------------------------------------------------------------------------
+
+JANUARY_WEDNESDAY = date(2025, 1, 15)
+JULY_WEDNESDAY = date(2025, 7, 16)
+
+
+def test_western_cape_summer_lift_for_tourism_archetypes():
+    base = get_intensity_multiplier(JANUARY_WEDNESDAY, "restaurant")
+    lifted = get_intensity_multiplier(JANUARY_WEDNESDAY, "restaurant", province="western_cape")
+    assert lifted == pytest.approx(base * 1.45)
+
+
+def test_western_cape_winter_dip_for_tourism_archetypes():
+    base = get_intensity_multiplier(JULY_WEDNESDAY, "restaurant")
+    dipped = get_intensity_multiplier(JULY_WEDNESDAY, "restaurant", province="western_cape")
+    assert dipped == pytest.approx(base * 0.70)
+
+
+def test_western_cape_lift_skips_other_archetypes_and_provinces():
+    base = get_intensity_multiplier(JANUARY_WEDNESDAY, "wholesale")
+    assert get_intensity_multiplier(JANUARY_WEDNESDAY, "wholesale", province="western_cape") == base
+    resto = get_intensity_multiplier(JANUARY_WEDNESDAY, "restaurant")
+    assert get_intensity_multiplier(JANUARY_WEDNESDAY, "restaurant", province="gauteng") == resto
+
+
+def test_kzn_holiday_peak_months_lift_every_archetype():
+    # July is a KZN school-holiday peak month.
+    for archetype in ("spaza_shop", "wholesale"):
+        base = get_intensity_multiplier(JULY_WEDNESDAY, archetype)
+        lifted = get_intensity_multiplier(JULY_WEDNESDAY, archetype, province="kwazulu_natal")
+        assert lifted == pytest.approx(base * 1.20)
+    off_peak = date(2025, 5, 14)
+    assert get_intensity_multiplier(off_peak, "spaza_shop", province="kwazulu_natal") == (
+        get_intensity_multiplier(off_peak, "spaza_shop")
+    )
+
+
+def test_province_effects_sit_inside_the_cap(monkeypatch):
+    from simulator import calendar as cal
+
+    boosted = {**cal.load_calibration(), "daily_volume_index": {d: 5.0 for d in range(1, 32)}}
+    monkeypatch.setattr(cal, "load_calibration", lambda: boosted)
+    assert get_intensity_multiplier(JANUARY_WEDNESDAY, "restaurant", province="western_cape") == 2.5
+
+
+def _with_load_shedding(monkeypatch, **overrides):
+    from simulator import calendar as cal
+
+    real = cal.load_calibration()
+    shedding = {**real["load_shedding"], "active": True, **overrides}
+    monkeypatch.setattr(cal, "load_calibration", lambda: {**real, "load_shedding": shedding})
+
+
+def test_load_shedding_is_off_by_default():
+    d = date(2025, 5, 14)
+    assert get_intensity_multiplier(d, "restaurant", is_metro=False) == get_intensity_multiplier(d, "restaurant")
+
+
+def test_load_shedding_damper_is_pro_rated_by_outage_hours(monkeypatch):
+    d = date(2025, 5, 14)
+    base = get_intensity_multiplier(d, "restaurant")
+    _with_load_shedding(monkeypatch, stage=6, hours_off_per_day=24)
+    assert get_intensity_multiplier(d, "restaurant") == pytest.approx(base * 0.77)
+    _with_load_shedding(monkeypatch, stage=6, hours_off_per_day=12)
+    assert get_intensity_multiplier(d, "restaurant") == pytest.approx(base * (1 - 0.23 * 0.5))
+
+
+def test_township_spaza_closes_during_outages_but_metro_spaza_does_not(monkeypatch):
+    d = date(2025, 5, 14)
+    base = get_intensity_multiplier(d, "spaza_shop")
+    _with_load_shedding(monkeypatch, stage=0, hours_off_per_day=24)
+    assert get_intensity_multiplier(d, "spaza_shop", is_metro=False) == pytest.approx(base * (1 - 0.65))
+    assert get_intensity_multiplier(d, "spaza_shop", is_metro=True) == pytest.approx(base)
+    assert get_intensity_multiplier(d, "restaurant", is_metro=False) == pytest.approx(
+        get_intensity_multiplier(d, "restaurant", is_metro=True)
+    )

@@ -1,5 +1,6 @@
 """
-state.py: Stateful domain objects: Merchant, Loan, DebitMandate.
+state.py: Stateful domain objects: Merchant and Loan. Mandate state rides on Loan
+(mandate_id, mandate_status), as Event Schemas stamps it inline on each repayment.
 
 These classes hold the in-memory state that evolves across simulated days.
 State is never read from Postgres during a run; it lives here and is
@@ -14,7 +15,7 @@ from __future__ import annotations
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, time
 from typing import Optional
 
 import numpy as np
@@ -107,6 +108,31 @@ class Merchant:
     def stress_modifier(self) -> float:
         """Chain 2 multiplier fed back into Chain 1 event intensity."""
         return _ST["stress_modifier"][self.merchant_state]
+
+    def snapshot(self, snapshot_at: datetime) -> dict:
+        """The merchants dimension row for this merchant at snapshot_at (Stream 5).
+
+        Dates become midnight timestamps in snapshot_at's timezone, since the in-memory
+        state keeps calendar dates only.
+        """
+        def stamp(d: Optional[date]) -> Optional[datetime]:
+            if d is None:
+                return None
+            return datetime.combine(d, time.min, tzinfo=snapshot_at.tzinfo)
+
+        return {
+            "merchant_id": self.merchant_id,
+            "archetype": self.archetype,
+            "province": self.province,
+            "is_metro": self.is_metro,
+            "onboarded_at": stamp(self.onboarded_at),
+            "first_transaction_at": stamp(self.first_transaction_at),
+            "merchant_state": self.merchant_state,
+            "risk_score": self.risk_score,
+            "loan_count": self.loan_count,
+            "has_active_loan": self.has_active_loan,
+            "snapshot_at": snapshot_at,
+        }
 
     # -----------------------------------------------------------------------
     # Daily bookkeeping

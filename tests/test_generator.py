@@ -252,7 +252,7 @@ def test_churned_merchant_generates_no_payments():
 
 def test_closed_day_generates_no_payments():
     np.random.seed(1)
-    assert simulate_day(merchant("spaza_shop"), SUNDAY) == []
+    assert simulate_day(merchant("wholesale"), SUNDAY) == []
 
 
 def test_merchant_not_yet_onboarded_generates_nothing():
@@ -374,15 +374,23 @@ def test_followups_still_arrive_after_the_merchant_churns(monkeypatch):
     assert [e["event_type"] for e in events] == ["chargeback"]
 
 
-def test_refund_and_chargeback_volumes_track_archetype_rates():
+def test_refund_and_chargeback_volumes_track_archetype_rates(monkeypatch):
+    # Keep the merchant trading, then count every follow-up decided (emitted or pending).
     np.random.seed(12)
     m = merchant("e_commerce")
-    for day in range(200):
-        simulate_day(m, WEDNESDAY + timedelta(days=day))
-    assert m.trading_days == 200
-    # Pending followups were drawn at about refund_rate 5% and fraud_rate 1% of completed card sales.
-    kinds = Counter(f["kind"] for f in m.scheduled_followups)
-    assert kinds["refund"] > kinds["chargeback"]
+    monkeypatch.setattr(m, "maybe_go_dormant", lambda d: False)
+    events = []
+    for day in range(220):
+        events += simulate_day(m, WEDNESDAY + timedelta(days=day))
+    payments = [e for e in events if e["event_type"] == "payment" and e["status"] == "completed"]
+    card_payments = [e for e in payments if e["channel"] in {"card_ecom", "card_present", "payment_link"}]
+    emitted = Counter(e["event_type"] for e in events)
+    pending = Counter(f["kind"] for f in m.scheduled_followups)
+    refunds = emitted["refund"] + pending["refund"]
+    chargebacks = emitted["chargeback"] + pending["chargeback"]
+    assert len(payments) > 3000
+    assert refunds / len(payments) == pytest.approx(0.05, abs=0.012)       # refund_rate
+    assert chargebacks / len(card_payments) == pytest.approx(0.01, abs=0.006)  # fraud_rate
 
 
 # ---------------------------------------------------------------------------

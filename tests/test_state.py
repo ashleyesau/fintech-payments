@@ -459,3 +459,31 @@ def test_dormant_merchant_walks_down_to_churned(always):
         if m.merchant_state == "churned":
             break
     assert seen == ["stressed", "delinquent", "churned"]
+
+
+# ---------------------------------------------------------------------------
+# merchants dimension snapshot
+# ---------------------------------------------------------------------------
+
+def test_snapshot_validates_against_the_merchants_model():
+    from datetime import datetime, timezone
+
+    from simulator.models import MerchantSnapshot
+
+    m = build([100] * 5, state="growing")
+    m.province, m.is_metro, m.risk_score, m.loan_count, m.has_active_loan = "western_cape", False, 22, 1, True
+    at = datetime(2025, 3, 1, 23, 59, tzinfo=timezone.utc)
+    row = m.snapshot(at)
+    MerchantSnapshot(**row)
+    assert row["merchant_state"] == "growing" and row["risk_score"] == 22
+    assert row["loan_count"] == 1 and row["has_active_loan"] is True
+    assert row["onboarded_at"] == datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert row["first_transaction_at"] == datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert row["snapshot_at"] == at
+
+
+def test_snapshot_before_first_transaction_has_no_first_transaction_time():
+    from datetime import datetime, timezone
+
+    row = Merchant(archetype="spaza_shop", onboarded_at=START).snapshot(datetime(2025, 1, 2, tzinfo=timezone.utc))
+    assert row["first_transaction_at"] is None

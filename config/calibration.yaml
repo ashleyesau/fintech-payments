@@ -95,9 +95,13 @@ geographic:
   township_sme_closure_rate: 0.65       # fraction closed during load shedding outages
 
 # Load shedding damper.
-# Set active: false for all V1 runs with start_date >= 2024-03-01.
+# Set active: false for all V1 runs with start_date >= 2024-03-01. When active, every
+# simulated day runs at `stage` with `hours_off_per_day` of outage; the damper is
+# pro-rated as 1 - (1 - stage_multiplier) * hours_off / 24 (Calibration Doc Area 3).
 load_shedding:
   active: false
+  stage: 0
+  hours_off_per_day: 4
   stage_multipliers:
     0: 1.00
     1: 0.98

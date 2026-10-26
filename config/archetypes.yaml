@@ -3,7 +3,11 @@
 #   Values are normalized at load time so the mean across open days = 1.0.
 # hourly_weights: 24-element array (index 0 = midnight). Normalized at load time.
 # monthly_seasonal_multipliers: 12 values Jan-Dec; 1.0 = annual average for this archetype.
-# Sources: Simulator Design §3, Calibration Doc Areas 2-3.
+# Sources: Simulator Design §3 (ticket, rates, churn, banks), Calibration Doc Areas 2-3.
+# For spaza_shop, restaurant, e_commerce and wholesale the weekday weights, hourly weights
+# and monthly seasonal multipliers are the Causal Dependency Rules Chain 1 tables, which
+# outrank Simulator Design. Causal Rules shows spaza trading on Sunday at 0.90, although
+# Simulator Design says Mon-Sat.
 
 spaza_shop:
   mean_ticket_zar: 50.0
@@ -14,8 +18,8 @@ spaza_shop:
   monthly_churn_prob: 0.020
   mcc: "5411"
   bank_weights: {FNB: 0.40, ABSA: 0.30, Capitec: 0.20, Nedbank: 0.10}
-  weekday_weights: {Mon: 0.85, Tue: 0.90, Wed: 0.95, Thu: 1.00, Fri: 1.15, Sat: 1.40, Sun: 0.00}
-  hourly_weights: [0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.8, 1.2, 1.1, 1.0, 1.2, 1.4, 1.1, 0.9, 0.9, 1.0, 1.3, 1.4, 1.1, 0.7, 0.3, 0.1, 0.0]
+  weekday_weights: {Mon: 0.90, Tue: 0.95, Wed: 1.00, Thu: 1.00, Fri: 1.10, Sat: 1.15, Sun: 0.90}
+  hourly_weights: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.03, 0.06, 0.08, 0.08, 0.07, 0.07, 0.08, 0.08, 0.07, 0.07, 0.08, 0.08, 0.07, 0.05, 0.03, 0.02, 0.01, 0.01]
   monthly_seasonal_multipliers: [1.02, 0.95, 0.98, 0.97, 0.98, 0.99, 0.99, 1.00, 0.99, 1.00, 1.05, 1.18]
 
 restaurant:
@@ -27,8 +31,8 @@ restaurant:
   monthly_churn_prob: 0.030
   mcc: "5812"
   bank_weights: {FNB: 0.25, Nedbank: 0.25, ABSA: 0.25, Capitec: 0.15, Standard: 0.10}
-  weekday_weights: {Mon: 0.65, Tue: 0.70, Wed: 0.75, Thu: 0.90, Fri: 1.35, Sat: 1.45, Sun: 1.20}
-  hourly_weights: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.3, 0.5, 1.0, 1.5, 1.4, 0.8, 0.5, 0.5, 0.8, 1.6, 1.8, 1.5, 1.0, 0.4, 0.1]
+  weekday_weights: {Mon: 0.70, Tue: 0.75, Wed: 0.85, Thu: 0.90, Fri: 1.10, Sat: 1.30, Sun: 1.30}
+  hourly_weights: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.02, 0.04, 0.05, 0.06, 0.08, 0.14, 0.13, 0.07, 0.06, 0.06, 0.07, 0.1, 0.12, 0.1, 0.07, 0.03, 0.01]
   monthly_seasonal_multipliers: [0.95, 0.97, 1.00, 1.00, 0.98, 0.92, 0.93, 0.96, 1.00, 1.05, 1.08, 1.20]
 
 salon:
@@ -71,8 +75,8 @@ liquor_store:
   monthly_seasonal_multipliers: [0.85, 0.90, 0.95, 1.05, 0.95, 0.90, 0.90, 0.95, 1.00, 1.05, 1.10, 1.65]
 
 fuel_station:
-  mean_ticket_zar: 800.0
-  ticket_std_zar: 200.0
+  mean_ticket_zar: 80.0
+  ticket_std_zar: 20.0
   tx_per_day: 150.0
   refund_rate: 0.002
   fraud_rate: 0.0005
@@ -92,9 +96,9 @@ e_commerce:
   monthly_churn_prob: 0.050
   mcc: "5999"
   bank_weights: {Discovery: 0.20, FNB: 0.20, Nedbank: 0.20, ABSA: 0.20, Capitec: 0.20}
-  weekday_weights: {Mon: 1.10, Tue: 1.05, Wed: 1.10, Thu: 1.05, Fri: 1.20, Sat: 0.90, Sun: 0.75}
-  hourly_weights: [0.3, 0.2, 0.1, 0.1, 0.1, 0.2, 0.3, 0.5, 0.9, 1.1, 1.2, 1.2, 1.1, 1.0, 1.0, 1.0, 1.1, 1.2, 1.4, 1.5, 1.4, 1.2, 0.8, 0.5]
-  monthly_seasonal_multipliers: [1.05, 0.85, 0.90, 0.92, 0.95, 0.95, 0.95, 0.92, 0.95, 1.00, 1.20, 1.55]
+  weekday_weights: {Mon: 1.00, Tue: 1.00, Wed: 1.05, Thu: 1.10, Fri: 1.15, Sat: 1.05, Sun: 0.90}
+  hourly_weights: [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.03, 0.04, 0.06, 0.07, 0.08, 0.08, 0.08, 0.08, 0.08, 0.07, 0.07, 0.07, 0.07, 0.06, 0.05, 0.03, 0.02]
+  monthly_seasonal_multipliers: [0.92, 0.94, 0.97, 0.95, 0.98, 0.97, 0.96, 0.99, 0.98, 1.00, 1.16, 1.30]
 
 wholesale:
   mean_ticket_zar: 1500.0
@@ -105,9 +109,9 @@ wholesale:
   monthly_churn_prob: 0.005
   mcc: "5199"
   bank_weights: {Standard: 0.30, FNB: 0.30, ABSA: 0.20, Nedbank: 0.20}
-  weekday_weights: {Mon: 1.10, Tue: 1.05, Wed: 1.00, Thu: 1.05, Fri: 0.95, Sat: 0.00, Sun: 0.00}
-  hourly_weights: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.5, 1.2, 1.5, 1.4, 1.2, 0.9, 1.3, 1.4, 1.3, 1.1, 0.7, 0.2, 0.1, 0.0, 0.0, 0.0, 0.0]
-  monthly_seasonal_multipliers: [0.90, 0.95, 1.00, 1.00, 1.00, 0.95, 0.90, 0.95, 1.00, 1.05, 1.10, 1.05]
+  weekday_weights: {Mon: 1.10, Tue: 1.10, Wed: 1.10, Thu: 1.10, Fri: 1.10, Sat: 0.00, Sun: 0.00}
+  hourly_weights: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.05, 0.1, 0.15, 0.15, 0.12, 0.1, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  monthly_seasonal_multipliers: [0.90, 0.95, 1.00, 0.98, 1.00, 0.98, 0.97, 1.00, 1.02, 1.05, 1.08, 0.85]
 
 salon_low_cost:
   mean_ticket_zar: 80.0

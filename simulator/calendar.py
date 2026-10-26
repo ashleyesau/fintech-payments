@@ -4,7 +4,8 @@ simulator/calendar.py: SA public holiday calendar and intensity multiplier.
 Exports:
   get_sa_public_holidays(year) -> dict[date, str]
   get_black_friday(year) -> date
-  get_intensity_multiplier(sim_date, archetype_name, stress_modifier=1.0) -> float
+  get_intensity_multiplier(sim_date, archetype_name, stress_modifier=1.0,
+                           province=None, is_metro=True) -> float
   get_tx_count_modifier(sim_date) -> float
   get_ticket_size_modifier(sim_date, archetype_name) -> float
 """
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from functools import lru_cache
+from typing import Optional
 
 from dateutil.easter import easter, EASTER_WESTERN
 
@@ -71,8 +73,45 @@ def get_black_friday(year: int) -> date:
     return d
 
 
+def _geographic_multiplier(
+    sim_date: date, archetype_name: str, province: Optional[str]
+) -> float:
+    """Western Cape tourism lift and dip, and KZN holiday peaks (Calibration Doc Area 4)."""
+    geo = load_calibration().get("geographic", {})
+    month = sim_date.month
+    if province == "western_cape" and archetype_name in geo.get("western_cape_summer_archetypes", []):
+        if month in (12, 1, 2):
+            return geo.get("western_cape_summer_lift", 1.0)
+        if month in (6, 7, 8):
+            return geo.get("western_cape_winter_dip", 1.0)
+    if province == "kwazulu_natal" and month in geo.get("kzn_holiday_peak_months", []):
+        return geo.get("kzn_holiday_lift", 1.0)
+    return 1.0
+
+
+def _load_shedding_multiplier(archetype_name: str, is_metro: bool) -> float:
+    """Outage damper. 1.0 unless load_shedding.active is true, which V1 runs from
+    March 2024 onwards leave off. Township spaza shops (non-metro) also close for part
+    of each outage."""
+    calibration = load_calibration()
+    shedding = calibration.get("load_shedding", {})
+    if not shedding.get("active", False):
+        return 1.0
+    outage_share = shedding.get("hours_off_per_day", 0) / 24.0
+    stage_multiplier = shedding.get("stage_multipliers", {}).get(shedding.get("stage", 0), 1.0)
+    damper = 1.0 - (1.0 - stage_multiplier) * outage_share
+    if archetype_name == "spaza_shop" and not is_metro:
+        closure = calibration.get("geographic", {}).get("township_sme_closure_rate", 0.0)
+        damper *= 1.0 - closure * outage_share
+    return damper
+
+
 def get_intensity_multiplier(
-    sim_date: date, archetype_name: str, stress_modifier: float = 1.0
+    sim_date: date,
+    archetype_name: str,
+    stress_modifier: float = 1.0,
+    province: Optional[str] = None,
+    is_metro: bool = True,
 ) -> float:
     """
     Composite intensity multiplier for one archetype on one simulated date.
@@ -82,6 +121,9 @@ def get_intensity_multiplier(
       - day-of-month multiplier (DAILY_VOLUME_INDEX from calibration.yaml)
       - monthly seasonal multiplier (archetype-specific, Jan-Dec)
       - public holiday multiplier (0.85 on holidays; B2B archetypes close at 0.0)
+      - province effects when province is given (Western Cape tourism lift and dip, KZN
+        holiday peaks)
+      - the load shedding damper (1.0 while load_shedding.active is false)
       - the merchant's Chain 2 stress modifier
 
     The stress modifier sits inside the cap: Causal Rules caps the product of all
@@ -127,7 +169,12 @@ def get_intensity_multiplier(
     else:
         holiday_mult = 1.0
 
-    composite = weekday_weight * dom_mult * month_mult * holiday_mult * stress_modifier
+    composite = (
+        weekday_weight * dom_mult * month_mult * holiday_mult
+        * _geographic_multiplier(sim_date, archetype_name, province)
+        * _load_shedding_multiplier(archetype_name, is_metro)
+        * stress_modifier
+    )
     return min(composite, saturation_cap)
 
 

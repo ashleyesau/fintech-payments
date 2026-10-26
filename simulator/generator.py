@@ -382,7 +382,13 @@ def simulate_day(merchant: Any, sim_date: date) -> list[dict]:
         merchant.maybe_go_dormant(sim_date)
         lam = 0.0
         if merchant.dormant_since is None:
-            intensity = get_intensity_multiplier(sim_date, merchant.archetype, merchant.stress_modifier())
+            intensity = get_intensity_multiplier(
+                sim_date,
+                merchant.archetype,
+                merchant.stress_modifier(),
+                province=merchant.province,
+                is_metro=merchant.is_metro,
+            )
             lam = merchant.effective_tx_rate() * intensity * get_tx_count_modifier(sim_date)
         count = int(np.random.poisson(lam)) if lam > 0 else 0
         for _ in range(count):

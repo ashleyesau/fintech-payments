@@ -271,8 +271,8 @@ UNION ALL
 SELECT 'restaurant_dinner_share_18_21', round(count(*) FILTER (WHERE h IN (18, 19, 20))::numeric / count(*), 4), 0.25, 0.35, count(*), 'share of payment attempts'
 FROM t_pay, t_bounds b WHERE archetype = 'restaurant' AND d >= b.steady_from
 UNION ALL
-SELECT 'ecommerce_evening_share_18_22', round(count(*) FILTER (WHERE h IN (18, 19, 20, 21))::numeric / count(*), 4), 0.25, 0.35, count(*),
-       'Validation band 25 to 35; Causal Rules table gives 21 to 24 and outranks it'
+SELECT 'ecommerce_evening_share_18_22', round(count(*) FILTER (WHERE h IN (18, 19, 20, 21))::numeric / count(*), 4), 0.21, 0.24, count(*),
+       'band amended from 25 to 35 to the Causal Rules hourly table (21 to 24)'
 FROM t_pay, t_bounds b WHERE archetype = 'e_commerce' AND d >= b.steady_from;
 
 -- name: spaza_saturday_vs_monday
@@ -317,11 +317,13 @@ FROM t_pay, t_bounds b WHERE channel IN ('card_ecom', 'payment_link') AND archet
 
 -- name: eft_funnel
 SELECT 'eft_funnel_completion' AS check_name,
-       round(count(*) FILTER (WHERE status = 'completed')::numeric / count(*), 4) AS value, 0.70 AS low, 0.83 AS high, count(*) AS n, 'completed over initiated' AS note
+       round(count(*) FILTER (WHERE status = 'completed')::numeric / count(*), 4) AS value, 0.62 AS low, 0.70 AS high, count(*) AS n,
+       'completed over initiated; band amended from 70 to 83 to the Simulator Design funnel (66.2%)' AS note
 FROM t_pay, t_bounds b WHERE channel = 'instant_eft' AND d >= b.steady_from
 UNION ALL
 SELECT 'eft_otp_failure_share_of_failures',
-       round(count(*) FILTER (WHERE otp_dropout)::numeric / count(*), 4), 0.40, 0.60, count(*), 'dropped after the OTP request, of all non-completed EFT payments'
+       round(count(*) FILTER (WHERE otp_dropout)::numeric / count(*), 4), 0.34, 0.42, count(*),
+       'dropped after the OTP request, of all non-completed EFT payments; band amended from 40 to 60 to the Simulator Design funnel (37.9%)'
 FROM t_pay, t_bounds b WHERE channel = 'instant_eft' AND status <> 'completed' AND d >= b.steady_from;
 
 -- name: take_rate

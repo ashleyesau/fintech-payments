@@ -104,3 +104,38 @@ def test_abandonment_and_snapshot_windows_are_positive_whole_days(lifecycle):
     assert lifecycle["onboarding_abandonment_days"] > 0
     assert isinstance(lifecycle["churned_snapshot_days"], int)
     assert lifecycle["churned_snapshot_days"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Instant EFT funnel: Simulator Design's values, and the amended Validation bands
+# ---------------------------------------------------------------------------
+
+def test_eft_funnel_is_simulator_designs_and_sits_in_the_amended_bands():
+    """Simulator Design gives the Ozow funnel as 95, 90, 85, 92 and 99% and the OTP-stage
+    split as 70/20/10. They multiply to 66.2% completion and put 37.9% of failures at the
+    OTP step. Validation Targets said 70 to 83% and 40 to 60% (Ozow One-Blink benchmarks),
+    which the sourced funnel cannot reach, so the bands were amended to 62 to 70% and 34
+    to 42% (Phase 8), as the take-rate and write-off bands were. If a funnel value is
+    retuned, this fails and the band note on the Validation Targets page needs a look."""
+    from simulator.config import load_payments
+
+    payments = load_payments()
+    funnel = payments["eft_funnel"]
+    assert funnel == {"bank_selected": 0.95, "login_succeeded": 0.90, "otp_entered": 0.85,
+                      "authorized": 0.92, "completed": 0.99}
+    assert payments["eft_otp_failure_split"] == {"abandoned": 0.70, "expired": 0.20, "failed": 0.10}
+
+    reach_login = funnel["bank_selected"] * funnel["login_succeeded"]
+    reach_otp_entered = reach_login * funnel["otp_entered"]
+    reach_authorized = reach_otp_entered * funnel["authorized"]
+    completion = reach_authorized * funnel["completed"]
+    failures = {
+        "bank": 1 - funnel["bank_selected"],
+        "login": funnel["bank_selected"] * (1 - funnel["login_succeeded"]),
+        "otp": reach_login * (1 - funnel["otp_entered"]),
+        "authorize": reach_otp_entered * (1 - funnel["authorized"]),
+        "complete": reach_authorized * (1 - funnel["completed"]),
+    }
+    assert 0.62 <= completion <= 0.70
+    assert 0.34 <= failures["otp"] / sum(failures.values()) <= 0.42
+    assert completion + sum(failures.values()) == pytest.approx(1.0)

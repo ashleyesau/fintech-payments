@@ -118,8 +118,9 @@ def test_hourly_distribution_is_not_flat():
         assert (h == 0).any() or h.max() / h.min() > 3
 
 
-def test_ecommerce_evening_share_follows_causal_rules_not_the_validation_band():
-    # Known doc conflict: Causal Rules' table gives 21-24% for 18:00-22:00 while
-    # Validation Targets expect 25-35%. The Causal Rules table wins (higher authority).
+def test_ecommerce_evening_share_sits_in_the_amended_validation_band():
+    # Causal Rules' hourly table gives 21-24% for 18:00-22:00; Validation Targets said
+    # 25-35%. Causal Rules ranks higher, so the Validation band was amended to 21-24%
+    # (Phase 8, with a note on that page). This guards the table against drifting out of it.
     share = _share("e_commerce", range(18, 22))
-    assert 0.20 <= share <= 0.25
+    assert 0.21 <= share <= 0.24

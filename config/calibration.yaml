@@ -26,8 +26,8 @@ archetype_mix:
   spaza_shop: 0.22
   restaurant: 0.12
   grocery: 0.10
-  salon_low_cost: 0.10
-  e_commerce: 0.10
+  salon_low_cost: 0.08
+  e_commerce: 0.12
   salon: 0.08
   seasonal_retail: 0.08
   liquor_store: 0.06

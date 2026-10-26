@@ -77,6 +77,23 @@ def test_row_derived_dpd_flags_the_loans_the_generator_has_past_30_days(validate
     assert disagreement <= 0.10, (sql_late ^ gen_late, len(live))
 
 
+def test_vintage_par30_never_falls_as_loans_stay_on_book_longer(validated):
+    """The measure is cumulative ("ever late by month k"), so for the same loans the share at
+    month 6 cannot be below the share at month 3."""
+    conn, _ = validated
+    row = conn.execute("""
+        WITH obs AS (
+            SELECT l.loan_id, l.disbursed_on FROM t_loan l, t_bounds b
+            WHERE l.initial_balance IS NOT NULL AND (l.disbursed_on + interval '6 months')::date <= b.data_end),
+        f AS (
+            SELECT k, avg((EXISTS (SELECT 1 FROM t_rrow r WHERE r.loan_id = o.loan_id
+                   AND r.event_on <= (o.disbursed_on + make_interval(months => k))::date AND r.days_past_due > 30))::int) AS par, count(*) AS n
+            FROM obs o CROSS JOIN (VALUES (3), (6)) m(k) GROUP BY k)
+        SELECT (SELECT par FROM f WHERE k = 3), (SELECT par FROM f WHERE k = 6), (SELECT max(n) FROM f)""").fetchone()
+    assert row[2] and row[2] >= 10, "the run must have loans six months on book"
+    assert row[0] <= row[1]
+
+
 # ---------------------------------------------------------------------------
 # The seven failure modes
 # ---------------------------------------------------------------------------
@@ -177,6 +194,13 @@ def test_wholesale_par90_query_fires_on_a_deep_wholesale_loan(planted):
         INSERT INTO t_book (loan_id, merchant_id, archetype, d, balance, oldest_unpaid_days, dpd)
         SELECT 'planted', 'planted', 'wholesale', data_end, 100000000, 120, 120 FROM t_bounds""")
     assert fires(planted, "fm_wholesale_par90", "wholesale_par90").status == "HIGH"
+
+
+def test_vintage_query_fires_when_every_loan_is_late_early(planted):
+    planted.execute("UPDATE t_rrow SET days_past_due = 45")
+    checks = {c.name: c for c in validation.run_check(planted, "vintage_par30_by_mob")}
+    assert checks["vintage_par30_mob_3"].value == 1.0
+    assert checks["vintage_par30_mob_3"].status == "HIGH"
 
 
 def test_risk_clustering_query_fires_when_scores_sit_high(planted):

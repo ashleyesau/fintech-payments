@@ -173,6 +173,60 @@ fraud_triggers:
     otp_failures_session: 3
     risk_score_delta: 8
 
+# Chain 5: how the triggers are evaluated. Not in Causal Rules; these make the absolute
+# thresholds above usable on a population with very different volumes.
+risk_events:
+  # Each rule fires at most once per merchant per day, and then not again for this many days.
+  cooldown_days:
+    refund_spike: 7
+    velocity_breach: 1
+    chargeback_accumulation: 90
+    scheme_warning: 90
+    large_txn_flag: 1
+    otp_abuse: 1
+  # A refund spike needs at least this many refunds in the 7 days.
+  min_refunds_for_spike: 3
+  # Ignore hours with fewer transactions than this; a mean of 0.1 per hour makes "mean
+  # plus 3 sigma" a count of 2.
+  velocity_min_count: 8
+  # Causal Rules says mean plus 3 sigma. With about a dozen hourly looks a day and Poisson
+  # tails that fires on 4% of merchant-days from noise alone (17 alerts a year per Spaza
+  # merchant in a test run), and each alert adds 12 to a score that decays 1 a month.
+  velocity_sigma: 5.0
+  # The refund, chargeback and VAMP rules must also clear the count the archetype's
+  # baseline predicts by this many Poisson standard deviations, so small baselines do not
+  # trip on a handful of events.
+  count_sigma: 4.0
+  # Causal Rules says 3 chargebacks in 90 days. An E-commerce merchant expects about 10 in
+  # 90 days, so a flat 3 would fire for every one of them. The count must also be this
+  # multiple of what the archetype's fraud rate predicts.
+  chargeback_baseline_multiple: 3.0
+  # The VAMP ratio (chargebacks over completed card payments, 30 days) is only meaningful
+  # with this many card payments.
+  min_card_payments_for_vamp: 100
+  # An OTP "session" is one merchant's one hour of EFT payments that fail at the OTP step.
+  otp_session_hours: 1
+
+# Fraud clusters: bursts of abnormal activity on one merchant (a compromised terminal, card
+# testing, refund abuse). Not in Causal Rules; without them the Chain 5 triggers only ever
+# fire on Poisson noise. The monthly start probability is the archetype fraud_rate times
+# this factor, so E-commerce clusters most (1% a month, Spaza 0.1%). A cluster adds 60 to
+# 100 risk points over the following months and the score decays 1 a month, so roughly
+# 3 to 5% of merchants a year in the declined tier matches Validation Targets (3 to 8%).
+fraud_cluster:
+  monthly_start_probability_per_fraud_rate: 1.0
+  duration_days: [2, 5]
+  tx_count_multiplier: 3.0
+  refund_probability_multiplier: 8.0
+  chargeback_probability_multiplier: 10.0
+  # Share of payments with an inflated ticket, as a multiple of the archetype mean ticket.
+  large_ticket_share: 0.10
+  large_ticket_multiple: [6.0, 10.0]
+  # Share of EFT attempts that get through the OTP step (normal: 0.85).
+  otp_entered_rate: 0.35
+  # Transaction risk score range for payments in a cluster.
+  risk_score_range: [60, 95]
+
 # Chain 5: escalation after a refund spike.
 fraud_escalation:
   manual_review_risk_score_above: 55

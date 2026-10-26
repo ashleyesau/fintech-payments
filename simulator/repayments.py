@@ -28,7 +28,7 @@ from typing import Any, Optional
 import numpy as np
 
 from simulator.config import load_causal_rules
-from simulator.generator import SAST, new_id
+from simulator.common import SAST, new_id
 from simulator.payout import next_business_day
 from simulator.state import Loan, risk_delta
 

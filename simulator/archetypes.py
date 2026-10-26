@@ -8,6 +8,7 @@ so the generator can seed numpy's RNG for reproducible runs.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Dict
 
 import numpy as np
@@ -124,3 +125,10 @@ def sample_quality_percentile() -> float:
     a = cfg.get("beta_a", 1.5)
     b = cfg.get("beta_b", 4.0)
     return float(np.random.beta(a, b))
+
+
+@lru_cache(maxsize=None)
+def hour_probabilities(archetype_name: str) -> np.ndarray:
+    """The archetype's hourly weights as probabilities summing to 1."""
+    weights = np.array(get_archetype(archetype_name).hourly_weights, dtype=float)
+    return weights / weights.sum()

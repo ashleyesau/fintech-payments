@@ -15,7 +15,7 @@ from typing import Any, Optional
 import numpy as np
 
 from simulator.config import load_causal_rules, load_lending
-from simulator.generator import SAST, new_id
+from simulator.common import SAST, new_id
 from simulator.repayments import simulate_repayments, start_schedule
 from simulator.state import Loan
 

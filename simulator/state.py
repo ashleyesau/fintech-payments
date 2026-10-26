@@ -89,6 +89,14 @@ class Merchant:
     last_adverse_event_date: Optional[date] = None
     last_risk_decay_date: Optional[date] = None
 
+    # Chain 5 bookkeeping, driven by risk.py. risk_history holds one tuple per day:
+    # (completed payments, completed card payments, refunds, chargebacks).
+    risk_history: deque = field(default_factory=lambda: deque(maxlen=90))
+    baseline_daily_tx: float = 0.0           # expected payments today, before any fraud cluster
+    fraud_cluster_until: Optional[date] = None
+    last_risk_event: dict = field(default_factory=dict)   # rule_type -> date it last fired
+    escalation_until: Optional[date] = None  # a chargeback before this date escalates a refund spike
+
     # Lending. A loan is active from disbursement until it is repaid or written off.
     active_loan: Optional["Loan"] = None
     prior_loan_repaid: bool = False
@@ -350,6 +358,14 @@ class Merchant:
         # Month counters restart so the next transition needs a fresh run of months.
         self.days_growth_high = 0
         self.days_growth_low = 0
+
+    def escalate_to_stressed(self) -> bool:
+        """Chain 5 escalation: a Stable merchant that takes a chargeback soon after a refund
+        spike becomes Stressed. Any other state is left alone."""
+        if self.merchant_state != "stable":
+            return False
+        self._enter_state("stressed")
+        return True
 
     # -----------------------------------------------------------------------
     # Chain 4: risk score

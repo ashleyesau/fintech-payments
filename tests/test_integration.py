@@ -12,7 +12,8 @@ import pytest
 from simulator import lending
 from simulator.generator import simulate_day
 from simulator.lending import simulate_lending_day
-from simulator.models import LoanApplication, LoanRepayment, MerchantSnapshot, MerchantTransaction
+from simulator.models import LoanApplication, LoanRepayment, MerchantSnapshot, MerchantTransaction, RiskEvent
+from simulator.risk import evaluate_risk
 from simulator.state import Merchant
 
 START = date(2025, 1, 1)
@@ -22,6 +23,7 @@ CARD_CHANNELS = {"card_present", "card_ecom", "payment_link"}
 
 def run(days: int, seed: int = 31):
     np.random.seed(seed)
+    risk_rows: dict[str, list[dict]] = defaultdict(list)
     merchants = [
         Merchant(
             merchant_id=f"m-{i}",
@@ -37,7 +39,9 @@ def run(days: int, seed: int = 31):
     for offset in range(days):
         day = START + timedelta(days=offset)
         for m in merchants:
-            events[m.merchant_id] += simulate_day(m, day)
+            todays = simulate_day(m, day)
+            events[m.merchant_id] += todays
+            risk_rows[m.merchant_id] += evaluate_risk(m, todays, day)
             m.evaluate_state(day)
             m.decay_risk(day)
     return merchants, events
@@ -190,3 +194,32 @@ def test_lending_events_follow_the_merchants_through_a_run(monkeypatch):
         assert m.loan_count == len(own)
         assert m.has_active_loan == (m.active_loan is not None)
         assert 0 <= m.risk_score <= 100
+
+
+def test_risk_events_from_a_run_are_valid_and_move_the_score(monkeypatch):
+    # Every merchant is in a fraud cluster for the first days so the rules have something to see.
+    np.random.seed(40)
+    merchants = [
+        Merchant(merchant_id=f"m-{i}", archetype=a, quality_percentile=0.35, onboarded_at=START,
+                 first_transaction_at=START, fraud_cluster_until=START + timedelta(days=3), risk_score=10)
+        for i, a in enumerate(["spaza_shop", "restaurant", "e_commerce", "salon"])
+    ]
+    rows = []
+    for offset in range(60):
+        day = START + timedelta(days=offset)
+        for m in merchants:
+            rows += evaluate_risk(m, simulate_day(m, day), day)
+            m.decay_risk(day)
+    assert rows
+    ids = set()
+    for row in rows:
+        RiskEvent(**row)
+        assert row["alert_id"] not in ids
+        ids.add(row["alert_id"])
+    assert all(0 <= m.risk_score <= 100 for m in merchants)
+    assert max(m.risk_score for m in merchants) > 10
+    # The last event's score is the merchant's score at that moment.
+    for m in merchants:
+        own = [r for r in rows if r["merchant_id"] == m.merchant_id]
+        if own:
+            assert own[-1]["risk_score"] >= m.risk_score  # decay only lowers it afterwards

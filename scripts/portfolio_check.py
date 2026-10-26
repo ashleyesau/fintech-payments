@@ -22,6 +22,7 @@ import numpy as np
 from simulator import lending
 from simulator.generator import simulate_day
 from simulator.lending import simulate_lending_day
+from simulator.risk import evaluate_risk
 from simulator.state import Merchant
 
 ARCHETYPES = ["wholesale", "tutor", "salon", "e_commerce", "restaurant", "salon_low_cost"]
@@ -44,13 +45,16 @@ def run(merchants: int, days: int, boost: float, seed: int) -> dict:
     rows: list[dict] = []
     snapshots: list[tuple] = []
     states = Counter()
+    risk_events: Counter = Counter()
     book_by_state: Counter = Counter()
     par30_by_state: Counter = Counter()
     loans_by_state: Counter = Counter()
     for offset in range(days):
         day = start + timedelta(days=offset)
         for m in pool:
-            simulate_day(m, day)
+            events = simulate_day(m, day)
+            for r in evaluate_risk(m, events, day):
+                risk_events[r["rule_type"]] += 1
             for r in simulate_lending_day(m, day)["loan_repayments"]:
                 r["_day"] = day
                 rows.append(r)
@@ -73,7 +77,7 @@ def run(merchants: int, days: int, boost: float, seed: int) -> dict:
                             par30_by_state[m.merchant_state] += m.active_loan.outstanding_balance_minor
     return {
         "rows": rows, "snapshots": snapshots, "pool": pool, "states": states,
-        "book_by_state": book_by_state, "par30_by_state": par30_by_state, "loans_by_state": loans_by_state,
+        "risk_events": risk_events, "book_by_state": book_by_state, "par30_by_state": par30_by_state, "loans_by_state": loans_by_state,
     }
 
 
@@ -114,6 +118,17 @@ def report(result: dict, days: int) -> None:
     total_book = sum(book.values()) or 1
     print("book by merchant state (last 6 month ends): " + ", ".join(
         f"{k} {100 * v / total_book:.0f}% (PAR30 within {100 * par30[k] / v:.0f}%)" for k, v in sorted(book.items())))
+    buckets = Counter(
+        "0-30" if m.risk_score <= 30 else "31-55" if m.risk_score <= 55 else "56-75" if m.risk_score <= 75 else "76-100"
+        for m in pool
+    )
+    print("risk score buckets (end of run): " + ", ".join(
+        f"{k} {100 * buckets[k] / len(pool):.0f}%" for k in ("0-30", "31-55", "56-75", "76-100")
+    ) + "  (target 55-70 / 15-25 / 8-15 / 3-8)")
+    years = days / 365
+    print("risk events per merchant-year: " + ", ".join(
+        f"{k} {v / len(pool) / years:.2f}" for k, v in sorted(result["risk_events"].items())
+    ) + f"  (total {sum(result['risk_events'].values()) / len(pool) / years:.2f})")
     share = result["states"]
     total = sum(share.values())
     print("merchant states (month-end average): " + ", ".join(f"{k} {100*v/total:.0f}%" for k, v in sorted(share.items())))

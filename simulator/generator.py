@@ -6,7 +6,7 @@ it returns the list of events that merchant would generate on that day.
 
 Transactions are implemented here: payments through the card or instant EFT funnel,
 fees, settlement, and the refunds and chargebacks that follow earlier payments. Loan
-events live in lending.py; risk events are a later Phase 5 step.
+events live in lending.py and the Chain 5 risk rules and fraud clusters in risk.py.
 """
 from __future__ import annotations
 
@@ -19,20 +19,19 @@ from typing import Any, Optional
 
 import numpy as np
 
-from simulator.archetypes import get_archetype
+from simulator.archetypes import get_archetype, hour_probabilities
 from simulator.calendar import (
     get_intensity_multiplier,
     get_ticket_size_modifier,
     get_tx_count_modifier,
 )
+from simulator.common import SAST, new_id
 from simulator.config import load_fees, load_payments, settings
 from simulator.payout import settlement_batch_id, settlement_date
+from simulator.risk import cluster_active, cluster_value, maybe_start_fraud_cluster
 
 _PAY = load_payments()
 _FEES = load_fees()
-
-# South Africa has no daylight saving; archetype hourly weights are local time.
-SAST = timezone(timedelta(hours=2))
 
 _CARD_FEE_CHANNELS = {"card_present", "card_ecom", "payment_link"}
 _ECOM_CHANNELS = {"card_ecom", "payment_link"}
@@ -62,14 +61,8 @@ def _seconds(step: str) -> timedelta:
     return timedelta(seconds=int(np.random.randint(low, high + 1)))
 
 
-@lru_cache(maxsize=None)
-def _hour_probabilities(archetype_name: str) -> np.ndarray:
-    weights = np.array(get_archetype(archetype_name).hourly_weights, dtype=float)
-    return weights / weights.sum()
-
-
 def _random_time(sim_date: date, archetype_name: str) -> datetime:
-    hour = int(np.random.choice(24, p=_hour_probabilities(archetype_name)))
+    hour = int(np.random.choice(24, p=hour_probabilities(archetype_name)))
     return datetime(
         sim_date.year, sim_date.month, sim_date.day,
         hour, int(np.random.randint(0, 60)), int(np.random.randint(0, 60)),
@@ -84,8 +77,12 @@ def _channel_mix(archetype_name: str) -> dict[str, float]:
     return mix
 
 
-def _ticket_minor(archetype_name: str, sim_date: date) -> int:
+def _ticket_minor(archetype_name: str, sim_date: date, in_cluster: bool = False) -> int:
     archetype = get_archetype(archetype_name)
+    if in_cluster and np.random.random() < cluster_value("large_ticket_share"):
+        # A fraud cluster includes a few far larger tickets than the merchant ever sees.
+        low, high = cluster_value("large_ticket_multiple")
+        return int(round(archetype.mean_ticket_zar * float(np.random.uniform(low, high)) * 100))
     ticket = np.random.normal(archetype.mean_ticket_zar, archetype.ticket_std_zar)
     ticket *= get_ticket_size_modifier(sim_date, archetype_name)
     # A normal draw can go to zero or below; keep tickets at a plausible minimum.
@@ -93,18 +90,16 @@ def _ticket_minor(archetype_name: str, sim_date: date) -> int:
     return int(round(ticket * 100))
 
 
-def new_id() -> str:
-    """UUID4 drawn from numpy's RNG so a seeded run reproduces its identifiers."""
-    return str(uuid.UUID(bytes=np.random.bytes(16), version=4))
-
-
 def _auth_code() -> str:
     return "".join(_AUTH_CODE_CHARS[i] for i in np.random.randint(0, len(_AUTH_CODE_CHARS), size=6))
 
 
-def _risk(blocked: bool) -> tuple[int, str]:
+def _risk(blocked: bool, elevated: bool = False) -> tuple[int, str]:
     cfg = _PAY["risk"]
-    if blocked:
+    if elevated:
+        low, high = cluster_value("risk_score_range")
+        score = int(np.random.randint(low, high + 1))
+    elif blocked:
         low, high = cfg["blocked_range"]
         score = int(np.random.randint(low, high + 1))
     else:
@@ -221,32 +216,37 @@ def _complete(txn: dict, merchant: Any, authorized_at: datetime, completed_at: d
     txn["batch_id"] = settlement_batch_id(merchant.merchant_id, settle_on)
 
 
-def _card_style_path(txn: dict, merchant: Any, auth_rate: float) -> None:
+def _card_style_path(txn: dict, merchant: Any, auth_rate: float, elevated: bool = False) -> None:
     """initiated -> authorized -> completed, with failed as a terminal state."""
     created_at = txn["created_at"]
     if np.random.random() < auth_rate:
         authorized_at = created_at + _seconds("card_authorize")
         completed_at = authorized_at + _seconds("card_complete")
         _complete(txn, merchant, authorized_at, completed_at)
-        txn["risk_score"], txn["risk_action"] = _risk(blocked=False)
+        txn["risk_score"], txn["risk_action"] = _risk(blocked=False, elevated=elevated)
         return
 
     code = _choose(_PAY["card_decline_codes"])
     txn["status"] = "failed"
     txn["decline_code"] = code
-    txn["risk_score"], txn["risk_action"] = _risk(blocked=code == _PAY["decline_codes"]["fraud_blocked"])
+    txn["risk_score"], txn["risk_action"] = _risk(
+        blocked=code == _PAY["decline_codes"]["fraud_blocked"], elevated=elevated
+    )
 
 
-def _eft_path(txn: dict, merchant: Any) -> None:
-    """Seven-state instant EFT funnel. A dropout leaves the timestamps of the steps reached."""
-    funnel = _PAY["eft_funnel"]
+def _eft_path(txn: dict, merchant: Any, elevated: bool = False) -> None:
+    """Seven-state instant EFT funnel. A dropout leaves the timestamps of the steps reached.
+    In a fraud cluster far fewer attempts get through the OTP step."""
+    funnel = dict(_PAY["eft_funnel"])
+    if elevated:
+        funnel["otp_entered"] = cluster_value("otp_entered_rate")
     codes = _PAY["decline_codes"]
     t = txn["created_at"]
 
     def fail(status: str, code: Optional[str]) -> None:
         txn["status"] = status
         txn["decline_code"] = code
-        txn["risk_score"], txn["risk_action"] = _risk(blocked=False)
+        txn["risk_score"], txn["risk_action"] = _risk(blocked=False, elevated=elevated)
 
     if np.random.random() >= funnel["bank_selected"]:
         return fail("abandoned", None)
@@ -274,7 +274,7 @@ def _eft_path(txn: dict, merchant: Any) -> None:
         txn["authorized_at"] = authorized_at
         return fail("failed", codes["technical_error"])
     _complete(txn, merchant, authorized_at, authorized_at + _seconds("eft_complete"))
-    txn["risk_score"], txn["risk_action"] = _risk(blocked=False)
+    txn["risk_score"], txn["risk_action"] = _risk(blocked=False, elevated=elevated)
 
 
 def _card_auth_rate(archetype_name: str, channel: str) -> float:
@@ -292,22 +292,25 @@ def simulate_transaction(merchant: Any, sim_date: date) -> dict:
     fees and settlement for completed payments, and returns a merchant_transactions
     row. The row carries the final status and the timestamps of every step reached.
     """
+    in_cluster = cluster_active(merchant, sim_date)
     channel = _choose(_channel_mix(merchant.archetype))
     created_at = _random_time(sim_date, merchant.archetype)
-    txn = _blank_transaction(merchant, channel, created_at, _ticket_minor(merchant.archetype, sim_date))
+    txn = _blank_transaction(
+        merchant, channel, created_at, _ticket_minor(merchant.archetype, sim_date, in_cluster)
+    )
 
     if channel == "instant_eft":
         txn["payment_method"] = "eft"
-        _eft_path(txn, merchant)
+        _eft_path(txn, merchant, in_cluster)
     elif channel == "payshap":
         txn["payment_method"] = "payshap"
-        _card_style_path(txn, merchant, _PAY["payshap_auth_rate"])
+        _card_style_path(txn, merchant, _PAY["payshap_auth_rate"], in_cluster)
     else:
         txn["payment_method"] = _choose(_PAY["payment_method_mix"]["card"])
         txn["entry_mode"] = (
             _choose(_PAY["card_entry_mode_mix"]) if channel == "card_present" else "ecom"
         )
-        _card_style_path(txn, merchant, _card_auth_rate(merchant.archetype, channel))
+        _card_style_path(txn, merchant, _card_auth_rate(merchant.archetype, channel), in_cluster)
     return txn
 
 
@@ -324,9 +327,12 @@ def _schedule_followups(merchant: Any, txn: dict, sim_date: date) -> None:
     """
     archetype = get_archetype(merchant.archetype)
     delays = _PAY["followup_delay_days"]
-    kinds = [("refund", archetype.refund_rate)]
+    in_cluster = cluster_active(merchant, sim_date)
+    refund_rate = archetype.refund_rate * (cluster_value("refund_probability_multiplier") if in_cluster else 1.0)
+    chargeback_rate = archetype.fraud_rate * (cluster_value("chargeback_probability_multiplier") if in_cluster else 1.0)
+    kinds = [("refund", min(refund_rate, 1.0))]
     if txn["channel"] in _CARD_FEE_CHANNELS:
-        kinds.append(("chargeback", archetype.fraud_rate))
+        kinds.append(("chargeback", min(chargeback_rate, 1.0)))
     for kind, rate in kinds:
         if np.random.random() < rate:
             low, high = delays[kind]
@@ -381,7 +387,9 @@ def simulate_day(merchant: Any, sim_date: date) -> list[dict]:
     if not not_yet_onboarded:
         merchant.maybe_go_dormant(sim_date)
         lam = 0.0
+        merchant.baseline_daily_tx = 0.0
         if merchant.dormant_since is None:
+            maybe_start_fraud_cluster(merchant, sim_date)
             intensity = get_intensity_multiplier(
                 sim_date,
                 merchant.archetype,
@@ -390,6 +398,10 @@ def simulate_day(merchant: Any, sim_date: date) -> list[dict]:
                 is_metro=merchant.is_metro,
             )
             lam = merchant.effective_tx_rate() * intensity * get_tx_count_modifier(sim_date)
+            # The baseline is what the merchant would normally do today; velocity rules compare against it.
+            merchant.baseline_daily_tx = lam
+            if cluster_active(merchant, sim_date):
+                lam *= cluster_value("tx_count_multiplier")
         count = int(np.random.poisson(lam)) if lam > 0 else 0
         for _ in range(count):
             txn = simulate_transaction(merchant, sim_date)

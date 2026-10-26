@@ -2,6 +2,10 @@
 # Source: Simulator Design section 4 (SARB Interchange Determination Project Phase V
 # baseline, late-2024 rates; Yoco-style and Ozow-style merchant pricing).
 # Rates are fractions (0.0044 = 0.44%). Amounts are ZAR cents.
+#
+# These rates give a GPV-weighted gross take of about 2.0% and net of about 1.3%.
+# Validation Targets' original gross band (2.5-3.2%) is not reachable with this card
+# (instant EFT capped at R3, PayShap R1 flat), so it was amended to 1.9-2.4%.
 
 # Interchange by compliance case and card type. Card-present cases key off EMV
 # compliance, card-not-present cases off 3DS compliance.

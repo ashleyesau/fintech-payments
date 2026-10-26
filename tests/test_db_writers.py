@@ -3,10 +3,8 @@
 Each test run gets its own throwaway database, created from the migrations, so nothing
 touches the fintech database. Skips when Postgres is not reachable.
 """
-import os
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 
 import numpy as np
 import psycopg
@@ -14,7 +12,6 @@ import pytest
 
 from simulator import db, lending
 from simulator.common import SAST, end_of_day
-from simulator.config import settings
 from simulator.db import (
     STREAMS,
     BackfillWriter,
@@ -30,45 +27,7 @@ from simulator.lending import simulate_lending_day
 from simulator.risk import evaluate_risk
 from simulator.state import Merchant
 
-MIGRATIONS = sorted((Path(__file__).parent.parent / "migrations").glob("*.sql"))
 START = date(2025, 1, 1)
-
-
-def _dsn(dbname: str) -> str:
-    return (
-        f"host={settings.postgres_host} port={settings.postgres_port} dbname={dbname} "
-        f"user={settings.postgres_user} password={settings.postgres_password}"
-    )
-
-
-@pytest.fixture(scope="module")
-def dsn():
-    name = f"fintech_test_{os.getpid()}"
-    try:
-        admin = psycopg.connect(_dsn(settings.postgres_db), autocommit=True)
-    except psycopg.OperationalError as exc:
-        pytest.skip(f"Postgres not reachable: {exc}")
-    admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-    admin.execute(f'CREATE DATABASE "{name}"')
-    try:
-        with psycopg.connect(_dsn(name), autocommit=True) as conn:
-            for path in MIGRATIONS:
-                conn.execute(path.read_text())
-        yield _dsn(name)
-    finally:
-        admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        admin.close()
-
-
-@pytest.fixture
-def conn(dsn):
-    connection = db.connect(dsn)
-    for table in ("loan_repayments", "risk_events", "loan_applications", "merchant_transactions", "merchants"):
-        connection.execute(f"TRUNCATE {table} CASCADE")
-    connection.commit()
-    yield connection
-    connection.rollback()
-    connection.close()
 
 
 def count(conn, table: str) -> int:
@@ -424,13 +383,25 @@ def test_snapshot_rows_are_end_of_day_and_skip_unonboarded_merchants():
 
 
 @pytest.mark.slow
-def test_one_snapshot_per_merchant_per_day_is_stored(conn, run):
+def test_one_snapshot_per_merchant_per_day_is_stored_until_the_churn_window_ends(conn, run):
     merchants, days = run
     write_all(BackfillWriter(conn), run)
-    assert count(conn, "merchants") == len(days) * len(merchants)
-    per_merchant = conn.execute("SELECT count(DISTINCT snapshot_at) FROM merchants WHERE merchant_id = %s",
-                                (merchants[0].merchant_id,)).fetchone()[0]
-    assert per_merchant == len(days)
+    expected_rows = sum(len(snapshots) for _, _, snapshots in days)
+    assert count(conn, "merchants") == expected_rows
+    due_days = Counter(r["merchant_id"] for _, _, snapshots in days for r in snapshots)
+    for m in merchants:
+        stored = conn.execute(
+            "SELECT count(*), count(DISTINCT snapshot_at) FROM merchants WHERE merchant_id = %s",
+            (m.merchant_id,),
+        ).fetchone()
+        assert stored[0] == stored[1] == due_days[m.merchant_id]
+    # The run has merchants that churned: they stop before the end, the others do not.
+    churned_without_loan = [m for m in merchants if m.churned_at and not m.has_active_loan and m.loan_closed_on is None]
+    assert churned_without_loan
+    for m in churned_without_loan:
+        last = conn.execute("SELECT max(snapshot_at) FROM merchants WHERE merchant_id = %s", (m.merchant_id,)).fetchone()[0]
+        assert last.date() <= m.churned_at + timedelta(days=30)
+    assert any(due_days[m.merchant_id] == len(days) for m in merchants)
 
 
 def test_a_second_snapshot_for_the_same_day_is_rejected(conn, run):
@@ -453,5 +424,9 @@ def test_snapshots_track_state_and_loan_flags(conn, run):
         "SELECT merchant_id, merchant_state, loan_count, has_active_loan FROM merchants "
         "WHERE snapshot_at = %s ORDER BY merchant_id", (end_of_day(days[-1][0]),)
     ).fetchall()
-    expected = sorted((m.merchant_id, m.merchant_state, m.loan_count, m.has_active_loan) for m in merchants)
+    last_day = days[-1][0]
+    expected = sorted(
+        (m.merchant_id, m.merchant_state, m.loan_count, m.has_active_loan)
+        for m in merchants if m.snapshot_due(last_day)
+    )
     assert [tuple(r) for r in last] == expected

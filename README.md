@@ -39,9 +39,22 @@ docker exec -i fintech_pg psql -U sim -d fintech < migrations/002_loan_repayment
 pytest tests/ -q                 # everything
 pytest tests/ -q -m "not slow"   # skips the simulation-heavy tests
 
-# 5. Run backfill (Phase 7, not implemented yet)
-# python -m simulator.main --mode backfill --start-date 2025-01-01 --end-date 2026-01-01
+# 5. Run a backfill: 100 merchants over 2025
+python -m simulator.main --mode backfill --start-date 2025-01-01 --end-date 2026-01-01 --merchant-count 100
 ```
+
+## Running a backfill
+
+Backfill advances one simulated day at a time as fast as the machine allows, writes each day to Postgres in one transaction, then writes a checkpoint.
+
+- The end date is exclusive: 2025-01-01 to 2026-01-01 is 365 days.
+- `--merchant-count` is the number of merchants onboarded, not the number active. They join over the first six months (10, 18, 25, 20, 15 and 12 percent a month), and from month seven each merchant that churns is replaced. About a third never transact, so 100 merchants gives roughly 67 that ever trade.
+- A fresh run needs an empty `merchants` table and no existing checkpoint. It refuses to start otherwise and never deletes anything.
+- `--resume` continues a stopped run from `checkpoint.json` (or `--checkpoint`), taking the start date, merchant count and seed from it. The checkpoint holds every merchant, numpy's RNG state and the run flags, so a resumed run writes the same rows an uninterrupted one would. A resume under different `ENABLE_RISK_EVENTS` or `ENABLE_LOAN_APPLICATIONS` values is refused.
+- `--seed` (default `RANDOM_SEED`) seeds a fresh run.
+- The run prints merchants onboarded, merchants that ever transacted, the final merchant states and the rows written.
+
+Run time is not measured at scale. Generation was about 175 microseconds per transaction in earlier measurements; 1,000 merchants over 12 months is an estimated 70 minutes plus writing and a checkpoint of about 1 second per day, and slower on a laptop. Streaming mode is not implemented yet.
 
 ## Project structure
 
@@ -49,7 +62,8 @@ pytest tests/ -q -m "not slow"   # skips the simulation-heavy tests
 simulator/          Core simulation modules
 config/             YAML calibration, archetypes, fees and causal rules
 scripts/            portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test)
-tests/              Schema, calendar, generator, lending, repayment, risk, config and DB tests
+tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner and DB tests
 migrations/         Postgres DDL
 docker-compose.yml  Local Postgres stack
+.github/workflows/  CI: Postgres service container, migrations, full test suite
 ```

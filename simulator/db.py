@@ -125,10 +125,14 @@ def validated_update(update: dict) -> dict:
 
 def snapshot_rows(merchants: Iterable[Any], day: date) -> list[dict]:
     """The end-of-day merchants rows for `day`. Merchants not yet onboarded have none.
-    Churned merchants keep getting rows so the dimension stays continuous."""
+    A churned merchant keeps getting rows for churned_snapshot_days after it churns (and
+    while it has an active loan), so the dimension stays continuous without growing for
+    ever. See Merchant.snapshot_due."""
     stamp = end_of_day(day)
     return [
-        m.snapshot(stamp) for m in merchants if m.onboarded_at is None or m.onboarded_at <= day
+        m.snapshot(stamp)
+        for m in merchants
+        if (m.onboarded_at is None or m.onboarded_at <= day) and m.snapshot_due(day)
     ]
 
 

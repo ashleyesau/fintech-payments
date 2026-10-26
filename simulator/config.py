@@ -37,6 +37,8 @@ class SimSettings(BaseSettings):
     simulation_start_date: str = "2025-01-01"
     simulation_end_date: str = "2026-01-01"
     streaming_speed_factor: int = 3_600  # simulated seconds per real second
+    random_seed: int = 42                # seeds numpy once at the start of a fresh run
+    checkpoint_path: str = "checkpoint.json"
 
     # Feature flags
     enable_risk_events: bool = True

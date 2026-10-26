@@ -85,6 +85,10 @@ def load_payments() -> dict[str, Any]:
     return _load_yaml("payments.yaml")
 
 
+def load_lending() -> dict[str, Any]:
+    return _load_yaml("lending.yaml")
+
+
 def load_causal_rules() -> dict[str, Any]:
     return _load_yaml("causal_rules.yaml")
 

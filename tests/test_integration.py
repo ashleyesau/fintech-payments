@@ -9,8 +9,10 @@ from datetime import date, datetime, timedelta, timezone
 import numpy as np
 import pytest
 
+from simulator import lending
 from simulator.generator import simulate_day
-from simulator.models import MerchantSnapshot, MerchantTransaction
+from simulator.lending import simulate_lending_day
+from simulator.models import LoanApplication, MerchantSnapshot, MerchantTransaction
 from simulator.state import Merchant
 
 START = date(2025, 1, 1)
@@ -133,3 +135,46 @@ def test_dormant_merchants_stop_trading_and_walk_down_to_churned(monkeypatch):
     churned = [m for m in merchants if m.merchant_state == "churned"]
     assert churned
     assert all(m.dormant_since is not None for m in churned)
+
+
+def test_lending_events_follow_the_merchants_through_a_run(monkeypatch):
+    # Propensity turned up so a small population produces loans within the run.
+    for state in ("growing", "stable"):
+        monkeypatch.setitem(lending._PROPENSITY, state, 0.6)
+    monkeypatch.setitem(lending._LEND, "ineligible_monthly_application_probability", 0.3)
+
+    np.random.seed(14)
+    merchants = [
+        Merchant(
+            merchant_id=f"m-{i}", archetype=a, quality_percentile=0.35, onboarded_at=START, risk_score=8
+        )
+        for i, a in enumerate(["restaurant", "salon", "e_commerce", "wholesale"])
+    ]
+    applications, updates = [], []
+    for offset in range(240):
+        day = START + timedelta(days=offset)
+        for m in merchants:
+            simulate_day(m, day)
+            lend = simulate_lending_day(m, day)
+            applications += lend["loan_applications"]
+            updates += lend["loan_application_updates"]
+            m.evaluate_state(day)
+            m.decay_risk(day)
+
+    assert applications and updates
+    for row in applications:
+        LoanApplication(**row)
+    by_id = {a["application_id"]: a for a in applications}
+    assert len(by_id) == len(applications)
+    for update in updates:
+        original = by_id[update["application_id"]]
+        assert original["decision"] in {"approved", "counter_offer"}
+        assert update["disbursement_amount_minor"] == original["approved_amount"]
+        assert update["disbursed_at"] > original["decision_ts"]
+    assert len({u["application_id"] for u in updates}) == len(updates)
+    for m in merchants:
+        own = [u for u in updates if by_id[u["application_id"]]["merchant_id"] == m.merchant_id]
+        assert m.loan_count == len(own)
+        # No repayments yet (Phase 5.3), so the first loan stays active and blocks the rest.
+        assert len(own) <= 1
+        assert m.has_active_loan == bool(own)

@@ -4,9 +4,9 @@ generator.py: Core event generation functions.
 simulate_day() is the main entry point: given a merchant and a calendar date,
 it returns the list of events that merchant would generate on that day.
 
-Phase 5.1 (transactions) is implemented here: payments through the card or instant
-EFT funnel, fees, settlement, and the refunds and chargebacks that follow earlier
-payments. Loan applications, repayments and risk events are later Phase 5 steps.
+Transactions are implemented here: payments through the card or instant EFT funnel,
+fees, settlement, and the refunds and chargebacks that follow earlier payments. Loan
+events live in lending.py; risk events are a later Phase 5 step.
 """
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ def _ticket_minor(archetype_name: str, sim_date: date) -> int:
     return int(round(ticket * 100))
 
 
-def _new_id() -> str:
+def new_id() -> str:
     """UUID4 drawn from numpy's RNG so a seeded run reproduces its identifiers."""
     return str(uuid.UUID(bytes=np.random.bytes(16), version=4))
 
@@ -171,7 +171,7 @@ def _fees(merchant: Any, channel: str, amount_minor: int) -> tuple[int, int, int
 def _blank_transaction(merchant: Any, channel: str, created_at: datetime, amount_minor: int) -> dict:
     device_id, pos_version = _device_fields(merchant, channel)
     return {
-        "transaction_id": _new_id(),
+        "transaction_id": new_id(),
         "merchant_id": merchant.merchant_id,
         "event_type": "payment",
         "channel": channel,
@@ -202,7 +202,7 @@ def _blank_transaction(merchant: Any, channel: str, created_at: datetime, amount
         "device_id": device_id,
         "pos_version": pos_version,
         "is_test": False,
-        "correlation_id": f"corr-{_new_id().replace('-', '')[:12]}",
+        "correlation_id": f"corr-{new_id().replace('-', '')[:12]}",
     }
 
 
@@ -402,15 +402,3 @@ def simulate_day(merchant: Any, sim_date: date) -> list[dict]:
     events.extend(payments)
     events.sort(key=lambda e: e["created_at"])
     return events
-
-
-def simulate_loan_application(merchant: Any, sim_date: date) -> dict | None:
-    """
-    Probabilistically generate a loan application event.
-
-    Returns a loan_applications row dict, or None if the merchant does not
-    apply this day. Eligibility gates from Chain 3 of the causal rules.
-
-    Phase 5.2 implementation.
-    """
-    raise NotImplementedError("Phase 5.2")

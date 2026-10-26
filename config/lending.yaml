@@ -1,0 +1,76 @@
+# Loan application generation parameters for simulator/lending.py.
+#
+# Eligibility gates, monthly propensity and the approval bands are in
+# causal_rules.yaml (Causal Rules Chain 3 and 4). This file holds the rest.
+# Sourced from Simulator Design / Validation Targets: terms of 3, 6, 9 or 12 months,
+# a decision in about 90 seconds, a 0 to 3 day disbursement lag, and the approval-rate
+# and October/November volume targets the multipliers below are sized to hit.
+# NOT sourced, illustrative: channel mix, term mix, cost by term, amount sizing,
+# bureau and FICA parameters, manual review and counter-offer acceptance rates.
+
+# Applications cluster before the December peak. With 2.0 in October and November and
+# 1.0 elsewhere, those months run at about 1.7x an average month (Validation Targets
+# want 1.5 to 2.5x).
+seasonal_application_multiplier: {10: 2.0, 11: 2.0}
+
+# Merchants that fail an eligibility gate still apply sometimes and are declined, which
+# is what separates the gross approval rate (35-55%) from the net rate (55-75%).
+# Monthly probability for a merchant in the market that is not eligible.
+ineligible_monthly_application_probability: 0.04
+
+# A merchant does not apply again within this many days of its last application.
+application_cooldown_days: 30
+
+# Of merchants in the 31-55 risk band sent to manual review, the share approved.
+manual_review_approve_rate: 0.60
+# Of merchants offered a counter-offer, the share that accept and are disbursed.
+counter_offer_accept_rate: 0.75
+
+application_channel_mix: {web: 0.30, mobile: 0.30, yoco_embedded: 0.35, vodacom: 0.05}
+requested_term_mix: {3: 0.15, 6: 0.45, 9: 0.15, 12: 0.25}
+# Total cost under the NCA as a fraction of principal, by term. The 6-month figure is
+# the Event Schemas example.
+total_cost_percent_by_term: {3: 0.045, 6: 0.07, 9: 0.095, 12: 0.12}
+
+# Decision latency. Automated decisions take seconds; manual review takes hours.
+decision_seconds: [20, 180]
+manual_review_hours: [1, 10]
+# Days between the decision and the funds landing; the disbursement time falls in
+# business hours (SAST), at least 30 minutes after the decision.
+disbursement_lag_days: [0, 3]
+disbursement_hours: [8, 16]
+
+# Amount sizing, in cents. Declared revenue is the merchant's own claim: its average
+# monthly GPV over 90 days times a factor in this range. The request is a multiple of
+# declared revenue within the floor and ceiling. Approval is capped at a multiple of
+# average monthly GPV.
+declared_revenue_factor: [0.9, 1.4]
+declared_revenue_floor_minor: 500000
+requested_revenue_multiple: [0.8, 2.0]
+requested_floor_minor: 1000000
+requested_ceiling_minor: 50000000
+affordability_gpv_multiple: 3.0
+min_approved_minor: 500000
+# Approved amounts are rounded down to this step (R100).
+amount_step_minor: 10000
+
+# Bureau score: base + quality * weight - (risk_score - 10) * penalty + normal noise,
+# clipped to 100-999. Below the floor an application is declined.
+bureau:
+  base: 600
+  quality_weight: 250
+  risk_penalty: 2.0
+  noise_std: 50
+  floor: 400
+  mix: {transunion: 0.50, xds: 0.25, experian: 0.25}
+
+# Share of applications whose KYC check fails (declined).
+fica_fail_rate: 0.02
+
+# Share of applicants with a CIPC registration number.
+business_registration_rate: 0.85
+# Trading history before joining the platform, in months, inclusive.
+prior_trading_months: [0, 72]
+
+actioned_by: {automated: automated_engine, manual: manual_review}
+model_version_id: model-v1.0

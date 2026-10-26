@@ -88,6 +88,13 @@ class Merchant:
     last_adverse_event_date: Optional[date] = None
     last_risk_decay_date: Optional[date] = None
 
+    # Lending. A loan is active from disbursement until it is repaid or written off.
+    active_loan: Optional["Loan"] = None
+    prior_loan_repaid: bool = False
+    last_application_date: Optional[date] = None
+    # Approved applications waiting for their disbursement day (0 to 3 days after the decision).
+    scheduled_disbursements: list = field(default_factory=list)
+
     # Refunds and chargebacks that will be emitted on a later day. Each entry is a dict
     # with kind, due_date and the original payment's identifying fields.
     scheduled_followups: list = field(default_factory=list)

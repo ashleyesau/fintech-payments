@@ -2,6 +2,8 @@
 
 A synthetic-data platform for an SA SME fintech: merchant acquiring (card + instant EFT) and term lending with DebiCheck collection. Generates stateful, causally coherent event data written to a local Postgres OLTP store, ready for a CDC pipeline downstream.
 
+This is not real data, a model fitted to any company's books, or a benchmark. Parameters come from the project's design documents where those give a value, and are marked illustrative in `config/` where they do not. The generator has been run at up to 500 merchants onboarded; the design target of 500 to 1,000 active merchants has not been run.
+
 ## What this demonstrates
 
 - Stateful event simulation with realistic merchant lifecycle, seasonal patterns, and causal cross-stream dependencies (payments, lending, risk)
@@ -83,6 +85,19 @@ psql -h localhost -U sim -d fintech -f validate.sql     # the same SQL, raw resu
 - The checks are measured, not asserted. A 100-merchant run is too noisy to hold a band, so the output is read across several seeds and larger runs. A run needs about 15 months to reach December, January and February, and the loan book needs longer than that to season at the default application rate.
 - PAR is computed two ways from `loan_repayments`. The recorded measure takes `days_past_due` from a loan's latest row; it matches the generator's own loan state except for loans in arrears after their term ended, which the generator moves between buckets without writing a row. The instalment-age measure ages the oldest unpaid instalment, which is what a query over the table alone gives, and it runs ahead of the recorded measure between the monthly arrears cycles.
 - `tests/test_reconcile.py` builds a 13-month, 100-merchant database with application propensity raised tenfold. It checks that the SQL loan book equals the generator's loans to the cent, asserts the seven failure modes from the Validation Targets, and plants each fault in the temp tables to confirm the query fires. It is marked slow.
+
+## Where the generator departs from its source documents
+
+The design documents (Event Schemas, Causal Dependency Rules, Simulator Design, Simulation Validation Targets) disagree with each other in places, and some of their numbers cannot all hold at once. Where that happened the choice was recorded, and each amended band has a test that fails if the reasoning stops holding.
+
+- **Validation bands changed.** Gross take rate (1.9 to 2.4%), annual write-off rate (15 to 25%), E-commerce evening share (21 to 24%), EFT funnel completion (62 to 70%) and OTP share of failures (34 to 42%), fraud event rate floor (0.1%), January against December (27 to 40% below), Black Friday (1.3 to 1.9 times an average Friday), first payment default (5 to 10%), net approval (up to 80%), automation among eligible applicants (75 to 85%) and the approved share from the lowest risk bucket (75% or more). In each case the sourced rate card, funnel, matrix or modifiers give a value outside the original band. The annual credit loss ratio is not checked: it is net of recoveries, which V1 does not model.
+- **Causal Rules over Simulator Design** for the weekday, hourly and seasonal tables of four archetypes, for Spaza trading on Sunday, and for Black Friday lifting ticket size only, after the cap.
+- **Additions to the state machine** that Causal Rules does not give: New to Churned, Delinquent to Stressed, merchants that never activate becoming Churned 30 days after onboarding, and transition probabilities read as probabilities over a 30-day window, applied as daily hazards. Rolled once a day as written, a seasonal GPV drop moved about a third of merchants in one week.
+- **Collections.** Retry success is 0.2063 an attempt, because three retries at the first-strike rate would recover 99% of failures, not about half. An unpaid instalment gets a month of late recovery before it counts as 1 to 30 days past due, so the retries and the matrix do not count the same miss twice. A dormant merchant either closed its business or moved acquirer.
+- **Risk score.** Each merchant draws a baseline score at onboarding (illustrative; the mean rises with the archetype's refund, fraud and churn rates) and the score never falls below it. With every merchant starting at 10, 90 to 94% of active merchants sat in the lowest bucket.
+- **Modelling choices.** A loan is its application (`loan_id` equals `application_id`); terms are 3, 6, 9 and 12 months; the `merchants` table is a daily snapshot insert that stops 30 days after a merchant churns unless it has a loan; reactivation is not modelled.
+
+Two limits on what the checks can say. At the default application rate a 15-month run originates about 120 loans, so PAR is read on runs of 24 months with application propensity multiplied by 5. And the stream writes no repayment rows for arrears cycles after a loan's term ends, so PAR computed from recorded days past due is a lower bound; ageing the unpaid instalments gives about 2.4 times that figure.
 
 ## Project structure
 

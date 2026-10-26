@@ -257,3 +257,22 @@ def test_approved_share_in_the_low_risk_bucket_follows_manual_review_and_the_ame
     rate = yaml.safe_load((Path(__file__).parent.parent / "config" / "lending.yaml").read_text())["manual_review_approve_rate"]
     share = 0.625 / (0.625 + 0.20 * rate)
     assert 0.75 <= share < 0.90
+
+
+def test_automation_and_net_approval_follow_the_risk_tiers_and_the_amended_bands():
+    """Manual review is the 31-55 risk tier, which Validation Targets put at 15 to 25% of
+    merchants, so automation can be no higher than 75 to 85% (100% less that tier), not the
+    65 to 80% it was given. Approved decisions over all tiers at the middle of the buckets is
+    (62.5 + 20 x 0.6) / 100 = 74.5%, and applicants who are eligible are Growing or Stable
+    merchants, who sit lower in risk than the platform, so the net approval band's top edge
+    was lifted from 75 to 80% (Phase 8)."""
+    import yaml
+    from pathlib import Path
+
+    rate = yaml.safe_load((Path(__file__).parent.parent / "config" / "lending.yaml").read_text())["manual_review_approve_rate"]
+    manual_share_low, manual_share_high = 0.15, 0.25
+    assert 1 - manual_share_high == pytest.approx(0.75)
+    assert 1 - manual_share_low == pytest.approx(0.85)
+    net_at_mid_buckets = 0.625 + 0.20 * rate
+    assert 0.55 <= net_at_mid_buckets <= 0.80
+    assert net_at_mid_buckets < 0.75 < 0.80

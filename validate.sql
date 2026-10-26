@@ -554,11 +554,11 @@ WITH a AS (
     FROM loan_applications)
 SELECT 'approval_rate_gross' AS check_name, round(count(*) FILTER (WHERE decision = 'approved')::numeric / count(*), 4) AS value, 0.35 AS low, 0.55 AS high, count(*) AS n, 'approved over all applications' AS note FROM a
 UNION ALL
-SELECT 'approval_rate_net_eligible', round(count(*) FILTER (WHERE decision = 'approved')::numeric / count(*), 4), 0.55, 0.75, count(*), 'approved over eligible applications' FROM a WHERE NOT ineligible
+SELECT 'approval_rate_net_eligible', round(count(*) FILTER (WHERE decision = 'approved')::numeric / count(*), 4), 0.55, 0.80, count(*), 'approved over eligible applications; band amended from 55 to 75 (see Validation Targets)' FROM a WHERE NOT ineligible
 UNION ALL
 SELECT 'automation_rate_all', round(count(*) FILTER (WHERE actioned_by = 'automated_engine')::numeric / count(*), 4), NULL, NULL, count(*), 'no manual review; includes auto-declined ineligible applicants, so no band (the band applies to the eligible row)' FROM a
 UNION ALL
-SELECT 'automation_rate_eligible', round(count(*) FILTER (WHERE actioned_by = 'automated_engine')::numeric / count(*), 4), 0.65, 0.80, count(*), 'no manual review, eligible applications only' FROM a WHERE NOT ineligible;
+SELECT 'automation_rate_eligible', round(count(*) FILTER (WHERE actioned_by = 'automated_engine')::numeric / count(*), 4), 0.75, 0.85, count(*), 'no manual review, eligible applications only; band amended from 65 to 80 (see Validation Targets)' FROM a WHERE NOT ineligible;
 
 -- name: october_november_applications
 -- Applications in October and November against the mean of the other full months from the

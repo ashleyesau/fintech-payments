@@ -70,13 +70,28 @@ python -m simulator.main --mode stream --duration-days 1 --checkpoint demo.json
 - The streaming writer commits every row and manages about 900 rows a second in earlier measurements. At 1,000 merchants a day is about 43,000 rows, which is roughly 1,800 rows a second at the default speed, so a stream of that size falls behind its schedule. It writes late, logs a warning with the worst lateness, and drops nothing. A stream of about 50 merchants stays on schedule: a day of 1,181 transactions took 24 seconds.
 - A stream stopped part-way through a day replays that day on the next run and skips the rows already written.
 
+## Validating a run
+
+`validate.sql` holds the reconciliation queries. Each one reads the five tables and returns a value next to the band from the Simulation Validation Targets, with the number of rows the value rests on.
+
+```bash
+python -m simulator.validation                          # every check against POSTGRES_DB
+python -m simulator.validation --only par --only collections
+psql -h localhost -U sim -d fintech -f validate.sql     # the same SQL, raw result sets
+```
+
+- The checks are measured, not asserted. A 100-merchant run is too noisy to hold a band, so the output is read across several seeds and larger runs. A run needs about 15 months to reach December, January and February, and the loan book needs longer than that to season at the default application rate.
+- PAR is computed two ways from `loan_repayments`. The recorded measure takes `days_past_due` from a loan's latest row; it matches the generator's own loan state except for loans in arrears after their term ended, which the generator moves between buckets without writing a row. The instalment-age measure ages the oldest unpaid instalment, which is what a query over the table alone gives, and it runs ahead of the recorded measure between the monthly arrears cycles.
+- `tests/test_reconcile.py` builds a 13-month, 100-merchant database with application propensity raised tenfold. It checks that the SQL loan book equals the generator's loans to the cent, asserts the seven failure modes from the Validation Targets, and plants each fault in the temp tables to confirm the query fires. It is marked slow.
+
 ## Project structure
 
 ```
 simulator/          Core simulation modules
 config/             YAML calibration, archetypes, fees and causal rules
 scripts/            portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test)
-tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming and DB tests
+validate.sql        Reconciliation queries against the Validation Targets bands (run by simulator/validation.py)
+tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation and DB tests
 migrations/         Postgres DDL
 docker-compose.yml  Local Postgres stack
 .github/workflows/  CI: Postgres service container, migrations, full test suite

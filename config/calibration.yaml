@@ -18,6 +18,23 @@ onboarding_ramp:
   month_5_pct: 0.15
   month_6_pct: 0.12
 
+# Share of onboarded merchants by archetype. Illustrative: no source document gives a
+# mix. Chosen so the mix-weighted take rate stays inside its Validation bands (net sits
+# close to the 1.4% ceiling, so tests/test_take_rate.py guards it) and the platform
+# refund and churn rates land inside theirs.
+archetype_mix:
+  spaza_shop: 0.22
+  restaurant: 0.12
+  grocery: 0.10
+  salon_low_cost: 0.10
+  e_commerce: 0.10
+  salon: 0.08
+  seasonal_retail: 0.08
+  liquor_store: 0.06
+  wholesale: 0.06
+  tutor: 0.05
+  fuel_station: 0.03
+
 # Day-of-month volume index (mid-month = 1.0 baseline).
 # Encodes SASSA grant paydays (days 2-4), private sector payday (25th),
 # PERSAL government salary (15th), and month-end patterns.
@@ -83,6 +100,24 @@ seasonal:
 # other lever for the retention targets.
 lifecycle:
   churn_multiplier: 1.0
+
+  # Activation. Illustrative values, set so the Validation Targets hold: 55-75% of
+  # onboarded merchants transact within 7 days, median 2-5 days to first transaction,
+  # logo retention 45-65% at M6 and 30-50% at M12. Retention is met by activation, not
+  # churn: churn alone leaves about 81% at M6 and 65% at M12.
+  activation_share: 0.67              # of onboarded merchants that ever transact
+  activation_delay:
+    within_7_days_share: 0.90         # of activators, first transaction inside a week
+    day_weights: [0.16, 0.20, 0.24, 0.16, 0.12, 0.08, 0.04]  # days 1 to 7, sums to 1
+    late_days: [8, 30]                # the rest, uniform over this inclusive range
+
+  # A merchant that never transacts has no trading days, so the 30-day trading gate in
+  # Chain 2 never opens for it. It becomes Churned this many days after onboarding.
+  onboarding_abandonment_days: 30
+
+  # Daily snapshots stop this many days after a merchant becomes Churned, unless it
+  # still has an active loan. Keeps the Churned share near its 3-8% band.
+  churned_snapshot_days: 30
 
 # Geographic effects.
 # Applied on top of archetype multipliers for qualifying province+archetype combos.

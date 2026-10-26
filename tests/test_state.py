@@ -382,6 +382,30 @@ def test_decay_floor_is_zero():
     assert m.risk_score == 0
 
 
+def test_decay_stops_at_the_baseline():
+    m = Merchant(risk_score=34, risk_baseline=30, onboarded_at=START)
+    for day in range(30, 400, 30):
+        m.decay_risk(START + timedelta(days=day))
+    assert m.risk_score == 30
+
+
+def test_repayment_and_cure_deltas_stop_at_the_baseline():
+    m = Merchant(risk_score=31, risk_baseline=30, onboarded_at=START)
+    m.apply_risk_delta(risk_delta("loan_repaid_in_full"), START)
+    assert m.risk_score == 30
+    m.apply_risk_delta(risk_delta("repayment_missed_nsf"), START)
+    assert m.risk_score == 30 + risk_delta("repayment_missed_nsf")
+
+
+def test_a_write_off_still_floors_at_80_whatever_the_baseline():
+    m = Merchant(risk_score=40, risk_baseline=40, onboarded_at=START)
+    m.write_off(START)
+    assert m.risk_score >= 80
+    for day in range(30, 400, 30):
+        m.decay_risk(START + timedelta(days=day))
+    assert m.risk_score == 80
+
+
 def test_write_off_sets_permanent_floor():
     m = Merchant(risk_score=10, onboarded_at=START)
     m.write_off(START)

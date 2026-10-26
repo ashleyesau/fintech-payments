@@ -7,7 +7,7 @@ authority for ticket, rate and churn parameters.
 import numpy as np
 import pytest
 
-from simulator.archetypes import ARCHETYPES, get_archetype
+from simulator.archetypes import ARCHETYPES, get_archetype, risk_index, sample_risk_baseline
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -124,3 +124,58 @@ def test_ecommerce_evening_share_sits_in_the_amended_validation_band():
     # (Phase 8, with a note on that page). This guards the table against drifting out of it.
     share = _share("e_commerce", range(18, 22))
     assert 0.21 <= share <= 0.24
+
+
+# ---------------------------------------------------------------------------
+# Baseline risk score (Phase 8): archetype risk index and the Validation distribution
+# ---------------------------------------------------------------------------
+
+def test_risk_index_ranks_archetypes_by_their_refund_fraud_and_churn_rates():
+    index = {name: risk_index(name) for name in ARCHETYPES}
+    assert all(0.0 <= v <= 1.0 for v in index.values())
+    ranked = sorted(index, key=index.get)
+    assert set(ranked[:2]) == {"fuel_station", "wholesale"}
+    assert set(ranked[-2:]) == {"e_commerce", "seasonal_retail"}
+    assert index["spaza_shop"] < index["restaurant"] < index["liquor_store"]
+
+
+# Risk events add to a score and decay a point a month, so the end-of-run distribution is
+# the baseline plus an excess. Percentiles of (score - baseline) over 1,030 active merchants
+# from three 500-merchant, 15-month runs, session 6 (median 0, mean 6.5).
+EXCESS_PERCENTILES = [(0, 0), (50, 0), (60, 0), (70, 4), (80, 10), (90, 22), (95, 35), (99, 68), (100, 94)]
+
+
+def test_baseline_plus_risk_events_lands_in_the_validation_buckets():
+    """Validation Targets: 0-30 55 to 70%, 31-55 15 to 25%, 56-75 8 to 15%, 76-100 3 to 8%
+    of active merchants. A run ends with each merchant's baseline plus whatever risk events
+    have added and not yet decayed, so the mix-weighted baseline draw plus the measured
+    excess has to sit inside those bands. The baseline alone is lighter at the top (about
+    72 / 18 / 7 / 3%) because the events fill the upper tiers."""
+    from simulator.config import load_calibration
+
+    np.random.seed(5)
+    mix = load_calibration()["archetype_mix"]
+    names = list(mix)
+    shares = np.array([mix[n] for n in names]) / sum(mix.values())
+    baselines = np.array([sample_risk_baseline(str(np.random.choice(names, p=shares))) for _ in range(20000)])
+    assert baselines.min() >= 0 and baselines.max() <= 100
+    pct, value = zip(*EXCESS_PERCENTILES)
+    excess = np.interp(np.random.random(len(baselines)) * 100, pct, value)
+    scores = np.minimum(100, baselines + excess)
+    buckets = [
+        (scores <= 30).mean(),
+        ((scores > 30) & (scores <= 55)).mean(),
+        ((scores > 55) & (scores <= 75)).mean(),
+        (scores > 75).mean(),
+    ]
+    assert 0.55 <= buckets[0] <= 0.70
+    assert 0.15 <= buckets[1] <= 0.25
+    assert 0.08 <= buckets[2] <= 0.15
+    assert 0.03 <= buckets[3] <= 0.08
+
+
+def test_riskier_archetypes_draw_higher_baselines():
+    np.random.seed(6)
+    wholesale = np.mean([sample_risk_baseline("wholesale") for _ in range(3000)])
+    ecommerce = np.mean([sample_risk_baseline("e_commerce") for _ in range(3000)])
+    assert ecommerce > wholesale + 25

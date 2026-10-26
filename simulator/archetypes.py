@@ -1,8 +1,8 @@
 """
 simulator/archetypes.py: Merchant archetype definitions loaded from config/archetypes.yaml.
 
-Provides get_archetype(), sample_province(), sample_metro(), and
-sample_quality_percentile(). All province and quality sampling uses numpy
+Provides get_archetype(), sample_province(), sample_metro(),
+sample_quality_percentile() and sample_risk_baseline(). All province and quality sampling uses numpy
 so the generator can seed numpy's RNG for reproducible runs.
 """
 from __future__ import annotations
@@ -125,6 +125,31 @@ def sample_quality_percentile() -> float:
     a = cfg.get("beta_a", 1.5)
     b = cfg.get("beta_b", 4.0)
     return float(np.random.beta(a, b))
+
+
+@lru_cache(maxsize=None)
+def risk_index(archetype_name: str) -> float:
+    """0 to 1: how risky an archetype is, from three sourced parameters. The mean of the
+    archetype's percentile ranks (among all archetypes, ties averaged) for refund rate,
+    fraud rate and monthly churn probability."""
+    get_archetype(archetype_name)
+    ranks = []
+    for field_name in ("refund_rate", "fraud_rate", "monthly_churn_prob"):
+        values = [getattr(a, field_name) for a in ARCHETYPES.values()]
+        mine = getattr(ARCHETYPES[archetype_name], field_name)
+        below = sum(v < mine for v in values)
+        equal = sum(v == mine for v in values)
+        ranks.append((below + (equal - 1) / 2) / (len(values) - 1))
+    return sum(ranks) / len(ranks)
+
+
+def sample_risk_baseline(archetype_name: str) -> int:
+    """Baseline risk score (0 to 100) for a new merchant: a Beta draw whose mean rises
+    with the archetype's risk index. Parameters are in calibration.yaml (illustrative)."""
+    cfg = load_calibration()["risk_baseline"]
+    mean = cfg["mean_low"] + (cfg["mean_high"] - cfg["mean_low"]) * risk_index(archetype_name)
+    k = cfg["concentration"]
+    return int(round(100 * float(np.random.beta(mean * k, (1 - mean) * k))))
 
 
 @lru_cache(maxsize=None)

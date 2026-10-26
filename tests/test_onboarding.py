@@ -204,3 +204,14 @@ def test_draw_activation_reports_never_activators_with_no_delay():
 def test_sample_archetype_only_returns_archetypes_in_the_mix():
     np.random.seed(6)
     assert {sample_archetype() for _ in range(300)} <= set(load_calibration()["archetype_mix"])
+
+
+def test_a_new_merchant_starts_at_its_baseline_risk_score():
+    np.random.seed(21)
+    merchants = [new_merchant(START) for _ in range(300)]
+    assert all(m.risk_score == m.risk_baseline for m in merchants)
+    assert len({m.risk_baseline for m in merchants}) > 20
+    np.random.seed(21)
+    again = [new_merchant(START) for _ in range(300)]
+    assert [m.risk_baseline for m in again] == [m.risk_baseline for m in merchants]
+

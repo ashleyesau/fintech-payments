@@ -20,7 +20,7 @@ from math import floor
 
 import numpy as np
 
-from simulator.archetypes import sample_metro, sample_province, sample_quality_percentile
+from simulator.archetypes import sample_metro, sample_province, sample_quality_percentile, sample_risk_baseline
 from simulator.common import new_id
 from simulator.config import load_calibration
 from simulator.state import Merchant
@@ -87,13 +87,14 @@ def draw_activation() -> tuple[bool, int | None]:
 
 def new_merchant(onboarded_at: date) -> Merchant:
     """Create one merchant. The draws run in a fixed order: archetype, province, metro
-    flag, quality percentile, id, activation."""
+    flag, quality percentile, id, activation, baseline risk score."""
     archetype = sample_archetype()
     province = sample_province(archetype)
     is_metro = sample_metro(province)
     quality = sample_quality_percentile()
     merchant_id = new_id()
     never_activates, delay_days = draw_activation()
+    baseline = sample_risk_baseline(archetype)
     return Merchant(
         merchant_id=merchant_id,
         archetype=archetype,
@@ -103,6 +104,8 @@ def new_merchant(onboarded_at: date) -> Merchant:
         onboarded_at=onboarded_at,
         never_activates=never_activates,
         activation_date=None if delay_days is None else onboarded_at + timedelta(days=delay_days),
+        risk_score=baseline,
+        risk_baseline=baseline,
     )
 
 

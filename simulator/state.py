@@ -97,6 +97,7 @@ class Merchant:
 
     # Risk
     risk_score: int = 10          # 0-100, higher = riskier
+    risk_baseline: int = 0        # the score never falls below this; set at onboarding
     loan_count: int = 0
     has_active_loan: bool = False
     is_written_off: bool = False
@@ -446,7 +447,9 @@ class Merchant:
     # -----------------------------------------------------------------------
 
     def _clamp_risk(self, score: int) -> int:
-        floor = _RISK["permanent_floor_written_off"] if self.is_written_off else 0
+        # Decay, repayments and cures stop at the merchant's baseline: a risky archetype's
+        # merchant does not drift to zero. A write-off holds the score at the permanent floor.
+        floor = _RISK["permanent_floor_written_off"] if self.is_written_off else self.risk_baseline
         return max(floor, min(100, score))
 
     def apply_risk_delta(self, delta: int, sim_date: date) -> None:

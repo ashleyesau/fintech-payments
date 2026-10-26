@@ -33,7 +33,7 @@ def populated_merchant() -> Merchant:
     m = Merchant(
         merchant_id="m-1", archetype="restaurant", province="western_cape", is_metro=False,
         quality_percentile=0.31, onboarded_at=START, activation_date=START + timedelta(days=2),
-        merchant_state="stressed", risk_score=44, loan_count=1, has_active_loan=True,
+        merchant_state="stressed", risk_score=44, risk_baseline=33, loan_count=1, has_active_loan=True,
     )
     for i in range(100):
         m.record_day(START + timedelta(days=2 + i), 1_000 + i, 3)
@@ -85,6 +85,7 @@ def test_a_populated_merchant_survives_a_round_trip(tmp_path):
     save_checkpoint([original], date(2025, 4, 1), FLAGS, path)
     (loaded,) = load_checkpoint(path).merchants
     assert loaded == original
+    assert loaded.risk_baseline == original.risk_baseline
 
 
 def test_container_and_date_types_come_back_as_they_went_in(tmp_path):

@@ -35,6 +35,22 @@ archetype_mix:
   tutor: 0.05
   fuel_station: 0.03
 
+# Baseline risk score drawn for each merchant at onboarding. Illustrative: no source
+# document gives a starting distribution (Causal Rules decays scores towards 0, and
+# Validation Targets only give the distribution a run should end with). The score starts
+# at the baseline and never falls below it. The draw is Beta with mean
+# mean_low + (mean_high - mean_low) * the archetype's risk index (the mean percentile rank
+# of its refund rate, fraud rate and monthly churn among the 11 archetypes), as a share of
+# 100. The three values were fitted in two passes. First to the Validation distribution on
+# the baseline alone (0.02, 0.50, 2.9), which left the top tier at 10 to 13% in full runs
+# because risk events add to scores and decay only a point a month (median 0, mean +6.5,
+# 90th percentile +22 over 1,030 active merchants). Then to baseline plus that measured
+# excess, which lands about 63 / 21 / 10 / 7% after events.
+risk_baseline:
+  mean_low: 0.05
+  mean_high: 0.37
+  concentration: 2.8
+
 # Day-of-month volume index (mid-month = 1.0 baseline).
 # Encodes SASSA grant paydays (days 2-4), private sector payday (25th),
 # PERSAL government salary (15th), and month-end patterns.

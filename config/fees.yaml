@@ -1,37 +1,48 @@
-# Fee schedule by channel.
-# All rates in basis points (1 bps = 0.01%).
-# Phase 5 will implement the full SARB interchange schedule.
-# Values below are illustrative placeholders pending calibration.
+# Fee schedule for completed transactions.
+# Source: Simulator Design section 4 (SARB Interchange Determination Project Phase V
+# baseline, late-2024 rates; Yoco-style and Ozow-style merchant pricing).
+# Rates are fractions (0.0044 = 0.44%). Amounts are ZAR cents.
 
-card_present:
-  interchange_bps: 125
-  scheme_bps: 30
-  acquirer_markup_bps: 115
+# Interchange by compliance case and card type. Card-present cases key off EMV
+# compliance, card-not-present cases off 3DS compliance.
+interchange:
+  card_present:
+    both_compliant:    {debit: 0.0044, credit: 0.0148}
+    issuer_only:       {debit: 0.0052, credit: 0.0155}
+    acquirer_only:     {debit: 0.0036, credit: 0.0141}
+  card_not_present:
+    both_compliant:    {debit: 0.0048, credit: 0.0168}
+    issuer_only:       {debit: 0.0098, credit: 0.0245}
+    acquirer_only:     {debit: 0.0038, credit: 0.0145}
 
-card_ecom:
-  interchange_bps: 150
-  scheme_bps: 35
-  acquirer_markup_bps: 140
+# Blended scheme fee on every card transaction.
+scheme_fee_rate: 0.0010
+# Extra scheme fee on stored-card ecom transactions without network tokens.
+not_tokenized_cof_rate: 0.0007
+not_tokenized_cof_share_ecom: 0.30
 
-instant_eft:
-  interchange_bps: 0
-  scheme_bps: 0
-  acquirer_markup_bps: 100
+# What the merchant pays. The acquirer markup is the residual after interchange
+# and scheme fees.
+merchant_rate:
+  # Tiered by merchant volume; the generator maps quality_percentile onto the range
+  # (higher quality, more volume, lower rate).
+  card_present: {max: 0.0245, min: 0.0195}
+  card_not_present: 0.0295
+  instant_eft: {rate: 0.015, cap_minor: 300}
+  payshap: {flat_minor: 100, free_below_minor: 10000}
 
-payshap:
-  interchange_bps: 0
-  scheme_bps: 0
-  acquirer_markup_bps: 75
+# Channel to fee class.
+fee_class:
+  card_present: card_present
+  card_ecom: card_not_present
+  payment_link: card_not_present
+  instant_eft: instant_eft
+  payshap: payshap
 
-payment_link:
-  interchange_bps: 150
-  scheme_bps: 35
-  acquirer_markup_bps: 140
-
-# Settlement windows (business days).
+# Settlement lag in business days. Zero means same day, on any calendar day.
 settlement_days:
   card_present: 1
   card_ecom: 2
+  payment_link: 2
   instant_eft: 0
   payshap: 0
-  payment_link: 2

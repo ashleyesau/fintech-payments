@@ -7,6 +7,7 @@ edits: only a config file or env-var override.
 """
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,9 @@ DSN = settings.dsn
 # YAML config loaders
 # ---------------------------------------------------------------------------
 
+# Cached because the generator reads calibration once per merchant-day; callers
+# must treat the returned dicts as read-only.
+@lru_cache(maxsize=None)
 def _load_yaml(name: str) -> dict[str, Any]:
     path = CONFIG_DIR / name
     with open(path) as fh:
@@ -75,6 +79,10 @@ def load_calibration() -> dict[str, Any]:
 
 def load_fees() -> dict[str, Any]:
     return _load_yaml("fees.yaml")
+
+
+def load_payments() -> dict[str, Any]:
+    return _load_yaml("payments.yaml")
 
 
 def load_causal_rules() -> dict[str, Any]:

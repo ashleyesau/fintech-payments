@@ -85,6 +85,10 @@ class Merchant:
     last_adverse_event_date: Optional[date] = None
     last_risk_decay_date: Optional[date] = None
 
+    # Refunds and chargebacks that will be emitted on a later day. Each entry is a dict
+    # with kind, due_date and the original payment's identifying fields.
+    scheduled_followups: list = field(default_factory=list)
+
     # Daily GPV in minor units, oldest first. Calendar days since the first
     # transaction; closed days are recorded as zero.
     daily_gpv_minor: deque = field(default_factory=lambda: deque(maxlen=_HISTORY_DAYS))

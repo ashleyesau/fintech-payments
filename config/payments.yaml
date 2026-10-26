@@ -1,0 +1,88 @@
+# Payment generation parameters for simulator/generator.py.
+#
+# Sourced from Simulator Design section 4: funnels, authorization, card type mix,
+# EMV and 3DS compliance, refund and chargeback timing.
+# NOT sourced: channel_mix, payment_method_mix, card_entry_mode_mix, the PayShap
+# success rate, step timings and risk score parameters. No design doc specifies
+# them; the values are illustrative and are the first thing to retune if Phase 8
+# checks (for example the E-commerce to Wholesale chargeback ratio) fail.
+
+# Share of each archetype's transactions by channel.
+channel_mix:
+  spaza_shop:      {card_present: 0.80, instant_eft: 0.10, payshap: 0.10}
+  restaurant:      {card_present: 0.88, instant_eft: 0.05, payshap: 0.07}
+  salon:           {card_present: 0.80, instant_eft: 0.10, payshap: 0.10}
+  grocery:         {card_present: 0.85, instant_eft: 0.07, payshap: 0.08}
+  liquor_store:    {card_present: 0.90, instant_eft: 0.04, payshap: 0.06}
+  fuel_station:    {card_present: 0.95, instant_eft: 0.02, payshap: 0.03}
+  e_commerce:      {card_ecom: 0.60, instant_eft: 0.30, payment_link: 0.05, payshap: 0.05}
+  wholesale:       {card_present: 0.30, instant_eft: 0.55, payment_link: 0.10, payshap: 0.05}
+  salon_low_cost:  {card_present: 0.70, instant_eft: 0.15, payshap: 0.15}
+  tutor:           {card_ecom: 0.15, instant_eft: 0.35, payment_link: 0.35, payshap: 0.15}
+  seasonal_retail: {card_present: 0.75, instant_eft: 0.10, payshap: 0.15}
+
+payment_method_mix:
+  card: {visa: 0.50, mastercard: 0.45, amex: 0.05}
+
+card_entry_mode_mix: {chip: 0.55, contactless: 0.35, swipe: 0.05, keyed: 0.05}
+
+# Card type: 75% debit, 25% credit. EMV 99% for card-present, 3DS 95% for
+# card-not-present. A non-compliant transaction takes the issuer-only (penalty) case.
+card_type_mix: {debit: 0.75, credit: 0.25}
+emv_compliance: 0.99
+threeds_compliance: 0.95
+
+# Card funnel: share reaching authorized. Simulator Design gives 95% for the card
+# funnel and about 98% for small-ticket Spaza; its "about 90% for others" line
+# conflicts with the funnel figure, so the funnel figure is the default.
+card_auth_rate: 0.95
+card_auth_rate_overrides: {spaza_shop: 0.98}
+# PayShap has no documented funnel; it follows the card-style path.
+payshap_auth_rate: 0.97
+
+# Share of failures by ISO 8583 DE39 code: insufficient funds, fraud blocked,
+# do not honour, technical error.
+card_decline_codes: {"51": 0.40, "59": 0.20, "05": 0.30, "96": 0.10}
+decline_codes:
+  fraud_blocked: "59"
+  eft_login_failed: "55"
+  eft_insufficient_funds: "51"
+  technical_error: "96"
+
+# Instant EFT (Ozow-style) funnel. Each value is the share continuing to the next step.
+eft_funnel:
+  bank_selected: 0.95
+  login_succeeded: 0.90
+  otp_entered: 0.85
+  authorized: 0.92
+  completed: 0.99
+# Where an OTP-stage failure ends up.
+eft_otp_failure_split: {abandoned: 0.70, expired: 0.20, failed: 0.10}
+
+# Seconds between funnel steps, inclusive [low, high].
+step_seconds:
+  card_authorize: [1, 4]
+  card_complete: [2, 10]
+  bank_selected: [3, 10]
+  login_succeeded: [4, 15]
+  otp_requested: [1, 3]
+  otp_entered: [5, 40]
+  eft_authorize: [1, 5]
+  eft_complete: [1, 5]
+
+# Transaction risk score: clipped normal, with thresholds for the action.
+risk:
+  mean: 15
+  std: 10
+  review_min: 50
+  block_min: 80
+  blocked_range: [80, 99]
+
+# Delay in days between a completed payment and its refund or chargeback, inclusive.
+# Per Simulator Design: refunds 1 to 30 days, chargebacks 1 to 90 days.
+followup_delay_days:
+  refund: [1, 30]
+  chargeback: [1, 90]
+
+# POS firmware versions, assigned to a merchant by a stable hash of merchant_id.
+pos_versions: ["v2.3.1", "v2.4.0", "v2.5.2"]

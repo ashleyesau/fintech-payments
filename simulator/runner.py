@@ -24,6 +24,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import Optional
 
 import numpy as np
 import psycopg
@@ -45,7 +46,7 @@ class RunError(Exception):
 @dataclass(frozen=True)
 class RunSettings:
     start_date: date
-    end_date: date                 # exclusive
+    end_date: Optional[date]       # exclusive; None for streaming, which is bounded by duration
     merchant_count: int            # merchants onboarded over the ramp, not merchants active
     seed: int = 42
     enable_risk_events: bool = True
@@ -149,8 +150,8 @@ def start_run(run: RunSettings, conn: psycopg.Connection, resume: bool) -> tuple
             )
         if not database_is_empty(conn):
             raise RunError(
-                "The merchants table already has rows. A fresh run needs an empty database; "
-                "use --resume to continue a run that stopped."
+                "The merchants table already has rows and there is no checkpoint to continue from. "
+                "A fresh run needs an empty database; to continue an earlier run, use its checkpoint file."
             )
         np.random.seed(run.seed)
         return [], run.start_date
@@ -174,6 +175,8 @@ def start_run(run: RunSettings, conn: psycopg.Connection, resume: bool) -> tuple
 def run_backfill(run: RunSettings, conn: psycopg.Connection, resume: bool = False) -> RunSummary:
     """Simulate every day from the start (or the checkpoint) up to the end date, writing
     each day to Postgres and checkpointing after its commit."""
+    if run.end_date is None:
+        raise RunError("A backfill needs an end date.")
     merchants, first_day = start_run(run, conn, resume)
     if first_day >= run.end_date:
         raise RunError(
@@ -197,18 +200,25 @@ def run_backfill(run: RunSettings, conn: psycopg.Connection, resume: bool = Fals
             )
         day += timedelta(days=1)
     writer.close()
+    return summarise(merchants, first_day, day, writer.written, started, resume, run.checkpoint_path)
 
+
+def summarise(
+    merchants: list[Merchant], first_day: date, next_day: date, written: Counter,
+    started: float, resumed: bool, checkpoint_path: str,
+) -> RunSummary:
+    """The end-of-run summary. `next_day` is the first day not simulated."""
     return RunSummary(
         first_day=first_day,
-        last_day=day - timedelta(days=1),
-        days=(day - first_day).days,
+        last_day=next_day - timedelta(days=1),
+        days=(next_day - first_day).days,
         merchants_onboarded=len(merchants),
         merchants_ever_transacted=sum(1 for m in merchants if m.first_transaction_at is not None),
         states=Counter(m.merchant_state for m in merchants),
-        rows_written=writer.written,
+        rows_written=written,
         elapsed_seconds=time.monotonic() - started,
-        resumed=resume,
-        checkpoint_path=run.checkpoint_path,
+        resumed=resumed,
+        checkpoint_path=checkpoint_path,
     )
 
 

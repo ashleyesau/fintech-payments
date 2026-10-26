@@ -52,3 +52,29 @@ def conn(dsn):
     yield connection
     connection.rollback()
     connection.close()
+
+
+@pytest.fixture(scope="session")
+def uninterrupted(dsn, tmp_path_factory):
+    """Every table after one uninterrupted LONG_RUN, written once for all the resume and
+    streaming tests. Application propensity is boosted so the run reaches lending."""
+    from datetime import timedelta
+
+    from simulator import lending
+    from simulator.runner import RunSettings, run_backfill
+    from tests.helpers import LONG_RUN, START, reset, table_contents
+
+    with pytest.MonkeyPatch.context() as patch:
+        for state in ("growing", "stable"):
+            patch.setitem(lending._PROPENSITY, state, lending._PROPENSITY[state] * 10)
+        connection = db.connect(dsn)
+        reset(connection)
+        path = tmp_path_factory.mktemp("uninterrupted") / "checkpoint.json"
+        run = RunSettings(START, START + timedelta(days=LONG_RUN["days"]), LONG_RUN["count"],
+                          checkpoint_path=str(path))
+        run_backfill(run, connection)
+        contents = table_contents(connection)
+        reset(connection)
+        connection.close()
+    assert len(contents["loan_applications"]) > 0 and len(contents["loan_repayments"]) > 0
+    return contents

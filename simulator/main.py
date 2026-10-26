@@ -10,15 +10,18 @@ come from the checkpoint):
 
     python -m simulator.main --mode backfill --end-date 2026-01-01 --resume
 
-Streaming mode (advance at a controlled pace, writing events in near-real-time):
+Streaming mode (replay each simulated day at a controlled pace, writing events in
+near-real-time). It continues from the checkpoint if one exists, such as a backfill's:
 
-    python -m simulator.main --mode stream --duration-days 1
+    python -m simulator.main --mode stream --duration-days 2
 
 Both modes write events directly to Postgres via psycopg3.
 """
 from __future__ import annotations
 
 import logging
+import os
+from dataclasses import replace
 from datetime import date
 
 import click
@@ -28,6 +31,7 @@ from simulator import db
 from simulator.config import settings
 from simulator.runner import RunError, RunSettings, format_summary, run_backfill
 from simulator.state import load_checkpoint
+from simulator.streaming import run_stream
 
 
 @click.command()
@@ -70,7 +74,13 @@ from simulator.state import load_checkpoint
     default=None,
     help="Checkpoint file, written after every simulated day. Defaults to CHECKPOINT_PATH.",
 )
-@click.option("--resume", is_flag=True, help="Continue a stopped run from its checkpoint.")
+@click.option("--resume", is_flag=True, help="Backfill only: continue a stopped run from its checkpoint.")
+@click.option(
+    "--speed-factor",
+    type=float,
+    default=None,
+    help="Stream mode: simulated seconds per real second. Defaults to STREAMING_SPEED_FACTOR.",
+)
 def main(
     mode: str,
     start_date,
@@ -80,13 +90,14 @@ def main(
     seed,
     checkpoint_path,
     resume: bool,
+    speed_factor,
 ) -> None:
     """SA Fintech synthetic event generator: writes to Postgres (V1)."""
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(message)s")
     if mode == "backfill":
         _run_backfill(start_date, end_date, merchant_count, seed, checkpoint_path, resume)
     else:
-        _run_stream(duration_days, merchant_count)
+        _run_stream(start_date, duration_days, merchant_count, seed, checkpoint_path, speed_factor)
 
 
 def _backfill_settings(start_date, end_date, merchant_count, seed, checkpoint_path, resume: bool) -> RunSettings:
@@ -129,8 +140,24 @@ def _run_backfill(start_date, end_date, merchant_count, seed, checkpoint_path, r
     click.echo(format_summary(summary))
 
 
-def _run_stream(duration_days: int, merchant_count) -> None:
-    raise NotImplementedError("Phase 7")
+def _run_stream(start_date, duration_days: int, merchant_count, seed, checkpoint_path, speed_factor) -> None:
+    path = checkpoint_path or settings.checkpoint_path
+    # An existing checkpoint is continued; without one the run starts fresh.
+    run = replace(
+        _backfill_settings(start_date, None, merchant_count, seed, path, resume=os.path.exists(path)),
+        end_date=None,
+    )
+    try:
+        conn = db.connect()
+    except psycopg.OperationalError as error:
+        raise click.ClickException(f"Cannot reach Postgres ({error}). Is the container up?") from error
+    try:
+        summary = run_stream(run, conn, duration_days, speed_factor or settings.streaming_speed_factor)
+    except RunError as error:
+        raise click.ClickException(str(error)) from error
+    finally:
+        conn.close()
+    click.echo(format_summary(summary))
 
 
 if __name__ == "__main__":

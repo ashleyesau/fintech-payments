@@ -280,13 +280,17 @@ class StreamingWriter:
                 self._insert("risk_events", risk_row)
             self.conn.commit()
 
+    def disburse(self, update: dict) -> None:
+        """One disbursement UPDATE, committed on its own."""
+        disburse_loan(self.conn, update)
+        self.written["loan_application_updates"] += 1
+
     def write_merchant_day(self, events: list[dict], risk_rows: list[dict], lending: dict) -> None:
         applications, updates, repayments = _split_lending(lending)
         self.write_events(events, risk_rows)
         self.write("loan_applications", applications)
         for update in updates:
-            disburse_loan(self.conn, update)
-            self.written["loan_application_updates"] += 1
+            self.disburse(update)
         self.write("loan_repayments", repayments)
 
     def write_snapshots(self, rows: list[dict]) -> None:

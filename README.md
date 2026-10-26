@@ -54,7 +54,21 @@ Backfill advances one simulated day at a time as fast as the machine allows, wri
 - `--seed` (default `RANDOM_SEED`) seeds a fresh run.
 - The run prints merchants onboarded, merchants that ever transacted, the final merchant states and the rows written.
 
-Run time is not measured at scale. Generation was about 175 microseconds per transaction in earlier measurements; 1,000 merchants over 12 months is an estimated 70 minutes plus writing and a checkpoint of about 1 second per day, and slower on a laptop. Streaming mode is not implemented yet.
+A 100-merchant, 365-day backfill took 183 seconds in the sandbox. Scaling by merchant count puts 1,000 merchants at about 30 minutes, plus a checkpoint of about 1 second a day at that size. That is an extrapolation, not a measurement, and a laptop is slower.
+
+## Running a stream
+
+Stream mode generates a day exactly as backfill does, then replays the day's rows in time order across all merchants and writes each row on its own. The sleep between two rows is their timestamp gap divided by the speed factor (`STREAMING_SPEED_FACTOR`, default 3,600 simulated seconds per real second, so one simulated day takes about 24 seconds). A transaction and the risk events that point at it commit together. Generating the next day is not paced.
+
+```bash
+python -m simulator.main --mode backfill --start-date 2025-01-01 --end-date 2025-06-01 --merchant-count 50 --checkpoint demo.json
+python -m simulator.main --mode stream --duration-days 1 --checkpoint demo.json
+```
+
+- Stream mode continues from the checkpoint if the file exists, and starts fresh from the start date if it does not. A fresh stream has no transactions for its first few days, because merchants activate one to thirty days after onboarding, so the demo above backfills first.
+- `--duration-days` sets how many simulated days to stream. `--speed-factor` overrides the setting for one run.
+- The streaming writer commits every row and manages about 900 rows a second in earlier measurements. At 1,000 merchants a day is about 43,000 rows, which is roughly 1,800 rows a second at the default speed, so a stream of that size falls behind its schedule. It writes late, logs a warning with the worst lateness, and drops nothing. A stream of about 50 merchants stays on schedule: a day of 1,181 transactions took 24 seconds.
+- A stream stopped part-way through a day replays that day on the next run and skips the rows already written.
 
 ## Project structure
 
@@ -62,7 +76,7 @@ Run time is not measured at scale. Generation was about 175 microseconds per tra
 simulator/          Core simulation modules
 config/             YAML calibration, archetypes, fees and causal rules
 scripts/            portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test)
-tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner and DB tests
+tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming and DB tests
 migrations/         Postgres DDL
 docker-compose.yml  Local Postgres stack
 .github/workflows/  CI: Postgres service container, migrations, full test suite

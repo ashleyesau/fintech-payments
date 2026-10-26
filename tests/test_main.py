@@ -77,3 +77,56 @@ def test_help_describes_the_merchant_count_and_the_exclusive_end_date():
     text = " ".join(result.output.split())
     assert "not merchants active" in text
     assert "exclusive" in text
+
+
+# ---------------------------------------------------------------------------
+# Stream mode
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def stream_calls(monkeypatch):
+    """Replace the database connection and run_stream, recording what the CLI passed."""
+    import simulator.main as main_module
+    from collections import Counter
+
+    from simulator.runner import RunSummary
+
+    calls = {}
+
+    class FakeConnection:
+        def close(self):
+            calls["closed"] = True
+
+    def fake_run_stream(run, conn, duration_days, speed_factor):
+        calls.update(run=run, duration=duration_days, speed=speed_factor)
+        return RunSummary(
+            first_day=date(2025, 3, 2), last_day=date(2025, 3, 2), days=1, merchants_onboarded=1,
+            merchants_ever_transacted=1, states=Counter(new=1), rows_written=Counter(), elapsed_seconds=1.0,
+            resumed=True, checkpoint_path="x",
+        )
+
+    monkeypatch.setattr(main_module.db, "connect", lambda: FakeConnection())
+    monkeypatch.setattr(main_module, "run_stream", fake_run_stream)
+    return calls
+
+
+def test_stream_mode_continues_from_an_existing_checkpoint(tmp_path, stream_calls):
+    path = tmp_path / "c.json"
+    write_checkpoint(path)
+    result = CliRunner().invoke(main, [
+        "--mode", "stream", "--duration-days", "2", "--checkpoint", str(path), "--speed-factor", "60",
+    ])
+    assert result.exit_code == 0, result.output
+    run = stream_calls["run"]
+    assert (run.start_date, run.merchant_count, run.seed) == (date(2025, 2, 1), 321, 9)
+    assert run.end_date is None and run.checkpoint_path == str(path)
+    assert stream_calls["duration"] == 2 and stream_calls["speed"] == 60.0 and stream_calls["closed"]
+
+
+def test_stream_mode_without_a_checkpoint_starts_fresh_from_the_settings(tmp_path, stream_calls):
+    result = CliRunner().invoke(main, ["--mode", "stream", "--checkpoint", str(tmp_path / "none.json")])
+    assert result.exit_code == 0, result.output
+    run = stream_calls["run"]
+    assert run.start_date == date.fromisoformat(settings.simulation_start_date)
+    assert run.merchant_count == settings.default_merchant_count and run.end_date is None
+    assert stream_calls["duration"] == 1 and stream_calls["speed"] == settings.streaming_speed_factor

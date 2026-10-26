@@ -4,12 +4,12 @@ advance_day() tests need no database. The backfill tests write to the throwaway 
 from conftest.py and skip when Postgres is not reachable.
 """
 from collections import Counter
-from datetime import date, timedelta
+from datetime import timedelta
 
 import numpy as np
 import pytest
 
-from simulator import db, lending, runner
+from simulator import lending, runner
 from simulator.db import STREAMS
 from simulator.onboarding import RAMP_DAYS, ramp_count, ramp_target
 from simulator.runner import (
@@ -20,18 +20,7 @@ from simulator.runner import (
     run_backfill,
 )
 from simulator.state import Merchant, load_checkpoint
-
-START = date(2025, 1, 1)
-
-
-def settings_for(tmp_path, days=60, count=60, **kwargs) -> RunSettings:
-    return RunSettings(
-        start_date=START,
-        end_date=START + timedelta(days=days),
-        merchant_count=count,
-        checkpoint_path=str(tmp_path / "checkpoint.json"),
-        **kwargs,
-    )
+from tests.helpers import LONG_RUN, START, reset, settings_for, table_contents
 
 
 def trading_merchant(**kwargs) -> Merchant:
@@ -189,20 +178,6 @@ def boosted(monkeypatch):
         monkeypatch.setitem(lending._PROPENSITY, state, lending._PROPENSITY[state] * 10)
 
 
-def table_contents(conn) -> dict[str, list]:
-    out = {}
-    for name, stream in STREAMS.items():
-        order = ", ".join(stream.key)
-        out[name] = [tuple(r) for r in conn.execute(f"SELECT * FROM {stream.table} ORDER BY {order}")]
-    return out
-
-
-def reset(conn) -> None:
-    for stream in STREAMS.values():
-        conn.execute(f"TRUNCATE {stream.table} CASCADE")
-    conn.commit()
-
-
 def test_a_backfill_writes_every_day_and_reconciles(conn, tmp_path):
     np.random.seed(0)
     run = settings_for(tmp_path, days=60, count=60)
@@ -252,28 +227,6 @@ def test_the_summary_reports_both_counts(conn, tmp_path):
     text = format_summary(summary)
     assert "Merchants onboarded:" in text and "Merchants that ever transacted:" in text
     assert "merchant_transactions:" in text and "Checkpoint:" in text
-
-
-LONG_RUN = {"days": 200, "count": 25}  # long enough to originate loans and collect instalments
-
-
-@pytest.fixture(scope="module")
-def uninterrupted(dsn, tmp_path_factory):
-    """Every table after one uninterrupted LONG_RUN, written once for the resume tests."""
-    with pytest.MonkeyPatch.context() as patch:
-        for state in ("growing", "stable"):
-            patch.setitem(lending._PROPENSITY, state, lending._PROPENSITY[state] * 10)
-        connection = db.connect(dsn)
-        reset(connection)
-        path = tmp_path_factory.mktemp("uninterrupted") / "checkpoint.json"
-        run = RunSettings(START, START + timedelta(days=LONG_RUN["days"]), LONG_RUN["count"],
-                          checkpoint_path=str(path))
-        run_backfill(run, connection)
-        contents = table_contents(connection)
-        reset(connection)
-        connection.close()
-    assert len(contents["loan_applications"]) > 0 and len(contents["loan_repayments"]) > 0
-    return contents
 
 
 @pytest.mark.slow

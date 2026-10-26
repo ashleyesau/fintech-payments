@@ -78,3 +78,44 @@ def uninterrupted(dsn, tmp_path_factory):
         connection.close()
     assert len(contents["loan_applications"]) > 0 and len(contents["loan_repayments"]) > 0
     return contents
+
+
+@pytest.fixture(scope="session")
+def validated(dsn, tmp_path_factory):
+    """A 13-month backfill in its own throwaway database, with validate.sql's temp tables
+    built on a connection that stays open for the session. Used by test_reconcile.py.
+
+    Application propensity is raised tenfold, as in `uninterrupted`, so a 100-merchant run
+    originates enough loans for the lending checks to have data; it does not touch
+    repayment behaviour. The run ends 2026-02-01 so December and January are both in it.
+    Returns (connection, final merchants).
+    """
+    from datetime import date
+
+    from simulator import lending, validation
+    from simulator.runner import RunSettings, run_backfill
+    from simulator.state import load_checkpoint
+
+    name = f"fintech_val_{os.getpid()}"
+    admin = psycopg.connect(_dsn(settings.postgres_db), autocommit=True)
+    admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    admin.execute(f'CREATE DATABASE "{name}"')
+    try:
+        with psycopg.connect(_dsn(name), autocommit=True) as setup:
+            for path in MIGRATIONS:
+                setup.execute(path.read_text())
+        checkpoint = str(tmp_path_factory.mktemp("validated") / "checkpoint.json")
+        with pytest.MonkeyPatch.context() as patch:
+            for state in ("growing", "stable"):
+                patch.setitem(lending._PROPENSITY, state, lending._PROPENSITY[state] * 10)
+            writer = db.connect(_dsn(name))
+            run_backfill(RunSettings(date(2025, 1, 1), date(2026, 2, 1), 100, seed=42,
+                                     checkpoint_path=checkpoint), writer)
+            writer.close()
+        reader = db.connect(_dsn(name))
+        validation.run_setup(reader)
+        yield reader, load_checkpoint(checkpoint).merchants
+        reader.close()
+    finally:
+        admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        admin.close()

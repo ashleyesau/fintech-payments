@@ -8,10 +8,13 @@ amended to 1.9-2.4%. Net take is unchanged at 0.8-1.4%.
 from datetime import date
 
 import numpy as np
+import pytest
 
 from simulator.archetypes import ARCHETYPES
 from simulator.generator import simulate_transaction
 from simulator.state import Merchant
+
+pytestmark = pytest.mark.slow
 
 SAMPLES_PER_ARCHETYPE = 2000
 

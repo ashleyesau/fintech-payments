@@ -36,7 +36,8 @@ docker exec -i fintech_pg psql -U sim -d fintech < migrations/001_initial_schema
 docker exec -i fintech_pg psql -U sim -d fintech < migrations/002_loan_repayments_fk.sql
 
 # 4. Run tests (DB tests are skipped if Postgres is not running)
-pytest tests/ -v
+pytest tests/ -q                 # everything
+pytest tests/ -q -m "not slow"   # skips the simulation-heavy tests
 
 # 5. Run backfill (Phase 7, not implemented yet)
 # python -m simulator.main --mode backfill --start-date 2025-01-01 --end-date 2026-01-01

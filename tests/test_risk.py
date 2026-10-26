@@ -110,6 +110,7 @@ def sample_day(m: Merchant, n_days=30, seed=3):
     return out
 
 
+@pytest.mark.slow
 def test_a_cluster_multiplies_payment_volume():
     def payments(cluster: bool):
         m = merchant("restaurant", quality_percentile=0.3)
@@ -156,6 +157,7 @@ def test_cluster_payments_carry_elevated_risk_scores():
     assert max(t["risk_score"] for t in ordinary if t["decline_code"] != "59") < 60
 
 
+@pytest.mark.slow
 def test_cluster_eft_attempts_often_fail_at_the_otp_step():
     def otp_failure_share(cluster: bool) -> float:
         m = merchant("wholesale")

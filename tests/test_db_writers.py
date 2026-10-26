@@ -209,6 +209,7 @@ def test_invalid_disbursement_updates_are_rejected(bad):
 # Backfill writer
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_backfill_writes_every_row_of_every_stream(conn, run):
     expected = totals(run)
     assert expected["loan_repayments"] > 20 and expected["updates"] > 3 and expected["risk_events"] >= 0
@@ -221,6 +222,7 @@ def test_backfill_writes_every_row_of_every_stream(conn, run):
     assert count(conn, "loan_applications") == expected["loan_applications"]
 
 
+@pytest.mark.slow
 def test_backfill_results_reconcile_with_the_generator(conn, run):
     merchants, days = run
     write_all(BackfillWriter(conn), run)
@@ -244,6 +246,7 @@ def test_backfill_results_reconcile_with_the_generator(conn, run):
     assert merchants  # the run included merchants
 
 
+@pytest.mark.slow
 def test_loan_application_columns_round_trip(conn, run):
     write_all(BackfillWriter(conn), run)
     row = conn.execute(
@@ -259,6 +262,7 @@ def test_loan_application_columns_round_trip(conn, run):
     assert approved[2] is not None
 
 
+@pytest.mark.slow
 def test_timestamps_are_stored_with_their_instant(conn, run):
     write_all(BackfillWriter(conn), run)
     created, completed = conn.execute(
@@ -313,6 +317,7 @@ def test_an_update_for_a_missing_application_fails_the_flush(conn):
     conn.rollback()
 
 
+@pytest.mark.slow
 def test_skip_duplicates_makes_a_rerun_harmless(conn, run):
     expected = totals(run)
     write_all(BackfillWriter(conn, skip_duplicates=True), run)
@@ -321,6 +326,7 @@ def test_skip_duplicates_makes_a_rerun_harmless(conn, run):
     assert count(conn, "merchants") == expected["merchants"]
 
 
+@pytest.mark.slow
 def test_a_rerun_without_skip_duplicates_fails(conn, run):
     write_all(BackfillWriter(conn), run)
     with pytest.raises(psycopg.errors.UniqueViolation):
@@ -332,6 +338,7 @@ def test_a_rerun_without_skip_duplicates_fails(conn, run):
 # Streaming writer
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_streaming_writes_the_same_rows_as_backfill(conn, run):
     expected = totals(run)
     write_all(StreamingWriter(conn), run)
@@ -416,6 +423,7 @@ def test_snapshot_rows_are_end_of_day_and_skip_unonboarded_merchants():
     assert len(snapshot_rows([early, late], START + timedelta(days=5))) == 2
 
 
+@pytest.mark.slow
 def test_one_snapshot_per_merchant_per_day_is_stored(conn, run):
     merchants, days = run
     write_all(BackfillWriter(conn), run)
@@ -437,6 +445,7 @@ def test_a_second_snapshot_for_the_same_day_is_rejected(conn, run):
     conn.rollback()
 
 
+@pytest.mark.slow
 def test_snapshots_track_state_and_loan_flags(conn, run):
     merchants, days = run
     write_all(BackfillWriter(conn), run)

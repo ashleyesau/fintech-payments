@@ -16,6 +16,8 @@ from simulator.models import LoanApplication, LoanRepayment, MerchantSnapshot, M
 from simulator.risk import evaluate_risk
 from simulator.state import Merchant
 
+pytestmark = pytest.mark.slow
+
 START = date(2025, 1, 1)
 ARCHETYPES = ["wholesale", "tutor", "e_commerce", "salon"]
 CARD_CHANNELS = {"card_present", "card_ecom", "payment_link"}

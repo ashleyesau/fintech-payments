@@ -472,6 +472,7 @@ def test_daily_hazard_compounds_to_the_monthly_probability(monkeypatch):
     assert 1 - (1 - daily) ** 30 == pytest.approx(monthly)
 
 
+@pytest.mark.slow
 def test_dormancy_rate_over_a_year_matches_archetype():
     np.random.seed(8)
     gone = 0

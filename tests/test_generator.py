@@ -72,6 +72,7 @@ def test_failed_card_payment_has_decline_code_and_no_money_fields():
         assert txn["settlement_date"] is None and txn["batch_id"] is None
 
 
+@pytest.mark.slow
 def test_fraud_blocked_decline_carries_block_action():
     blocked = [t for t in sample("restaurant", 6000) if t["decline_code"] == "59"]
     assert blocked
@@ -104,6 +105,7 @@ def test_card_present_has_device_and_ecom_does_not():
 # Rates (seeded, large samples)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_channel_mix_follows_archetype():
     counts = Counter(t["channel"] for t in sample("e_commerce", 6000))
     assert counts["card_ecom"] / 6000 == pytest.approx(0.60, abs=0.03)
@@ -111,6 +113,7 @@ def test_channel_mix_follows_archetype():
     assert "card_present" not in counts
 
 
+@pytest.mark.slow
 def test_card_authorization_rate_default_and_spaza_override():
     def card_auth(archetype):
         rows = [t for t in sample(archetype, 8000) if t["channel"] == "card_present"]
@@ -120,6 +123,7 @@ def test_card_authorization_rate_default_and_spaza_override():
     assert card_auth("spaza_shop") == pytest.approx(0.98, abs=0.012)
 
 
+@pytest.mark.slow
 def test_card_not_present_authorization_rate_is_lower():
     rows = [t for t in sample("e_commerce", 9000) if t["channel"] == "card_ecom"]
     assert sum(t["status"] == "completed" for t in rows) / len(rows) == pytest.approx(0.90, abs=0.02)
@@ -134,6 +138,7 @@ def test_auth_rate_resolution_order():
     assert _card_auth_rate("wholesale", "payment_link") == 0.90
 
 
+@pytest.mark.slow
 def test_eft_funnel_completion_rate():
     rows = [t for t in sample("wholesale", 12000) if t["channel"] == "instant_eft"]
     expected = 0.95 * 0.90 * 0.85 * 0.92 * 0.99

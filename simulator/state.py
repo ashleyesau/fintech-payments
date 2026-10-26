@@ -52,6 +52,16 @@ def _roll(probability: float) -> bool:
     return bool(np.random.random() < probability)
 
 
+def daily_hazard(window_probability: float) -> float:
+    """The daily chance that compounds to `window_probability` over one 30-day window.
+
+    Causal Rules gives each transition probability as the chance a met condition produces
+    the transition. Rolled once a day it is near-certain within a week (0.65 daily leaves
+    0.35 ** 7 = 0.0006), so a seasonal GPV drop moves a third of the platform in one week.
+    As a hazard it is the chance over a month of the condition holding."""
+    return 1.0 - (1.0 - window_probability) ** (1.0 / _WINDOW_DAYS)
+
+
 # ---------------------------------------------------------------------------
 # Merchant
 # ---------------------------------------------------------------------------
@@ -322,7 +332,9 @@ class Merchant:
         decline_60d: Optional[float],
         current_30d_avg: float,
     ) -> Optional[tuple[str, float]]:
-        """Highest-priority transition whose condition holds, with its probability.
+        """Highest-priority transition whose condition holds, with the probability to roll
+        today: a daily hazard, or the full probability for the one-shot missed-repayment
+        trigger (a single event, rolled once, so it is not spread over a window).
 
         Only that one condition is rolled. If several hold, lower-priority ones are not
         tried after a failed roll, which keeps one transition per cycle.
@@ -333,45 +345,45 @@ class Merchant:
 
         if state == "new":
             if self.days_without_txn >= _ST["churn_no_txn_days"]:
-                candidates.append(("churned", _PROB["new_to_churned"]))
+                candidates.append(("churned", daily_hazard(_PROB["new_to_churned"])))
             if mom_growth is not None:
                 if self.months_on_platform >= 1 and mom_growth >= _ST["growth_threshold"]:
-                    candidates.append(("growing", _PROB["new_to_growing"]))
+                    candidates.append(("growing", daily_hazard(_PROB["new_to_growing"])))
                 if self.months_on_platform >= 3 and abs(mom_growth) < _ST["stable_band"]:
-                    candidates.append(("stable", _PROB["new_to_stable"]))
+                    candidates.append(("stable", daily_hazard(_PROB["new_to_stable"])))
 
         elif state == "growing":
             if decline_60d is not None and decline_60d >= _ST["stressed_gpv_60d_decline"]:
-                candidates.append(("stressed", _PROB["growing_to_stressed"]))
+                candidates.append(("stressed", daily_hazard(_PROB["growing_to_stressed"])))
             if self.days_growth_low >= _ST["growing_to_stable_months"] * month:
-                candidates.append(("stable", _PROB["growing_to_stable"]))
+                candidates.append(("stable", daily_hazard(_PROB["growing_to_stable"])))
 
         elif state == "stable":
             if decline_60d is not None and decline_60d >= _ST["stressed_gpv_60d_decline"]:
-                candidates.append(("stressed", _PROB["stable_to_stressed"]))
+                candidates.append(("stressed", daily_hazard(_PROB["stable_to_stressed"])))
             if self.days_growth_high >= _ST["stable_to_growing_months"] * month:
-                candidates.append(("growing", _PROB["stable_to_growing"]))
+                candidates.append(("growing", daily_hazard(_PROB["stable_to_growing"])))
 
         elif state == "stressed":
             delinquent_p = 0.0
             if decline_60d is not None and decline_60d >= _ST["delinquent_gpv_60d_decline"]:
-                delinquent_p = _PROB["stressed_to_delinquent_gpv"]
+                delinquent_p = daily_hazard(_PROB["stressed_to_delinquent_gpv"])
             if self.missed_repayment_flag:
                 delinquent_p = max(delinquent_p, _PROB["stressed_to_delinquent_missed_repayment"])
             if delinquent_p > 0.0:
                 candidates.append(("delinquent", delinquent_p))
             if self._gpv_recovered(current_30d_avg):
-                candidates.append(("stable", _PROB["stressed_to_stable"]))
+                candidates.append(("stable", daily_hazard(_PROB["stressed_to_stable"])))
 
         elif state == "delinquent":
             if self.days_without_txn >= _ST["churn_no_txn_days"]:
-                candidates.append(("churned", _PROB["delinquent_to_churned"]))
+                candidates.append(("churned", daily_hazard(_PROB["delinquent_to_churned"])))
             # Not in Causal Rules, which gives Delinquent no way out except Churned. A
             # trading merchant whose GPV has recovered steps back to Stressed. Without
             # this Delinquent is a trap: a merchant that missed one repayment stays
             # Delinquent, so its collections keep failing and its loan never recovers.
             if self._gpv_recovered(current_30d_avg):
-                candidates.append(("stressed", _PROB["delinquent_to_stressed"]))
+                candidates.append(("stressed", daily_hazard(_PROB["delinquent_to_stressed"])))
 
         # Churned is terminal here: reactivation needs per-archetype probabilities
         # that are not in the config yet.

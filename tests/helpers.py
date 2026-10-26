@@ -5,7 +5,7 @@ from simulator.db import STREAMS
 from simulator.runner import RunSettings
 
 START = date(2025, 1, 1)
-LONG_RUN = {"days": 200, "count": 25}  # long enough to originate loans and collect instalments
+LONG_RUN = {"days": 260, "count": 25}  # long enough to originate loans and collect instalments
 
 
 def settings_for(tmp_path, days=60, count=60, **kwargs) -> RunSettings:

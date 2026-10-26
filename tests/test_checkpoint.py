@@ -261,11 +261,12 @@ def test_a_resumed_run_equals_an_uninterrupted_one(tmp_path):
 
 @pytest.mark.slow
 def test_a_resumed_run_equals_an_uninterrupted_one_with_loans_in_flight(tmp_path):
-    # Seed 1 leaves two disbursed loans running at day 150, so the checkpoint has to
+    # Seed 12 leaves two disbursed loans running at day 150, so the checkpoint has to
     # carry live repayment state, and the second half goes on to collect instalments.
+    # (Seed 1 did before transition probabilities became daily hazards.)
     archetypes = ["wholesale", "e_commerce", "salon", "restaurant", "salon_low_cost", "tutor"]
     uninterrupted, resumed, merchants, resumed_merchants, in_flight = equal_after_resume(
-        tmp_path, archetypes, first_days=150, second_days=120, seed=1,
+        tmp_path, archetypes, first_days=150, second_days=120, seed=12,
     )
     assert in_flight["loans"] > 0, "no loan was running at the checkpoint, so it proves little"
     repayments = sum(len(lending["loan_repayments"]) for _, _, _, _, lending in uninterrupted)

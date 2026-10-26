@@ -457,6 +457,77 @@ def test_dormant_merchant_is_not_rolled_again(always):
     assert m.dormant_since == first
 
 
+# ---------------------------------------------------------------------------
+# Transition probabilities are daily hazards (Phase 8, state snapping)
+# ---------------------------------------------------------------------------
+
+def test_a_window_probability_compounds_over_30_days():
+    from simulator.state import daily_hazard
+
+    for p in (0.30, 0.65, 0.85):
+        assert 1 - (1 - daily_hazard(p)) ** 30 == pytest.approx(p)
+    assert daily_hazard(0.0) == 0.0
+
+
+def test_a_met_condition_rolls_the_daily_hazard_not_the_window_probability(monkeypatch):
+    # Stable to Stressed is 0.65 over a window. A roll of 0.5 used to pass it on the
+    # day the condition appeared; now it needs a roll under the daily hazard (about 0.034).
+    from simulator.state import daily_hazard
+
+    hazard = daily_hazard(0.65)
+    history = [1000] * 30 + [500] * 30
+    monkeypatch.setattr(np.random, "random", lambda: 0.5)
+    m = build(history, state="stable")
+    assert m.evaluate_state(today(m)) is None
+    monkeypatch.setattr(np.random, "random", lambda: hazard * 0.999)
+    m = build(history, state="stable")
+    assert m.evaluate_state(today(m)) == "stressed"
+    monkeypatch.setattr(np.random, "random", lambda: hazard * 1.001)
+    m = build(history, state="stable")
+    assert m.evaluate_state(today(m)) is None
+
+
+def test_the_missed_repayment_trigger_is_rolled_once_at_its_full_probability(monkeypatch):
+    # A single event, not a condition that persists, so it is not spread over a window.
+    history = [1000] * 30 + [700] * 30
+    monkeypatch.setattr(np.random, "random", lambda: 0.89)
+    m = build(history, state="stressed")
+    m.record_repayment_outcome(False, today(m))
+    assert m.evaluate_state(today(m)) == "delinquent"
+    monkeypatch.setattr(np.random, "random", lambda: 0.91)
+    m = build(history, state="stressed")
+    m.record_repayment_outcome(False, today(m))
+    assert m.evaluate_state(today(m)) is None
+
+
+def _busiest_week_share(count=400, seed=3):
+    """400 Stable merchants whose daily GPV falls 40% on the same day. Returns the largest
+    share of them that first become Stressed in any one week."""
+    from collections import Counter
+
+    np.random.seed(seed)
+    merchants = [build([1000] * 60, state="stable") for _ in range(count)]
+    day = today(merchants[0])
+    first = {}
+    for offset in range(1, 61):
+        day += timedelta(days=1)
+        for i, m in enumerate(merchants):
+            m.record_day(day, 600, 1)
+            if i not in first and m.evaluate_state(day) == "stressed":
+                first[i] = offset
+    weeks = Counter((offset - 1) // 7 for offset in first.values())
+    return max(weeks.values()) / count
+
+
+@pytest.mark.slow
+def test_a_seasonal_drop_does_not_move_most_merchants_in_one_week(monkeypatch):
+    assert _busiest_week_share() < 0.30
+    # The control: the same drop with the old daily roll (no hazard) moves nearly all of
+    # them in one week, which is the failure mode.
+    monkeypatch.setattr("simulator.state.daily_hazard", lambda p: p)
+    assert _busiest_week_share() > 0.90
+
+
 def test_daily_hazard_compounds_to_the_monthly_probability(monkeypatch):
     # A roll just under the daily hazard hits, just over misses, and 30 days of that
     # hazard add up to monthly_churn_prob.

@@ -33,7 +33,12 @@ state_transitions:
   growing_to_stable_months: 2       # gpv_mom_growth < growth_threshold
   stable_to_growing_months: 2       # gpv_mom_growth >= growth_threshold
 
-  # Probability that a met condition produces the transition.
+  # Probability that a met condition produces the transition over one 30-day window.
+  # state.py converts each to a daily hazard, 1 - (1 - p) ** (1 / 30), so a condition
+  # that holds for a month produces the transition with probability p. Rolled daily as
+  # written, 0.65 is near-certain within a week and a seasonal GPV drop moved about 30%
+  # of merchants in one week (Phase 8, state snapping). The one exception is
+  # stressed_to_delinquent_missed_repayment: a single event rolled once, at p.
   probabilities:
     new_to_growing: 0.80            # months_on_platform >= 1
     new_to_stable: 0.70             # months_on_platform >= 3, growth inside stable_band

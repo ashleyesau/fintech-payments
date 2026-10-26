@@ -47,7 +47,8 @@ pytest tests/ -v
 ```
 simulator/          Core simulation modules
 config/             YAML calibration, archetypes, fees and causal rules
-tests/              Schema, calendar, config and DB tests
+scripts/            portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test)
+tests/              Schema, calendar, generator, lending, repayment, risk, config and DB tests
 migrations/         Postgres DDL
 docker-compose.yml  Local Postgres stack
 ```

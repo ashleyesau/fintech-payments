@@ -1,7 +1,7 @@
 """
 tests/test_calendar.py: Tests for calendar utilities and archetype loading.
 """
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -96,19 +96,17 @@ def test_intensity_multiplier_wholesale_on_holiday():
     assert result == 0.0
 
 
-def test_intensity_multiplier_black_friday_capped():
-    # Black Friday multiplier stacks but must not exceed saturation cap (2.5).
+def test_intensity_multiplier_unchanged_on_black_friday():
+    # Black Friday is a ticket-size effect applied after the cap, so it must not
+    # raise the intensity (transaction count) multiplier.
     bf_2025 = get_black_friday(2025)
-    result = get_intensity_multiplier(bf_2025, "spaza_shop")
-    assert result <= 2.5
-    assert result > 1.0
-
-
-def test_intensity_multiplier_ecom_black_friday():
-    # E-commerce uses 3.0x BF multiplier, but result is still capped at 2.5.
-    bf_2025 = get_black_friday(2025)
-    result = get_intensity_multiplier(bf_2025, "e_commerce")
-    assert result <= 2.5
+    friday_before = bf_2025 - timedelta(days=7)
+    assert bf_2025.weekday() == 4
+    ratio = get_intensity_multiplier(bf_2025, "e_commerce") / get_intensity_multiplier(
+        friday_before, "e_commerce"
+    )
+    # Only day-of-month and seasonal differences remain; far below a 2.5x jump.
+    assert ratio < 1.5
 
 
 def test_intensity_multiplier_positive_on_open_day():
@@ -219,29 +217,49 @@ def test_churned_stress_modifier_zeroes_intensity():
     assert get_intensity_multiplier(date(2025, 5, 14), "spaza_shop", stress_modifier=0.0) == 0.0
 
 
-def test_stress_modifier_applied_inside_cap():
-    # The Black Friday product is far above the cap, so even a stressed merchant (0.80)
-    # lands on the cap. Applying the modifier after the cap would give 2.5 * 0.80 = 2.0.
-    bf = get_black_friday(2025)
-    capped = get_intensity_multiplier(bf, "e_commerce")
-    assert get_intensity_multiplier(bf, "e_commerce", stress_modifier=1.05) == capped
-    assert get_intensity_multiplier(bf, "e_commerce", stress_modifier=0.80) == capped
+def test_stress_modifier_applied_inside_cap(monkeypatch):
+    # Force a product well above the cap, then check a stressed merchant still lands on
+    # it. Applying the modifier after the cap would give 2.5 * 0.80 = 2.0.
+    from simulator import calendar as cal
+
+    real = cal.load_calibration()
+    boosted = {**real, "daily_volume_index": {d: 5.0 for d in range(1, 32)}}
+    monkeypatch.setattr(cal, "load_calibration", lambda: boosted)
+    d = date(2025, 5, 14)
+    assert get_intensity_multiplier(d, "spaza_shop") == 2.5
+    assert get_intensity_multiplier(d, "spaza_shop", stress_modifier=1.05) == 2.5
+    assert get_intensity_multiplier(d, "spaza_shop", stress_modifier=0.80) == 2.5
 
 
 def test_january_count_up_and_ticket_down():
     jan = date(2025, 1, 15)
     assert get_tx_count_modifier(jan) == 1.07
-    assert get_ticket_size_modifier(jan) == 0.85
+    assert get_ticket_size_modifier(jan, "spaza_shop") == 0.85
 
 
 def test_count_and_ticket_modifiers_neutral_outside_january():
     assert get_tx_count_modifier(date(2025, 6, 15)) == 1.0
-    assert get_ticket_size_modifier(date(2025, 6, 15)) == 1.0
+    assert get_ticket_size_modifier(date(2025, 6, 15), "spaza_shop") == 1.0
 
 
 def test_december_peak_days_lift_ticket_only():
     for day in (15, 22, 23, 24):
         d = date(2025, 12, day)
-        assert get_ticket_size_modifier(d) == 1.25
+        assert get_ticket_size_modifier(d, "restaurant") == 1.25
         assert get_tx_count_modifier(d) == 1.0
-    assert get_ticket_size_modifier(date(2025, 12, 10)) == 1.0
+    assert get_ticket_size_modifier(date(2025, 12, 10), "restaurant") == 1.0
+
+
+def test_black_friday_lifts_ticket_size_by_archetype():
+    bf = get_black_friday(2025)
+    assert get_ticket_size_modifier(bf, "e_commerce") == 2.50
+    assert get_ticket_size_modifier(bf, "spaza_shop") == 1.30
+    assert get_ticket_size_modifier(bf, "restaurant") == 1.10
+
+
+def test_black_friday_default_for_unlisted_archetype():
+    assert get_ticket_size_modifier(get_black_friday(2025), "fuel_station") == 1.0
+
+
+def test_black_friday_does_not_change_tx_count_modifier():
+    assert get_tx_count_modifier(get_black_friday(2025)) == 1.0

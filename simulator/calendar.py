@@ -6,7 +6,7 @@ Exports:
   get_black_friday(year) -> date
   get_intensity_multiplier(sim_date, archetype_name, stress_modifier=1.0) -> float
   get_tx_count_modifier(sim_date) -> float
-  get_ticket_size_modifier(sim_date) -> float
+  get_ticket_size_modifier(sim_date, archetype_name) -> float
 """
 from __future__ import annotations
 
@@ -82,15 +82,16 @@ def get_intensity_multiplier(
       - day-of-month multiplier (DAILY_VOLUME_INDEX from calibration.yaml)
       - monthly seasonal multiplier (archetype-specific, Jan-Dec)
       - public holiday multiplier (0.85 on holidays; B2B archetypes close at 0.0)
-      - Black Friday multiplier (2.5x for retail; 3.0x for e_commerce)
       - the merchant's Chain 2 stress modifier
 
     The stress modifier sits inside the cap: Causal Rules caps the product of all
     temporal modifiers and the stress modifier together, so a Growing merchant (1.05)
     cannot exceed the saturation cap and a Churned one (0.0) always returns 0.0.
 
-    January count and ticket modifiers are not part of this value; they are applied
-    separately via get_tx_count_modifier() and get_ticket_size_modifier().
+    January count and ticket modifiers, the December peak days and Black Friday are not
+    part of this value. Causal Rules applies them outside the cap and, apart from the
+    January count modifier, to ticket size only; see get_tx_count_modifier() and
+    get_ticket_size_modifier().
 
     Returns 0.0 if the archetype is closed on this day.
     """
@@ -126,18 +127,7 @@ def get_intensity_multiplier(
     else:
         holiday_mult = 1.0
 
-    # Black Friday multiplier.
-    black_friday = get_black_friday(sim_date.year)
-    if sim_date == black_friday:
-        bf_section = calibration.get("seasonal", {})
-        if archetype_name == "e_commerce":
-            bf_mult = bf_section.get("black_friday_ecom_multiplier", 3.00)
-        else:
-            bf_mult = bf_section.get("black_friday_day_multiplier", 2.50)
-    else:
-        bf_mult = 1.0
-
-    composite = weekday_weight * dom_mult * month_mult * holiday_mult * bf_mult * stress_modifier
+    composite = weekday_weight * dom_mult * month_mult * holiday_mult * stress_modifier
     return min(composite, saturation_cap)
 
 
@@ -153,10 +143,14 @@ def get_tx_count_modifier(sim_date: date) -> float:
     return 1.0
 
 
-def get_ticket_size_modifier(sim_date: date) -> float:
+def get_ticket_size_modifier(sim_date: date, archetype_name: str) -> float:
     """Ticket-size modifier: smaller baskets in January, larger on the December peak
-    days. 1.0 otherwise. Applied to the ticket draw, never to the transaction count."""
+    days and on Black Friday (archetype-specific). 1.0 otherwise. Applied to the ticket
+    draw, never to the transaction count."""
     seasonal = load_calibration().get("seasonal", {})
+    if sim_date == get_black_friday(sim_date.year):
+        by_archetype = seasonal.get("black_friday_ticket_multipliers", {})
+        return by_archetype.get(archetype_name, seasonal.get("black_friday_ticket_default", 1.0))
     if sim_date.month == 1:
         return seasonal.get("january_ticket_size_modifier", 1.0)
     if sim_date.month == 12 and sim_date.day in seasonal.get("december_peak_days", []):

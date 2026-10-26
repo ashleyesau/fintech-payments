@@ -67,8 +67,14 @@ seasonal:
   # is a ticket-size effect, not a transaction-count effect.
   december_peak_days: [15, 22, 23, 24]
   december_peak_ticket_multiplier: 1.25
-  black_friday_day_multiplier: 2.50
-  black_friday_ecom_multiplier: 3.00
+  # Black Friday lifts basket size, not transaction count, and applies after the
+  # saturation cap. Per Causal Rules only these archetypes are specified; any other
+  # archetype uses the default. Revisit the default if Phase 8 shows flat Black Friday GPV.
+  black_friday_ticket_multipliers:
+    e_commerce: 2.50
+    spaza_shop: 1.30
+    restaurant: 1.10
+  black_friday_ticket_default: 1.00
   saturation_cap: 2.50
 
 # Geographic effects.

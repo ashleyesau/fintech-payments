@@ -160,6 +160,11 @@ class Merchant:
         """GPV over the latest 90 days (fewer for a merchant with a shorter history)."""
         return sum(self.daily_gpv_minor)
 
+    def gpv_30d_avg_minor(self) -> float:
+        """Average daily GPV over the latest 30 days (fewer for a short history)."""
+        recent = list(self.daily_gpv_minor)[-_WINDOW_DAYS:]
+        return sum(recent) / len(recent) if recent else 0.0
+
     def _latest_60_days(self) -> Optional[list]:
         """The latest 60 daily GPV values, or None until 60 days exist."""
         if len(self.daily_gpv_minor) < _HISTORY_DAYS:
@@ -418,6 +423,19 @@ class Loan:
 
     mandate_id: Optional[str] = None
     mandate_status: str = "PDNG"   # ACCP | RJCT | PDNG | CANC
+
+    # Repayment bookkeeping, driven by repayments.py. outstanding_balance_minor is what is
+    # still owed including the fee, the figure Event Schemas calls outstanding_before and
+    # outstanding_after; outstanding_principal_minor is the principal part only.
+    fee_minor: int = 0
+    outstanding_balance_minor: int = 0
+    baseline_gpv_30d_minor: float = 0.0   # average daily GPV at disbursement, for forced misses
+    next_installment: int = 1
+    next_due_date: Optional[date] = None
+    unpaid_installments: list = field(default_factory=list)   # numbers, oldest first
+    bucket: str = "current"                # current | 1-30 | 31-60 | 61-90 | 90+
+    retrying_installment: Optional[int] = None
+    retry_dates: list = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.application_id:

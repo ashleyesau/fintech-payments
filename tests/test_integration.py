@@ -12,7 +12,7 @@ import pytest
 from simulator import lending
 from simulator.generator import simulate_day
 from simulator.lending import simulate_lending_day
-from simulator.models import LoanApplication, MerchantSnapshot, MerchantTransaction
+from simulator.models import LoanApplication, LoanRepayment, MerchantSnapshot, MerchantTransaction
 from simulator.state import Merchant
 
 START = date(2025, 1, 1)
@@ -150,31 +150,43 @@ def test_lending_events_follow_the_merchants_through_a_run(monkeypatch):
         )
         for i, a in enumerate(["restaurant", "salon", "e_commerce", "wholesale"])
     ]
-    applications, updates = [], []
-    for offset in range(240):
+    applications, updates, repayments = [], [], []
+    for offset in range(420):
         day = START + timedelta(days=offset)
         for m in merchants:
             simulate_day(m, day)
             lend = simulate_lending_day(m, day)
             applications += lend["loan_applications"]
             updates += lend["loan_application_updates"]
+            repayments += lend["loan_repayments"]
             m.evaluate_state(day)
             m.decay_risk(day)
 
-    assert applications and updates
+    assert applications and updates and repayments
     for row in applications:
         LoanApplication(**row)
+    for row in repayments:
+        LoanRepayment(**row)
     by_id = {a["application_id"]: a for a in applications}
     assert len(by_id) == len(applications)
+    disbursed = {}
     for update in updates:
         original = by_id[update["application_id"]]
         assert original["decision"] in {"approved", "counter_offer"}
         assert update["disbursement_amount_minor"] == original["approved_amount"]
         assert update["disbursed_at"] > original["decision_ts"]
-    assert len({u["application_id"] for u in updates}) == len(updates)
+        disbursed[update["application_id"]] = update
+    assert len(disbursed) == len(updates)
+
+    # A repayment always follows its loan's disbursement, as the foreign key requires.
+    for row in repayments:
+        update = disbursed[row["loan_id"]]
+        assert row["due_date"] > update["disbursed_at"].date()
+        assert by_id[row["loan_id"]]["merchant_id"] == row["merchant_id"]
+    assert len({r["repayment_id"] for r in repayments}) == len(repayments)
+
     for m in merchants:
         own = [u for u in updates if by_id[u["application_id"]]["merchant_id"] == m.merchant_id]
         assert m.loan_count == len(own)
-        # No repayments yet (Phase 5.3), so the first loan stays active and blocks the rest.
-        assert len(own) <= 1
-        assert m.has_active_loan == bool(own)
+        assert m.has_active_loan == (m.active_loan is not None)
+        assert 0 <= m.risk_score <= 100

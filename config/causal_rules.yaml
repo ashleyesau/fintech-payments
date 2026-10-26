@@ -81,6 +81,18 @@ debicheck:
   first_strike_base_success_rate: 0.77
   max_retries: 3
   retry_window_days: 10
+  # Not in Causal Rules. Calibration Doc: 50% of first-strike failures recover inside the
+  # 10-day window. Three retries at the first-strike rate would recover 99%, so each
+  # retry uses its own, lower base rate: 1 - (1 - 0.2063) ** 3 = 0.50. State modifiers
+  # apply to it as to the first strike.
+  retry_attempt_success_rate: 0.2063
+  # Days after the due date of retries 1 to 3, moved to business days. The largest shift
+  # (weekend plus holiday Monday) keeps the last one inside the 10-day window.
+  retry_day_offsets: [1, 4, 7]
+  # Calibration Doc: DebiCheck dispute rate 0.3%. A disputed collection counts as unpaid
+  # (response code MD06) and adds repayment_disputed_md06 to the risk score.
+  dispute_rate: 0.003
+  response_codes: {success: "00", insufficient_funds: "AM04", disputed: "MD06"}
   # Multiplier on first_strike_base_success_rate by merchant state at the due date.
   # New and churned are not specified: loans require growing or stable at
   # application, and a churned merchant is forced to miss (see forced_missed).

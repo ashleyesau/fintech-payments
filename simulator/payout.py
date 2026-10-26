@@ -17,6 +17,13 @@ def _is_business_day(d: date) -> bool:
     return d.weekday() < 5 and d not in get_sa_public_holidays(d.year)
 
 
+def next_business_day(d: date) -> date:
+    """d itself if it is a business day, otherwise the next one."""
+    while not _is_business_day(d):
+        d += timedelta(days=1)
+    return d
+
+
 def settlement_date(completed_on: date, channel: str) -> date:
     """
     Settlement date for a transaction completed on completed_on.

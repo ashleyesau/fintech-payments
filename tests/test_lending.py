@@ -317,6 +317,11 @@ def test_disbursement_is_an_update_of_the_existing_row_and_starts_the_loan():
     assert (loan.principal_minor, loan.outstanding_principal_minor) == (row["approved_amount"], row["approved_amount"])
     assert loan.term_months == row["requested_term_months"] and loan.total_cost_pct == row["total_cost_percent"]
     assert loan.disbursed_at == update["disbursed_at"].date()
+    # The repayment schedule starts with the loan: balance includes the fee, first due a month out.
+    assert loan.fee_minor == round(row["approved_amount"] * row["total_cost_percent"])
+    assert loan.outstanding_balance_minor == row["approved_amount"] + loan.fee_minor
+    assert loan.mandate_id and loan.mandate_status == "ACCP"
+    assert loan.next_installment == 1 and loan.next_due_date > loan.disbursed_at
     assert m.has_active_loan is True and m.loan_count == 1
     assert m.scheduled_disbursements == []
     assert simulate_disbursements(m, due + timedelta(days=1)) == []

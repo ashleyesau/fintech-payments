@@ -3,7 +3,7 @@ lending.py: Loan application and disbursement events.
 
 simulate_lending_day() is the lending counterpart of generator.simulate_day(): for one
 merchant on one day it returns the loan_applications rows to INSERT and the
-disbursement UPDATEs that fall due. Repayments are generated separately (Phase 5.3).
+disbursement UPDATEs that fall due, plus the loan_repayments rows from repayments.py.
 
 A loan is its application in V1, so a disbursed loan carries the application's id.
 """
@@ -16,6 +16,7 @@ import numpy as np
 
 from simulator.config import load_causal_rules, load_lending
 from simulator.generator import SAST, new_id
+from simulator.repayments import simulate_repayments, start_schedule
 from simulator.state import Loan
 
 _RULES = load_causal_rules()
@@ -281,7 +282,7 @@ def simulate_disbursements(merchant: Any, sim_date: date) -> list[dict]:
             "disbursed_at": landed,
             "disbursement_amount_minor": item["amount_minor"],
         })
-        merchant.active_loan = Loan(
+        loan = Loan(
             application_id=item["application_id"],
             merchant_id=merchant.merchant_id,
             principal_minor=item["amount_minor"],
@@ -290,6 +291,8 @@ def simulate_disbursements(merchant: Any, sim_date: date) -> list[dict]:
             disbursed_at=landed.date(),
             outstanding_principal_minor=item["amount_minor"],
         )
+        start_schedule(loan, merchant)
+        merchant.active_loan = loan
         merchant.has_active_loan = True
         merchant.loan_count += 1
     return updates
@@ -300,13 +303,16 @@ def simulate_lending_day(merchant: Any, sim_date: date) -> dict[str, list[dict]]
     Lending events for one merchant on one day.
 
     Returns {"loan_applications": rows to INSERT, "loan_application_updates": disbursement
-    UPDATEs}. Disbursements run first, so a loan disbursed today is already active when
-    the merchant's eligibility is checked. Call after generator.simulate_day() so GPV
-    includes today.
+    UPDATEs, "loan_repayments": collection attempts to INSERT}. Repayments on an existing
+    loan run first, then disbursements, so a loan disbursed today is already active when
+    the merchant's eligibility is checked and its first instalment is a month away. Call
+    after generator.simulate_day() so GPV includes today.
     """
+    repayments = simulate_repayments(merchant, sim_date)
     updates = simulate_disbursements(merchant, sim_date)
     application = simulate_loan_application(merchant, sim_date)
     return {
         "loan_applications": [application] if application else [],
         "loan_application_updates": updates,
+        "loan_repayments": repayments,
     }

@@ -12,3 +12,5 @@ venv/
 .coverage
 htmlcov/
 .DS_Store
+checkpoint.json
+checkpoints/

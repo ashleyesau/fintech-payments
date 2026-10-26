@@ -238,6 +238,7 @@ def _repaid_in_full(merchant: Any, loan: Loan, sim_date: date) -> None:
     merchant.prior_loan_repaid = True
     merchant.has_active_loan = False
     merchant.active_loan = None
+    merchant.loan_closed_on = sim_date
 
 
 def _finished(loan: Loan) -> bool:
@@ -255,6 +256,7 @@ def _write_off(merchant: Any, loan: Loan, sim_date: date) -> dict:
     merchant.write_off(sim_date)
     merchant.has_active_loan = False
     merchant.active_loan = None
+    merchant.loan_closed_on = sim_date
     return row
 
 

@@ -528,3 +528,140 @@ def test_snapshot_before_first_transaction_has_no_first_transaction_time():
 
     row = Merchant(archetype="spaza_shop", onboarded_at=START).snapshot(datetime(2025, 1, 2, tzinfo=timezone.utc))
     assert row["first_transaction_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# Identifiers from the seeded RNG
+# ---------------------------------------------------------------------------
+
+def test_merchant_ids_come_from_the_seeded_rng():
+    np.random.seed(5)
+    first = [Merchant().merchant_id for _ in range(5)]
+    np.random.seed(5)
+    second = [Merchant().merchant_id for _ in range(5)]
+    assert first == second
+    assert len(set(first)) == 5
+
+
+def test_loan_fallback_id_comes_from_the_seeded_rng():
+    np.random.seed(5)
+    first = Loan().loan_id
+    np.random.seed(5)
+    assert Loan().loan_id == first
+    assert first != ""
+
+
+# ---------------------------------------------------------------------------
+# Activation and abandoning onboarding
+# ---------------------------------------------------------------------------
+
+def test_a_merchant_without_an_activation_date_can_trade_from_onboarding():
+    m = Merchant(archetype="spaza_shop", onboarded_at=START)
+    assert m.can_trade(START) and m.can_trade(START + timedelta(days=400))
+
+
+def test_a_merchant_cannot_trade_before_its_activation_date():
+    m = Merchant(archetype="spaza_shop", onboarded_at=START, activation_date=START + timedelta(days=3))
+    assert not m.can_trade(START + timedelta(days=2))
+    assert m.can_trade(START + timedelta(days=3))
+
+
+def test_a_never_activator_never_trades():
+    m = Merchant(archetype="spaza_shop", onboarded_at=START, never_activates=True)
+    assert not any(m.can_trade(START + timedelta(days=d)) for d in (0, 30, 400))
+
+
+def test_a_never_activator_churns_on_the_abandonment_day_and_not_before():
+    m = Merchant(archetype="spaza_shop", onboarded_at=START, never_activates=True)
+    assert m.abandon_onboarding(START + timedelta(days=29)) is False
+    assert m.merchant_state == "new"
+    assert m.abandon_onboarding(START + timedelta(days=30)) is True
+    assert m.merchant_state == "churned" and m.churned_at == START + timedelta(days=30)
+    assert m.abandon_onboarding(START + timedelta(days=31)) is False  # once only
+
+
+def test_abandonment_window_is_a_parameter():
+    m = Merchant(archetype="spaza_shop", onboarded_at=START, never_activates=True)
+    assert m.abandon_onboarding(START + timedelta(days=9), days=10) is False
+    assert m.abandon_onboarding(START + timedelta(days=10), days=10) is True
+
+
+def test_an_activator_is_never_abandoned():
+    m = Merchant(archetype="spaza_shop", onboarded_at=START, activation_date=START + timedelta(days=40))
+    assert m.abandon_onboarding(START + timedelta(days=100)) is False
+    assert m.merchant_state == "new"
+
+
+def test_a_never_activator_generates_no_trading_days_and_stays_new_until_abandoned():
+    m = Merchant(archetype="spaza_shop", onboarded_at=START, never_activates=True)
+    for d in range(30):
+        day = START + timedelta(days=d)
+        assert not m.can_trade(day)
+        assert m.evaluate_state(day) is None
+    assert m.trading_days == 0 and m.merchant_state == "new"
+
+
+def test_churning_through_the_state_chain_records_the_churn_date(always):
+    m = build([1000] * 60, state="delinquent")
+    for i in range(30):
+        m.record_day(START + timedelta(days=60 + i), 0, 0)
+    assert m.evaluate_state(today(m)) == "churned"
+    assert m.churned_at == today(m)
+
+
+def test_other_transitions_leave_churned_at_empty(always):
+    m = build([1000] * 30 + [650] * 30, state="stable")
+    assert m.evaluate_state(today(m)) == "stressed"
+    assert m.churned_at is None
+
+
+# ---------------------------------------------------------------------------
+# Snapshot window for churned merchants
+# ---------------------------------------------------------------------------
+
+CHURN_DAY = date(2025, 6, 1)
+
+
+def churned_merchant(**kwargs) -> Merchant:
+    m = Merchant(archetype="spaza_shop", onboarded_at=START, merchant_state="churned",
+                 churned_at=CHURN_DAY, **kwargs)
+    return m
+
+
+def test_snapshots_continue_for_merchants_that_have_not_churned():
+    assert Merchant(archetype="spaza_shop", onboarded_at=START).snapshot_due(date(2030, 1, 1))
+
+
+def test_a_churned_merchant_is_snapshotted_through_the_window_and_not_after():
+    m = churned_merchant()
+    assert m.snapshot_due(CHURN_DAY)
+    assert m.snapshot_due(CHURN_DAY + timedelta(days=30))
+    assert not m.snapshot_due(CHURN_DAY + timedelta(days=31))
+
+
+def test_the_snapshot_window_is_a_parameter():
+    m = churned_merchant()
+    assert m.snapshot_due(CHURN_DAY + timedelta(days=7), window_days=7)
+    assert not m.snapshot_due(CHURN_DAY + timedelta(days=8), window_days=7)
+
+
+def test_a_churned_merchant_with_an_active_loan_keeps_its_snapshots():
+    m = churned_merchant(has_active_loan=True)
+    assert m.snapshot_due(CHURN_DAY + timedelta(days=400))
+
+
+def test_the_window_restarts_when_the_loan_ends():
+    ended = CHURN_DAY + timedelta(days=100)
+    m = churned_merchant(has_active_loan=False, loan_closed_on=ended)
+    assert m.snapshot_due(CHURN_DAY + timedelta(days=99))  # inside the loan, still due
+    assert m.snapshot_due(ended + timedelta(days=30))
+    assert not m.snapshot_due(ended + timedelta(days=31))
+
+
+def test_a_loan_that_ended_before_the_churn_does_not_move_the_window():
+    m = churned_merchant(loan_closed_on=CHURN_DAY - timedelta(days=50))
+    assert not m.snapshot_due(CHURN_DAY + timedelta(days=31))
+
+
+def test_a_churned_merchant_with_no_churn_date_keeps_its_snapshots():
+    assert Merchant(archetype="spaza_shop", merchant_state="churned").snapshot_due(date(2030, 1, 1))

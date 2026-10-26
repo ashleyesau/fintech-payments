@@ -672,3 +672,27 @@ def test_risk_scores_stay_in_range_and_write_offs_hold_the_floor(population_run)
         assert 0 <= m.risk_score <= 100
         if m.is_written_off:
             assert m.risk_score >= 80
+
+
+# ---------------------------------------------------------------------------
+# Recording when a loan ended (drives the snapshot window of churned merchants)
+# ---------------------------------------------------------------------------
+
+def test_repaying_in_full_records_the_day_the_loan_ended(monkeypatch):
+    m = with_loan(principal=1_000_000, term=1, pct=0.05)
+    day = m.active_loan.next_due_date
+    rolls(monkeypatch, *SUCCESS)
+    simulate_repayments(m, day)
+    assert m.has_active_loan is False and m.loan_closed_on == day
+
+
+def test_a_write_off_records_the_day_the_loan_ended(monkeypatch):
+    m = in_arrears("90+", 125, unpaid=(1, 2))
+    day = m.active_loan.next_due_date
+    force_outcome(monkeypatch, "dpd_90_plus")
+    simulate_repayments(m, day)
+    assert m.is_written_off and m.loan_closed_on == day
+
+
+def test_a_loan_still_running_has_no_end_day():
+    assert with_loan().loan_closed_on is None

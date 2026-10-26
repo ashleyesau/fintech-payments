@@ -4,7 +4,7 @@ state.py: Stateful domain objects: Merchant and Loan. Mandate state rides on Loa
 
 These classes hold the in-memory state that evolves across simulated days.
 State is never read from Postgres during a run; it lives here and is
-checkpointed to disk at the end of each session.
+checkpointed to disk after each simulated day (see save_checkpoint).
 
 Merchant implements Chain 2 (health state transitions) and the Chain 4 risk
 score rules. Every threshold, probability and delta is read from
@@ -12,15 +12,18 @@ config/causal_rules.yaml.
 """
 from __future__ import annotations
 
-import uuid
+import json
+import os
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import date, datetime, time
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional
 
 import numpy as np
 
 from simulator.archetypes import get_archetype, sample_quality_percentile
+from simulator.common import new_id
 from simulator.config import load_calibration, load_causal_rules
 
 _RULES = load_causal_rules()
@@ -28,7 +31,10 @@ _ST = _RULES["state_transitions"]
 _PROB = _ST["probabilities"]
 _RISK = _RULES["risk_score"]
 _FORCED = _RULES["forced_missed"]
-_CHURN_MULTIPLIER = load_calibration().get("lifecycle", {}).get("churn_multiplier", 1.0)
+_LIFECYCLE = load_calibration()["lifecycle"]
+_CHURN_MULTIPLIER = _LIFECYCLE["churn_multiplier"]
+_ABANDONMENT_DAYS = _LIFECYCLE["onboarding_abandonment_days"]
+_SNAPSHOT_WINDOW_DAYS = _LIFECYCLE["churned_snapshot_days"]
 
 # Structural, not tunable: the state engine compares two 30-day windows (60 days), and
 # loan eligibility needs GPV over 90 days, so the buffer holds 90.
@@ -55,7 +61,8 @@ MerchantState = str  # "new" | "growing" | "stable" | "stressed" | "delinquent" 
 
 @dataclass
 class Merchant:
-    merchant_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # From numpy's RNG, so a seeded run (and a run resumed from a checkpoint) reproduces ids.
+    merchant_id: str = field(default_factory=new_id)
     archetype: str = ""
     province: str = "gauteng"
     is_metro: bool = True
@@ -65,6 +72,15 @@ class Merchant:
     first_transaction_at: Optional[date] = None
     merchant_state: MerchantState = "new"
     months_on_platform: int = 0
+
+    # Activation, decided at onboarding. never_activates merchants never transact. Others
+    # may not transact before activation_date; None means from onboarded_at.
+    never_activates: bool = False
+    activation_date: Optional[date] = None
+    # Set when the merchant becomes Churned, and when its last loan ended; together they
+    # decide when its daily snapshots stop (snapshot_due).
+    churned_at: Optional[date] = None
+    loan_closed_on: Optional[date] = None
 
     # Quality tier (drawn from Beta(1.5, 4.0) at creation, fixed for lifetime)
     quality_percentile: float = field(default_factory=sample_quality_percentile)
@@ -118,6 +134,50 @@ class Merchant:
     # transaction; closed days are recorded as zero. The state engine reads the latest
     # 60 days; gpv_90d_minor() reads all 90.
     daily_gpv_minor: deque = field(default_factory=lambda: deque(maxlen=_BUFFER_DAYS))
+
+    # -----------------------------------------------------------------------
+    # Activation and snapshots
+    # -----------------------------------------------------------------------
+
+    def can_trade(self, sim_date: date) -> bool:
+        """False for a never-activator, and before the activation date. The main loop
+        generates nothing for a merchant that cannot trade."""
+        if self.never_activates:
+            return False
+        start = self.activation_date or self.onboarded_at
+        return start is None or sim_date >= start
+
+    def abandon_onboarding(self, sim_date: date, days: Optional[int] = None) -> bool:
+        """Churn a never-activator once it has been onboarded for `days` days.
+
+        This is an exception to the Chain 2 rules, not part of them: the 30-day trading
+        gate counts trading days from the first transaction, so it never opens for a
+        merchant that never transacts, and every other route to Churned starts from
+        trading. Returns True on the day the merchant becomes Churned.
+        """
+        if not self.never_activates or self.merchant_state == "churned":
+            return False
+        if self.onboarded_at is None:
+            return False
+        if (sim_date - self.onboarded_at).days < (_ABANDONMENT_DAYS if days is None else days):
+            return False
+        self._enter_state("churned", sim_date)
+        return True
+
+    def snapshot_due(self, sim_date: date, window_days: Optional[int] = None) -> bool:
+        """Whether the merchants dimension row is still written for this merchant.
+
+        Snapshots stop `window_days` after a merchant becomes Churned, unless it still
+        has an active loan; the window then runs from the day the loan ended. Rows
+        already written are never removed.
+        """
+        if self.merchant_state != "churned" or self.churned_at is None:
+            return True
+        if self.has_active_loan:
+            return True
+        window = _SNAPSHOT_WINDOW_DAYS if window_days is None else window_days
+        start = max(d for d in (self.churned_at, self.loan_closed_on) if d is not None)
+        return (sim_date - start).days <= window
 
     def effective_tx_rate(self) -> float:
         """Base tx rate adjusted for quality tier. Chain 1 multiplier."""
@@ -349,11 +409,13 @@ class Merchant:
         target, probability = candidate
         if not _roll(probability):
             return None
-        self._enter_state(target)
+        self._enter_state(target, sim_date)
         return target
 
-    def _enter_state(self, state: MerchantState) -> None:
+    def _enter_state(self, state: MerchantState, sim_date: Optional[date] = None) -> None:
         self.merchant_state = state
+        if state == "churned":
+            self.churned_at = sim_date
         self.days_in_state = 0
         # Month counters restart so the next transition needs a fresh run of months.
         self.days_growth_high = 0
@@ -471,19 +533,157 @@ class Loan:
 
     def __post_init__(self) -> None:
         if not self.application_id:
-            self.application_id = self.loan_id or str(uuid.uuid4())
+            self.application_id = self.loan_id or new_id()
         self.loan_id = self.application_id
 
 
 # ---------------------------------------------------------------------------
-# Checkpoint helpers: Phase 7 will implement full serialisation
+# Checkpoint
 # ---------------------------------------------------------------------------
+#
+# A JSON snapshot of everything a run needs to continue: every merchant (with its Loan,
+# scheduled follow-ups and disbursements, GPV buffer and risk history), numpy's global
+# RNG state, the last completed day, the run flags and a free-form `extra` dict for the
+# main loop. The RNG state is what makes a resumed run equal an uninterrupted one: the
+# generator draws from the global np.random, so continuing means restoring it.
+#
+# Python types JSON lacks are written as one-key tagged objects and restored on load.
 
-def save_checkpoint(merchants: list[Merchant], path: str = "checkpoint.json") -> None:
-    """Persist merchant states to disk. Phase 7 implementation."""
-    raise NotImplementedError("Phase 7")
+CHECKPOINT_VERSION = 1
 
 
-def load_checkpoint(path: str = "checkpoint.json") -> list[Merchant]:
-    """Load merchant states from disk. Phase 7 implementation."""
-    raise NotImplementedError("Phase 7")
+class CheckpointMismatch(ValueError):
+    """The checkpoint cannot be used for this run (version or run flags differ)."""
+
+
+@dataclass
+class Checkpoint:
+    merchants: list[Merchant]
+    last_day: date
+    flags: dict
+    rng_state: tuple
+    extra: dict = field(default_factory=dict)
+
+    def restore_rng(self) -> None:
+        """Put numpy's global RNG back where it was when the checkpoint was written."""
+        np.random.set_state(self.rng_state)
+
+
+_DATACLASSES = {"Merchant": Merchant, "Loan": Loan}
+
+
+def _encode(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        return float(value)
+    if isinstance(value, datetime):  # before date: datetime is a date subclass
+        return {"__datetime__": value.isoformat()}
+    if isinstance(value, date):
+        return {"__date__": value.isoformat()}
+    if isinstance(value, deque):
+        return {"__deque__": [value.maxlen, [_encode(v) for v in value]]}
+    if isinstance(value, tuple):
+        return {"__tuple__": [_encode(v) for v in value]}
+    if isinstance(value, list):
+        return [_encode(v) for v in value]
+    if isinstance(value, dict):
+        if not all(isinstance(k, str) for k in value):
+            raise TypeError(f"checkpoint dict keys must be strings: {list(value)[:3]}")
+        return {k: _encode(v) for k, v in value.items()}
+    if is_dataclass(value) and type(value).__name__ in _DATACLASSES:
+        return {
+            "__dataclass__": type(value).__name__,
+            "fields": {f.name: _encode(getattr(value, f.name)) for f in fields(value)},
+        }
+    raise TypeError(f"cannot checkpoint a {type(value).__name__}")
+
+
+def _decode(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_decode(v) for v in value]
+    if not isinstance(value, dict):
+        return value
+    if "__datetime__" in value:
+        return datetime.fromisoformat(value["__datetime__"])
+    if "__date__" in value:
+        return date.fromisoformat(value["__date__"])
+    if "__deque__" in value:
+        maxlen, items = value["__deque__"]
+        return deque((_decode(v) for v in items), maxlen=maxlen)
+    if "__tuple__" in value:
+        return tuple(_decode(v) for v in value["__tuple__"])
+    if "__dataclass__" in value:
+        cls = _DATACLASSES[value["__dataclass__"]]
+        return cls(**{k: _decode(v) for k, v in value["fields"].items()})
+    return {k: _decode(v) for k, v in value.items()}
+
+
+def _encode_rng(state: tuple) -> dict:
+    name, keys, position, has_gauss, cached_gaussian = state
+    return {"name": name, "keys": [int(k) for k in keys], "position": int(position),
+            "has_gauss": int(has_gauss), "cached_gaussian": float(cached_gaussian)}
+
+
+def _decode_rng(data: dict) -> tuple:
+    return (data["name"], np.array(data["keys"], dtype=np.uint32), data["position"],
+            data["has_gauss"], data["cached_gaussian"])
+
+
+def save_checkpoint(
+    merchants: list[Merchant],
+    last_day: date,
+    flags: dict,
+    path: str = "checkpoint.json",
+    extra: Optional[dict] = None,
+) -> None:
+    """Write the checkpoint. Call after a day's rows are committed and the day's last
+    random draw is done, because the RNG state is read here.
+
+    The file is written beside the target and renamed over it, so a crash during the
+    write leaves the previous checkpoint intact.
+    """
+    payload = {
+        "version": CHECKPOINT_VERSION,
+        "last_day": _encode(last_day),
+        "flags": _encode(flags),
+        "rng_state": _encode_rng(np.random.get_state()),
+        "extra": _encode(extra or {}),
+        "merchants": [_encode(m) for m in merchants],
+    }
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".tmp")
+    with open(temporary, "w") as fh:
+        json.dump(payload, fh, separators=(",", ":"))
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(temporary, target)
+
+
+def load_checkpoint(path: str = "checkpoint.json", expected_flags: Optional[dict] = None) -> Checkpoint:
+    """Read a checkpoint. The RNG is not touched until Checkpoint.restore_rng() is called.
+
+    With expected_flags, a checkpoint written under different run flags raises
+    CheckpointMismatch: resuming with another lending flag would orphan loans.
+    """
+    with open(path) as fh:
+        payload = json.load(fh)
+    if payload.get("version") != CHECKPOINT_VERSION:
+        raise CheckpointMismatch(
+            f"checkpoint version {payload.get('version')!r}, expected {CHECKPOINT_VERSION}"
+        )
+    flags = _decode(payload["flags"])
+    if expected_flags is not None and flags != expected_flags:
+        raise CheckpointMismatch(f"run flags differ: checkpoint {flags}, this run {expected_flags}")
+    return Checkpoint(
+        merchants=[_decode(m) for m in payload["merchants"]],
+        last_day=_decode(payload["last_day"]),
+        flags=flags,
+        rng_state=_decode_rng(payload["rng_state"]),
+        extra=_decode(payload["extra"]),
+    )

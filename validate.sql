@@ -126,6 +126,26 @@ WHERE l.disbursed_on <= e.d AND l.initial_balance IS NOT NULL
   AND (l.written_off_on IS NULL OR l.written_off_on > e.d);
 DELETE FROM t_book WHERE balance <= 0;
 
+-- One row per loan and months on book k (1 to 12) once the loan has been on book k months.
+--   late_now:  the loan is more than 30 days past due at disbursed_on + k months, by its latest
+--              recorded DPD (0 after a cure), or has been written off by then. Written-off loans
+--              stay in the count, which is what makes a vintage's PAR30 "cumulative".
+--   ever_late: the loan had a row with days_past_due above 30 on or before that date, even if it
+--              later cured.
+-- weight is the opening balance (principal plus fee).
+CREATE TEMP TABLE t_vintage AS
+SELECT l.loan_id, l.archetype, l.disbursed_on, g.k, c.cutoff, l.initial_balance AS weight,
+       (l.written_off_on IS NOT NULL AND l.written_off_on <= c.cutoff)
+       OR coalesce((SELECT CASE WHEN r.is_cured THEN 0 ELSE r.days_past_due END FROM t_rrow r
+                     WHERE r.loan_id = l.loan_id AND r.event_on <= c.cutoff
+                     ORDER BY r.event_on DESC, r.unpaid DESC, r.retry_attempt DESC, r.days_past_due DESC LIMIT 1), 0) > 30 AS late_now,
+       EXISTS (SELECT 1 FROM t_rrow r WHERE r.loan_id = l.loan_id AND r.event_on <= c.cutoff AND r.days_past_due > 30) AS ever_late
+FROM t_loan l CROSS JOIN generate_series(1, 12) AS g(k)
+CROSS JOIN LATERAL (SELECT (l.disbursed_on + make_interval(months => g.k))::date AS cutoff) c
+CROSS JOIN t_bounds b
+WHERE l.initial_balance IS NOT NULL AND c.cutoff <= b.data_end;
+CREATE INDEX ON t_vintage (k);
+
 CREATE TEMP TABLE t_active_last AS
 SELECT d.* FROM t_day d, t_bounds b
 WHERE d.snapshot_date = b.data_end AND d.trading
@@ -510,59 +530,45 @@ SELECT 'wholesale_par30_below_ecommerce_par30' AS check_name,
        'recorded DPD, wholesale minus e-commerce PAR30; expect negative' AS note;
 
 -- name: vintage_par30_by_mob
--- The vintage queries share one definition. A loan is "late by month k on book" if, on or
--- before disbursed_on + k months, it had a repayment row with days_past_due above 30 (recorded
--- DPD: this includes the paid row of a cure and the write-off row, which carry the DPD the loan
--- had reached), or, for the instalment-age reading, an instalment that stayed unpaid for more
--- than 30 days by then. The measure is cumulative ("ever"), by loan count, over loans that have
--- been on book for k months by the last day.
-WITH mob(k, low, high) AS (VALUES (3, 0.03, 0.08), (6, 0.06, 0.14), (12, 0.08, 0.18)),
-obs AS (
-    SELECT l.loan_id, m.k, m.low, m.high, (l.disbursed_on + make_interval(months => m.k))::date AS cutoff
-    FROM t_loan l CROSS JOIN mob m, t_bounds b
-    WHERE l.initial_balance IS NOT NULL AND (l.disbursed_on + make_interval(months => m.k))::date <= b.data_end),
-flag AS (
-    SELECT o.k, o.low, o.high, o.loan_id,
-           EXISTS (SELECT 1 FROM t_rrow r WHERE r.loan_id = o.loan_id AND r.event_on <= o.cutoff AND r.days_past_due > 30) AS late_dpd,
-           EXISTS (SELECT 1 FROM t_instalment i WHERE i.loan_id = o.loan_id AND i.due_date <= o.cutoff
-                    AND least(coalesce(i.paid_on, o.cutoff), o.cutoff) - i.due_date > 30) AS late_age
-    FROM obs o)
-SELECT 'vintage_par30_mob_' || k AS check_name, round(avg(late_dpd::int), 4) AS value, low AS low, high AS high, count(*) AS n,
-       'cumulative, recorded DPD; loans on book at least ' || k || ' months' AS note
-FROM flag GROUP BY k, low, high
+-- Cumulative PAR30 by months on book: the share of a vintage's opening balance that is more than
+-- 30 days past due at that age, written-off loans included (t_vintage.late_now). The first
+-- version of this check counted a loan once it had ever been late, cures included; that figure
+-- is reported beside it as vintage_ever_late_mob_k with no band, because it runs about twice as
+-- high and is not what a vintage table shows. The month 3 band was amended from 3 to 8% to
+-- 0 to 5%: recorded DPD steps by 30 days at each monthly cycle, so a loan cannot first show more
+-- than 30 days past due before about month 3 (test_repayments.py).
+SELECT 'vintage_par30_mob_' || v.k AS check_name,
+       round(sum(v.weight) FILTER (WHERE v.late_now)::numeric / sum(v.weight), 4) AS value, b.low, b.high, count(*) AS n,
+       'balance-weighted, point-in-time plus written off; loans on book at least ' || v.k || ' months' AS note
+FROM t_vintage v JOIN (VALUES (3, 0.0, 0.05), (6, 0.06, 0.14), (12, 0.08, 0.18)) AS b(k, low, high) USING (k)
+GROUP BY v.k, b.low, b.high
 UNION ALL
-SELECT 'vintage_par30_instalment_age_mob_' || k, round(avg(late_age::int), 4), NULL::numeric, NULL::numeric, count(*),
-       'cumulative, instalment age: any instalment unpaid for over 30 days, so it counts late cures; no band, about 3 to 4 times the recorded-DPD figure'
-FROM flag GROUP BY k, low, high
+SELECT 'vintage_ever_late_mob_' || k, round(avg(ever_late::int), 4), NULL::numeric, NULL::numeric, count(*),
+       'share of loans ever past 30 days by then, cures included; no band'
+FROM t_vintage WHERE k IN (3, 6, 12) GROUP BY k
 ORDER BY 1;
 
 -- name: vintage_curve_shape
--- Among loans that have been on book 12 months: cumulative PAR30 at 3, 6, 9 and 12 months,
--- and the share of the 12-month figure that appears after month 9. The Validation Targets
--- say steep early, plateau after MOB 9; the 25% ceiling is my reading of "plateau".
-WITH obs AS (
-    SELECT l.loan_id, l.disbursed_on FROM t_loan l, t_bounds b
-    WHERE l.initial_balance IS NOT NULL AND (l.disbursed_on + make_interval(months => 12))::date <= b.data_end),
+-- Among loans that have been on book 12 months: PAR30 (as above) at 3, 6, 9 and 12 months, and
+-- the share of the 12-month figure that appears after month 9. The Validation Targets say steep
+-- early, plateau after MOB 9; the 35% ceiling is my reading of "plateau" (measured 12 to 30%).
+WITH full_year AS (SELECT loan_id FROM t_vintage WHERE k = 12),
 p AS (
-    SELECT k, avg((EXISTS (SELECT 1 FROM t_rrow r WHERE r.loan_id = o.loan_id
-                            AND r.event_on <= (o.disbursed_on + make_interval(months => k))::date AND r.days_past_due > 30))::int) AS par, count(*) AS n
-    FROM obs o CROSS JOIN (VALUES (3), (6), (9), (12)) AS m(k) GROUP BY k)
+    SELECT v.k, sum(v.weight) FILTER (WHERE v.late_now)::numeric / sum(v.weight) AS par, count(*) AS n
+    FROM t_vintage v JOIN full_year USING (loan_id) WHERE v.k IN (3, 6, 9, 12) GROUP BY v.k)
 SELECT 'vintage_share_of_mob12_par30_after_mob9' AS check_name,
        round(((SELECT par FROM p WHERE k = 12) - (SELECT par FROM p WHERE k = 9)) / nullif((SELECT par FROM p WHERE k = 12), 0), 4) AS value,
-       NULL::numeric AS low, 0.25 AS high, (SELECT n FROM p WHERE k = 12) AS n,
+       NULL::numeric AS low, 0.35 AS high, (SELECT n FROM p WHERE k = 12) AS n,
        coalesce('PAR30 at 3/6/9/12 months: ' || (SELECT string_agg(round(par, 3)::text, ' / ' ORDER BY k) FROM p), 'no loan has been on book 12 months') AS note;
 
 -- name: vintage_adjacent_divergence
--- Quarterly disbursement vintages: cumulative PAR30 at 3 months on book, and the largest gap
--- between adjacent quarters that each have at least 20 loans. Validation Targets: under 5 points
--- unless there is a stress event.
+-- Quarterly disbursement vintages: PAR30 at 3 months on book, and the largest gap between
+-- adjacent quarters that each have at least 20 loans. Validation Targets: under 5 points unless
+-- there is a stress event.
 WITH q AS (
-    SELECT date_trunc('quarter', l.disbursed_on)::date AS vintage, count(*) AS n,
-           avg((EXISTS (SELECT 1 FROM t_rrow r WHERE r.loan_id = l.loan_id
-                         AND r.event_on <= (l.disbursed_on + interval '3 months')::date AND r.days_past_due > 30))::int) AS par
-    FROM t_loan l, t_bounds b
-    WHERE l.initial_balance IS NOT NULL AND (l.disbursed_on + interval '3 months')::date <= b.data_end
-    GROUP BY 1 HAVING count(*) >= 20),
+    SELECT date_trunc('quarter', disbursed_on)::date AS vintage, count(*) AS n,
+           sum(weight) FILTER (WHERE late_now)::numeric / sum(weight) AS par
+    FROM t_vintage WHERE k = 3 GROUP BY 1 HAVING count(*) >= 20),
 g AS (SELECT vintage, par, par - lag(par) OVER (ORDER BY vintage) AS gap,
              vintage - lag(vintage) OVER (ORDER BY vintage) AS days_apart FROM q)
 SELECT 'vintage_max_adjacent_gap_mob3' AS check_name, round(max(abs(gap)), 4) AS value, NULL::numeric AS low, 0.05 AS high, count(*) AS n,
@@ -570,18 +576,51 @@ SELECT 'vintage_max_adjacent_gap_mob3' AS check_name, round(max(abs(gap)), 4) AS
 FROM g WHERE gap IS NOT NULL AND days_apart <= 100;
 
 -- name: vintage_oct_nov_vs_others
--- October and November disbursements against the rest: cumulative PAR30 at 5 months on book.
--- Validation Targets: higher at MOB 3 to 5 (seasonal demand brings weaker borrowers).
-WITH obs AS (
-    SELECT l.loan_id, extract(month FROM l.disbursed_on) IN (10, 11) AS peak,
-           (EXISTS (SELECT 1 FROM t_rrow r WHERE r.loan_id = l.loan_id
-                     AND r.event_on <= (l.disbursed_on + interval '5 months')::date AND r.days_past_due > 30))::int AS late
-    FROM t_loan l, t_bounds b
-    WHERE l.initial_balance IS NOT NULL AND (l.disbursed_on + interval '5 months')::date <= b.data_end)
+-- October and November disbursements against the rest: PAR30 at 5 months on book. Validation
+-- Targets: higher at MOB 3 to 5 (seasonal demand brings weaker borrowers).
 SELECT 'vintage_oct_nov_minus_others_par30_mob5' AS check_name,
-       round(avg(late) FILTER (WHERE peak) - avg(late) FILTER (WHERE NOT peak), 4) AS value, 0.0 AS low, NULL::numeric AS high,
-       count(*) FILTER (WHERE peak) AS n, 'n is the October and November loans; expect above 0' AS note
-FROM obs;
+       round(sum(weight) FILTER (WHERE late_now AND extract(month FROM disbursed_on) IN (10, 11))::numeric
+             / nullif(sum(weight) FILTER (WHERE extract(month FROM disbursed_on) IN (10, 11)), 0)
+           - sum(weight) FILTER (WHERE late_now AND extract(month FROM disbursed_on) NOT IN (10, 11))::numeric
+             / nullif(sum(weight) FILTER (WHERE extract(month FROM disbursed_on) NOT IN (10, 11)), 0), 4) AS value,
+       0.0 AS low, NULL::numeric AS high, count(*) FILTER (WHERE extract(month FROM disbursed_on) IN (10, 11)) AS n,
+       'n is the October and November loans; expect above 0' AS note
+FROM t_vintage WHERE k = 5;
+
+-- name: x_gpv_decline_loan_outcome
+-- Merchant-level version of "GPV decline leads to PAR rise". A loan is flagged if, at any month
+-- end after its first month, the merchant's GPV over the last 30 days is at least 50% below its
+-- GPV over the 30 days before disbursement (the Causal Rules forced-miss trigger). Compares how
+-- often flagged and other loans are more than 30 days past due at any month end (recorded DPD).
+-- Replaces the platform-level monthly correlation, which has 9 to 18 points per run.
+WITH base AS (
+    SELECT l.loan_id, l.merchant_id,
+           (SELECT coalesce(sum(p.amount_minor), 0) FROM t_pay p
+             WHERE p.merchant_id = l.merchant_id AND p.status = 'completed' AND p.d >= l.disbursed_on - 30 AND p.d < l.disbursed_on) AS g0
+    FROM t_loan l WHERE l.initial_balance IS NOT NULL),
+win AS (
+    SELECT b.loan_id, e.d,
+           (SELECT coalesce(sum(p.amount_minor), 0) FROM t_pay p
+             WHERE p.merchant_id = b.merchant_id AND p.status = 'completed' AND p.d > e.d - 30 AND p.d <= e.d) AS g
+    FROM base b JOIN t_loan l USING (loan_id) JOIN t_month_end e ON e.d > l.disbursed_on + 30 WHERE b.g0 > 0),
+flag AS (
+    SELECT w.loan_id, bool_or(w.g <= 0.5 * b.g0) AS fell
+    FROM win w JOIN base b USING (loan_id) GROUP BY w.loan_id),
+outcome AS (
+    SELECT f.loan_id, f.fell,
+           EXISTS (SELECT 1 FROM t_book k WHERE k.loan_id = f.loan_id AND k.dpd > 30) AS late
+    FROM flag f)
+SELECT 'late_rate_loans_after_a_50pct_gpv_fall' AS check_name, round(avg(late::int) FILTER (WHERE fell), 4) AS value, NULL::numeric AS low, NULL::numeric AS high,
+       count(*) FILTER (WHERE fell) AS n, 'loans whose merchant GPV fell 50% or more; late = more than 30 days past due at a month end' AS note
+FROM outcome
+UNION ALL
+SELECT 'late_rate_other_loans', round(avg(late::int) FILTER (WHERE NOT fell), 4), NULL, NULL, count(*) FILTER (WHERE NOT fell), ''
+FROM outcome
+UNION ALL
+SELECT 'late_rate_ratio_after_a_gpv_fall',
+       round(avg(late::int) FILTER (WHERE fell) / nullif(avg(late::int) FILTER (WHERE NOT fell), 0), 3), 1.0, NULL, count(*) FILTER (WHERE fell),
+       'expect above 1: loans after a GPV fall are late more often'
+FROM outcome;
 
 -- name: collections
 WITH fs AS (

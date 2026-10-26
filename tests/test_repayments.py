@@ -696,3 +696,26 @@ def test_a_write_off_records_the_day_the_loan_ended(monkeypatch):
 
 def test_a_loan_still_running_has_no_end_day():
     assert with_loan().loan_closed_on is None
+
+
+def test_a_loan_cannot_show_more_than_30_days_past_due_before_about_month_three(monkeypatch):
+    """The first instalment falls due at month 1, its retries end within 10 days, the late
+    recovery cycle at month 2 leaves the loan at DPD 30 or less (min(age, 30)), and the DPD
+    only steps up by 30 at the next monthly cycle at month 3. A loan that fails every
+    attempt and rolls forward at every cycle is therefore first recorded above 30 days at
+    about 3 months on book. This is why the Validation Targets' cumulative PAR30 at month 3
+    (3 to 8%) cannot be reached with a monthly-stepped DPD, and the band was amended."""
+    m = with_loan(term=12)
+    monkeypatch.setattr(np.random, "random", lambda: 0.999999)        # every collection fails, no cure
+    forward = iter(["dpd_31_60", "dpd_61_90", "dpd_90_plus"] * 3)
+    monkeypatch.setattr(repayments, "_sample", lambda row: next(forward))
+    first_over_30 = None
+    for offset in range(0, 200):
+        day = DISBURSED + timedelta(days=offset)
+        simulate_repayments(m, day)
+        if m.active_loan is None:
+            break
+        if m.active_loan.days_past_due > 30 and first_over_30 is None:
+            first_over_30 = offset
+    assert first_over_30 is not None
+    assert 85 <= first_over_30 <= 100

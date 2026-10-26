@@ -15,6 +15,7 @@ from simulator.repayments import (
     due_date,
     first_strike_probability,
     forced_miss_probability,
+    late_cure_probability,
     installment_amounts,
     retry_probability,
     simulate_repayments,
@@ -151,6 +152,35 @@ def test_forced_miss_probability():
     m = with_loan("delinquent")
     assert forced_miss_probability(m, m.active_loan) == pytest.approx(0.5)
     assert forced_miss_probability(with_loan("stable"), with_loan("stable").active_loan) == 0.0
+
+
+def dormant(m: Merchant, closed: bool) -> Merchant:
+    m.dormant_since, m.business_closed = date(2025, 5, 1), closed
+    return m
+
+
+def test_a_merchant_that_moved_acquirer_repays_as_if_in_good_standing():
+    for state in ("stressed", "delinquent", "churned"):
+        m = dormant(with_loan(state), closed=False)
+        assert first_strike_probability(m) == pytest.approx(0.77)
+        assert forced_miss_probability(m, m.active_loan) == 0.0
+
+
+def test_a_merchant_that_closed_stops_paying_as_soon_as_it_goes_dormant():
+    m = dormant(with_loan("stable"), closed=True)
+    assert forced_miss_probability(m, m.active_loan) == 1.0
+
+
+def test_dormant_merchant_with_undecided_closure_is_judged_by_state():
+    m = with_loan("delinquent")
+    m.dormant_since = date(2025, 5, 1)
+    assert forced_miss_probability(m, m.active_loan) == pytest.approx(0.5)
+
+
+def test_moved_acquirer_merchants_cure_arrears_like_healthy_ones():
+    assert late_cure_probability(dormant(merchant("churned"), closed=False)) == pytest.approx(
+        late_cure_probability(merchant("stable"))
+    )
 
 
 def test_gpv_collapse_since_disbursement_forces_misses():
@@ -338,6 +368,90 @@ def test_repaying_a_loan_doubles_later_application_propensity(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Late recovery: the month after the retries fail
+# ---------------------------------------------------------------------------
+
+def retries_exhausted(monkeypatch, term=6) -> Merchant:
+    """A loan whose instalment 1 failed its first strike and all three retries."""
+    m = with_loan(term=term)
+    rolls(monkeypatch, *NSF)
+    simulate_repayments(m, due_day(m))
+    for retry_day in list(m.active_loan.retry_dates):
+        rolls(monkeypatch, *NSF)
+        simulate_repayments(m, retry_day)
+    return m
+
+
+def test_late_cure_probability_leaves_six_percent_unpaid_at_month_end():
+    stable = late_cure_probability(merchant("stable"))
+    # 11.5% of instalments are unpaid after retries; 6% must remain at month end.
+    assert 0.115 * (1 - stable) == pytest.approx(0.06, abs=0.001)
+    assert late_cure_probability(merchant("growing")) == pytest.approx(stable * 1.10)
+    assert late_cure_probability(merchant("stressed")) == pytest.approx(stable * 0.70)
+    assert late_cure_probability(merchant("churned")) == 0.0
+
+
+def test_exhausted_retries_flag_the_loan_for_late_recovery(monkeypatch):
+    m = retries_exhausted(monkeypatch)
+    assert m.active_loan.late_recovery_due is True
+    assert m.active_loan.bucket == "1-30" and m.active_loan.unpaid_installments == [1]
+
+
+def test_paying_late_clears_the_arrears_and_collects_the_new_instalment(monkeypatch):
+    m = retries_exhausted(monkeypatch)
+    loan = m.active_loan
+    risk_before = m.risk_score
+    rolls(monkeypatch, 0.0, *SUCCESS)  # late cure draw, then the new instalment's first strike
+    rows = simulate_repayments(m, loan.next_due_date)
+    for r in rows:
+        LoanRepayment(**r)
+    assert [(r["installment_number"], r["collection_status"], r["is_cured"]) for r in rows] == [
+        (1, "success", True), (2, "success", False),
+    ]
+    assert loan.bucket == "current" and loan.days_past_due == 0 and loan.unpaid_installments == []
+    assert loan.late_recovery_due is False and loan.next_installment == 3
+    assert m.risk_score == risk_before - 2 - 5 - 2
+
+
+def test_paying_late_still_leaves_the_new_instalment_exposed_to_failure(monkeypatch):
+    m = retries_exhausted(monkeypatch)
+    rolls(monkeypatch, 0.0, *NSF)
+    rows = simulate_repayments(m, m.active_loan.next_due_date)
+    assert [(r["installment_number"], r["collection_status"]) for r in rows] == [(1, "success"), (2, "unpaid_nsf")]
+    assert m.active_loan.retrying_installment == 2 and m.active_loan.bucket == "current"
+
+
+def test_still_unpaid_at_month_end_is_1_to_30_dpd_without_a_matrix_step(monkeypatch):
+    m = retries_exhausted(monkeypatch)
+    loan = m.active_loan
+    rolls(monkeypatch, 0.99)
+    rows = simulate_repayments(m, loan.next_due_date)
+    assert [(r["installment_number"], r["collection_status"]) for r in rows] == [(2, "unpaid_nsf")]
+    assert loan.unpaid_installments == [1, 2] and loan.bucket == "1-30"
+    assert loan.late_recovery_due is False
+    assert 28 <= loan.days_past_due <= 30 and rows[0]["days_past_due"] == loan.days_past_due
+
+
+def test_late_recovery_after_the_term_has_no_new_instalment(monkeypatch):
+    m = retries_exhausted(monkeypatch, term=1)
+    loan = m.active_loan
+    assert loan.next_installment == 2
+    rolls(monkeypatch, 0.99)
+    assert simulate_repayments(m, loan.next_due_date) == []
+    assert loan.bucket == "1-30" and loan.late_recovery_due is False
+
+
+def test_the_matrix_governs_the_cycle_after_late_recovery(monkeypatch):
+    m = retries_exhausted(monkeypatch)
+    loan = m.active_loan
+    rolls(monkeypatch, 0.99)
+    simulate_repayments(m, loan.next_due_date)
+    force_outcome(monkeypatch, "dpd_31_60")
+    simulate_repayments(m, loan.next_due_date)
+    assert loan.bucket == "31-60" and loan.unpaid_installments == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
 # Loans in arrears
 # ---------------------------------------------------------------------------
 
@@ -472,7 +586,7 @@ def population():
     states = ["growing"] * 130 + ["stable"] * 200 + ["stressed"] * 50 + ["delinquent"] * 20
     merchants = [(s, with_loan(s)) for s in states]
     rows = defaultdict(list)
-    for offset in range(420):
+    for offset in range(540):
         day = DISBURSED + timedelta(days=offset)
         for state, m in merchants:
             for r in simulate_repayments(m, day):
@@ -547,7 +661,7 @@ def test_weaker_merchant_states_collect_less(population_run):
 def test_loans_end_and_merchants_are_marked(population_run):
     merchants, _ = population_run
     for _, m in merchants:
-        assert m.active_loan is None  # 420 days outlasts a 6-month loan plus arrears
+        assert m.active_loan is None  # 540 days outlasts a 6-month loan plus arrears
         assert m.has_active_loan is False
         assert m.prior_loan_repaid != m.is_written_off  # repaid in full or written off, never both
 

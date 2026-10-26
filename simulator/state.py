@@ -27,6 +27,7 @@ _RULES = load_causal_rules()
 _ST = _RULES["state_transitions"]
 _PROB = _ST["probabilities"]
 _RISK = _RULES["risk_score"]
+_FORCED = _RULES["forced_missed"]
 _CHURN_MULTIPLIER = load_calibration().get("lifecycle", {}).get("churn_multiplier", 1.0)
 
 # Structural, not tunable: the state engine compares two 30-day windows (60 days), and
@@ -101,6 +102,9 @@ class Merchant:
 
     # Set when the merchant permanently stops transacting (see maybe_go_dormant).
     dormant_since: Optional[date] = None
+    # Whether a dormant merchant closed its business (stops repaying) or moved to another
+    # acquirer (keeps repaying). None until the merchant goes dormant.
+    business_closed: Optional[bool] = None
 
     # Daily GPV in minor units, oldest first. Calendar days since the first
     # transaction; closed days are recorded as zero. The state engine reads the latest
@@ -184,7 +188,8 @@ class Merchant:
         transacting" (Simulator Design), so it becomes a daily hazard of
         1 - (1 - p) ** (1 / 30), scaled by churn_multiplier in calibration.yaml.
         Only merchants that have started trading can go dormant. Reactivation is not
-        modelled.
+        modelled. A dormant merchant either closed its business or moved to another
+        acquirer; only closure stops it repaying a loan (forced_missed.dormant_closure_share).
         """
         if self.dormant_since is not None or self.first_transaction_at is None:
             return False
@@ -192,6 +197,7 @@ class Merchant:
         daily = 1.0 - (1.0 - min(monthly, 1.0)) ** (1.0 / 30.0)
         if _roll(daily):
             self.dormant_since = sim_date
+            self.business_closed = _roll(_FORCED["dormant_closure_share"])
             return True
         return False
 
@@ -233,6 +239,14 @@ class Merchant:
             self.months_on_platform = (sim_date - self.onboarded_at).days // 30
         else:
             self.months_on_platform = self.trading_days // 30
+
+    def _gpv_recovered(self, current_30d_avg: float) -> bool:
+        """True when the latest 30 days are within the recovery band of the 60-day mean."""
+        latest_60 = self._latest_60_days()
+        if latest_60 is None:
+            return False
+        baseline_60d = sum(latest_60) / _HISTORY_DAYS
+        return current_30d_avg >= (1 - _ST["stressed_recovery_band"]) * baseline_60d
 
     def _candidate_transition(
         self,
@@ -278,19 +292,18 @@ class Merchant:
                 delinquent_p = max(delinquent_p, _PROB["stressed_to_delinquent_missed_repayment"])
             if delinquent_p > 0.0:
                 candidates.append(("delinquent", delinquent_p))
-            baseline_60d = None
-            latest_60 = self._latest_60_days()
-            if latest_60 is not None:
-                baseline_60d = sum(latest_60) / _HISTORY_DAYS
-            if (
-                baseline_60d is not None
-                and current_30d_avg >= (1 - _ST["stressed_recovery_band"]) * baseline_60d
-            ):
+            if self._gpv_recovered(current_30d_avg):
                 candidates.append(("stable", _PROB["stressed_to_stable"]))
 
         elif state == "delinquent":
             if self.days_without_txn >= _ST["churn_no_txn_days"]:
                 candidates.append(("churned", _PROB["delinquent_to_churned"]))
+            # Not in Causal Rules, which gives Delinquent no way out except Churned. A
+            # trading merchant whose GPV has recovered steps back to Stressed. Without
+            # this Delinquent is a trap: a merchant that missed one repayment stays
+            # Delinquent, so its collections keep failing and its loan never recovers.
+            if self._gpv_recovered(current_30d_avg):
+                candidates.append(("stressed", _PROB["delinquent_to_stressed"]))
 
         # Churned is terminal here: reactivation needs per-archetype probabilities
         # that are not in the config yet.
@@ -436,6 +449,9 @@ class Loan:
     bucket: str = "current"                # current | 1-30 | 31-60 | 61-90 | 90+
     retrying_installment: Optional[int] = None
     retry_dates: list = field(default_factory=list)
+    # True from the moment retries are exhausted until the next monthly cycle decides
+    # whether the instalment is paid before it counts as 1-30 DPD at month end.
+    late_recovery_due: bool = False
 
     def __post_init__(self) -> None:
         if not self.application_id:

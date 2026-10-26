@@ -8,9 +8,10 @@ instalment is collected depends on the loan's delinquency bucket:
     modifier, then up to three retries inside 10 days. Forced misses (a Delinquent or
     Churned merchant, or a collapse in GPV since disbursement) fail the attempt
     regardless of the DebiCheck draw.
-  - Loans in arrears: once an instalment is unpaid after its retries, the loan moves
-    month by month through the Chain 4 DPD matrix, with the cure probability scaled by the
-    merchant's state. Cure pays the arrears; staying or improving pays the oldest unpaid
+  - Loans in arrears: an instalment still unpaid after its retries gets one month to be
+    paid late; if it is still unpaid at month end the loan is 1-30 DPD (the matrix's
+    Current to 1-30 step). From then it moves month by month through the Chain 4 DPD
+    matrix, with the cure probability scaled by the merchant's state. Cure pays the arrears; staying or improving pays the oldest unpaid
     instalment; rolling forward leaves the new instalment unpaid too.
   - At 150 DPD (or a write-off draw from the 90+ row) the oldest unpaid instalment is
     written off and the loan ends.
@@ -103,9 +104,18 @@ def start_schedule(loan: Loan, merchant: Any) -> None:
 # Probabilities
 # ---------------------------------------------------------------------------
 
+def _moved_acquirer(merchant: Any) -> bool:
+    """A dormant merchant that did not close: its GPV has left, but it is still paying."""
+    return merchant.dormant_since is not None and merchant.business_closed is False
+
+
 def _state_modifier(merchant: Any) -> float:
     """DebiCheck success modifier by merchant state at the attempt. A Churned merchant
-    has gone dark and never pays; states Causal Rules does not list count as neutral."""
+    has gone dark and never pays; states Causal Rules does not list count as neutral.
+    A merchant that moved to another acquirer repays as a merchant in good standing,
+    whatever state its vanished GPV has pushed it into."""
+    if _moved_acquirer(merchant):
+        return 1.0
     state = merchant.merchant_state
     if state == "churned":
         return 0.0
@@ -114,7 +124,9 @@ def _state_modifier(merchant: Any) -> float:
 
 def forced_miss_probability(merchant: Any, loan: Loan) -> float:
     """Chance the attempt fails whatever the DebiCheck draw says (Causal Rules Chain 3)."""
-    if merchant.merchant_state == "churned":
+    if _moved_acquirer(merchant):
+        return 0.0
+    if merchant.merchant_state == "churned" or merchant.business_closed:
         return _FORCED["churned_p"]
     p = 0.0
     if merchant.merchant_state == "delinquent":
@@ -133,6 +145,22 @@ def first_strike_probability(merchant: Any) -> float:
 
 def retry_probability(merchant: Any) -> float:
     return min(_DEBI["retry_attempt_success_rate"] * _state_modifier(merchant), 1.0)
+
+
+def late_cure_probability(merchant: Any) -> float:
+    """Chance an instalment that is still unpaid after its retries is paid before month end.
+
+    The Chain 4 matrix counts a loan as 1-30 DPD only if it is still unpaid at month end:
+    6% of current loans. After the retries, 11.5% of instalments are unpaid (for a
+    neutral merchant), so about 48% must be paid in the rest of the month for 6% to
+    remain. That share is scaled by the merchant's state like every other cure.
+    """
+    first = _DEBI["first_strike_base_success_rate"]
+    retry = _DEBI["retry_attempt_success_rate"]
+    unpaid_after_retries = (1 - first) * (1 - retry) ** _DEBI["max_retries"]
+    month_end_share = _DPD["transition_matrix"]["current"]["dpd_1_30"]
+    base_cure = max(0.0, 1.0 - month_end_share / unpaid_after_retries)
+    return min(1.0, base_cure * _state_modifier(merchant))
 
 
 def adjusted_matrix_row(bucket: str, modifier: float) -> dict[str, float]:
@@ -295,6 +323,7 @@ def _run_retry(merchant: Any, loan: Loan, sim_date: date) -> list[dict]:
         loan.unpaid_installments.append(installment)
         loan.days_past_due = dpd
         loan.bucket = bucket_of(dpd)
+        loan.late_recovery_due = True
         merchant.record_repayment_outcome(False, sim_date)
         merchant.apply_risk_delta(risk_delta("dpd_bucket_increase"), sim_date)
     return [row]
@@ -307,6 +336,34 @@ def _next_dpd(old: str, new: str, dpd: int) -> int:
         return dpd + _MONTH_STEP_DAYS
     low, high = _BUCKET_RANGE[new]
     return int(np.random.randint(low, high + 1))
+
+
+def _late_recovery(merchant: Any, loan: Loan, installment: Optional[int], sim_date: date) -> list[dict]:
+    """The first monthly cycle after an instalment's retries failed. Either the instalment is
+    paid late (the loan is current again) or it is still unpaid at month end, which is the
+    Chain 4 Current to 1-30 transition, and the loan stays in the 1-30 bucket."""
+    loan.late_recovery_due = False
+    rows: list[dict] = []
+    if np.random.random() < late_cure_probability(merchant):
+        oldest = loan.unpaid_installments.pop(0)
+        rows.append(_row(merchant, loan, oldest, due_date(loan, oldest), sim_date, paid=True,
+                         dpd=loan.days_past_due, cured=True))
+        merchant.record_repayment_outcome(True, sim_date)
+        merchant.apply_risk_delta(risk_delta("dpd_bucket_cure"), sim_date)
+        loan.bucket, loan.days_past_due = "current", 0
+        if installment is not None:
+            rows += _collect_current(merchant, loan, installment, sim_date)
+        return rows
+
+    oldest = loan.unpaid_installments[0]
+    loan.days_past_due = min((sim_date - due_date(loan, oldest)).days, 30)
+    loan.bucket = bucket_of(loan.days_past_due)
+    if installment is not None:
+        loan.unpaid_installments.append(installment)
+        rows.append(_row(merchant, loan, installment, loan.next_due_date, sim_date, paid=False,
+                         dpd=loan.days_past_due))
+        merchant.record_repayment_outcome(False, sim_date)
+    return rows
 
 
 def _arrears_step(merchant: Any, loan: Loan, installment: Optional[int], sim_date: date) -> list[dict]:
@@ -382,6 +439,8 @@ def simulate_repayments(merchant: Any, sim_date: date) -> list[dict]:
         installment = k if k <= loan.term_months else None
         if loan.bucket == "current" and installment is not None:
             rows += _collect_current(merchant, loan, installment, sim_date)
+        elif loan.unpaid_installments and loan.late_recovery_due:
+            rows += _late_recovery(merchant, loan, installment, sim_date)
         elif loan.unpaid_installments:
             rows += _arrears_step(merchant, loan, installment, sim_date)
         if merchant.active_loan is not None:

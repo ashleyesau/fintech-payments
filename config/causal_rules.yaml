@@ -49,6 +49,9 @@ state_transitions:
     # trading before it has grown or stabilised, so it would stay New forever with zero
     # GPV. Same probability as delinquent_to_churned.
     new_to_churned: 0.85
+    # Not in Causal Rules; see state.py. Delinquent to Stressed when GPV has recovered and
+    # the merchant's loan is not in arrears.
+    delinquent_to_stressed: 0.30
 
 # Chain 3: lending eligibility gates
 lending_eligibility:
@@ -108,6 +111,12 @@ forced_missed:
   gpv_decline_p_increment: 0.30
   delinquent_p_increment: 0.50
   churned_p: 1.00
+  # Not in Causal Rules. A merchant that goes dormant has stopped transacting with us, not
+  # necessarily stopped repaying: this share closed their business and never pay again
+  # (the "gone dark" case), the rest moved to another acquirer and keep servicing the loan
+  # by DebiCheck from their bank account. 0.25 brings the write-off rate inside the
+  # Validation Targets band; the other 75% repay as a merchant in good standing would.
+  dormant_closure_share: 0.25
 
 # Chain 4: DPD migration. Monthly transition probabilities by bucket.
 dpd:

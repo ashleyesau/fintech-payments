@@ -261,8 +261,9 @@ def test_delinquent_to_churned_after_30_dark_days(always):
     assert m.evaluate_state(today(m)) == "churned"
 
 
-def test_delinquent_stays_while_still_trading(always):
-    m = build([1000] * 60, state="delinquent")
+def test_delinquent_does_not_churn_while_still_trading(always):
+    # GPV is still weak, so no recovery either; only 30 dark days churn a merchant.
+    m = build([1000] * 30 + [650] * 30, state="delinquent")
     assert m.evaluate_state(today(m)) is None
 
 
@@ -278,6 +279,31 @@ def test_new_merchant_that_goes_dark_can_churn(always):
 def test_new_merchant_still_trading_does_not_churn(always):
     m = build([100] * 60, state="new")
     assert m.evaluate_state(today(m)) != "churned"
+
+
+def test_delinquent_merchant_with_recovered_gpv_steps_back_to_stressed(always):
+    m = build([700] * 30 + [1000] * 30, state="delinquent")
+    assert m.evaluate_state(today(m)) == "stressed"
+
+
+def test_delinquent_stays_while_gpv_has_not_recovered(always):
+    m = build([1000] * 30 + [650] * 30, state="delinquent")
+    assert m.evaluate_state(today(m)) is None
+
+
+def test_an_arrears_loan_does_not_block_a_delinquent_merchants_recovery(always):
+    from simulator.state import Loan
+
+    m = build([700] * 30 + [1000] * 30, state="delinquent")
+    m.active_loan = Loan(application_id="a", unpaid_installments=[1])
+    assert m.evaluate_state(today(m)) == "stressed"
+
+
+def test_dormant_delinquent_merchant_does_not_recover(always):
+    m = build([1000] * 60, state="delinquent")
+    for i in range(60, 75):
+        m.record_day(START + timedelta(days=i), 0, 0)
+    assert m.evaluate_state(today(m)) is None  # GPV is falling, and 30 dark days not yet reached
 
 
 def test_churned_is_terminal(always):
@@ -401,6 +427,20 @@ def test_dormancy_hits_when_the_roll_succeeds(always):
     m = build([100] * 5)
     assert m.maybe_go_dormant(today(m)) is True
     assert m.dormant_since == today(m)
+
+
+def test_a_dormant_merchant_closed_or_moved_acquirer(monkeypatch):
+    # First roll: dormancy hit; second: closure draw against dormant_closure_share (0.25).
+    for closure_roll, closed in ((0.0, True), (0.9, False)):
+        rolls = iter([0.0, closure_roll])
+        monkeypatch.setattr(np.random, "random", lambda: next(rolls))
+        m = build([100] * 5)
+        assert m.maybe_go_dormant(today(m)) is True
+        assert m.business_closed is closed
+
+
+def test_closure_is_undecided_until_the_merchant_goes_dormant():
+    assert build([100] * 5).business_closed is None
 
 
 def test_dormancy_misses_when_the_roll_fails(never):

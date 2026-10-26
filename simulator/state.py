@@ -20,17 +20,19 @@ from typing import Optional
 import numpy as np
 
 from simulator.archetypes import get_archetype, sample_quality_percentile
-from simulator.config import load_causal_rules
+from simulator.config import load_calibration, load_causal_rules
 
 _RULES = load_causal_rules()
 _ST = _RULES["state_transitions"]
 _PROB = _ST["probabilities"]
 _RISK = _RULES["risk_score"]
+_CHURN_MULTIPLIER = load_calibration().get("lifecycle", {}).get("churn_multiplier", 1.0)
 
-# Structural, not tunable: the state engine compares two 30-day windows, so the
-# buffer must hold 60 days.
+# Structural, not tunable: the state engine compares two 30-day windows (60 days), and
+# loan eligibility needs GPV over 90 days, so the buffer holds 90.
 _WINDOW_DAYS = 30
 _HISTORY_DAYS = 2 * _WINDOW_DAYS
+_BUFFER_DAYS = 90
 
 
 def risk_delta(name: str) -> int:
@@ -89,9 +91,13 @@ class Merchant:
     # with kind, due_date and the original payment's identifying fields.
     scheduled_followups: list = field(default_factory=list)
 
+    # Set when the merchant permanently stops transacting (see maybe_go_dormant).
+    dormant_since: Optional[date] = None
+
     # Daily GPV in minor units, oldest first. Calendar days since the first
-    # transaction; closed days are recorded as zero.
-    daily_gpv_minor: deque = field(default_factory=lambda: deque(maxlen=_HISTORY_DAYS))
+    # transaction; closed days are recorded as zero. The state engine reads the latest
+    # 60 days; gpv_90d_minor() reads all 90.
+    daily_gpv_minor: deque = field(default_factory=lambda: deque(maxlen=_BUFFER_DAYS))
 
     def effective_tx_rate(self) -> float:
         """Base tx rate adjusted for quality tier. Chain 1 multiplier."""
@@ -117,6 +123,40 @@ class Merchant:
         self.trading_days += 1
         self.days_without_txn = 0 if txn_count > 0 else self.days_without_txn + 1
 
+    def gpv_90d_minor(self) -> int:
+        """GPV over the latest 90 days (fewer for a merchant with a shorter history)."""
+        return sum(self.daily_gpv_minor)
+
+    def _latest_60_days(self) -> Optional[list]:
+        """The latest 60 daily GPV values, or None until 60 days exist."""
+        if len(self.daily_gpv_minor) < _HISTORY_DAYS:
+            return None
+        return list(self.daily_gpv_minor)[-_HISTORY_DAYS:]
+
+    # -----------------------------------------------------------------------
+    # Merchant going dark
+    # -----------------------------------------------------------------------
+
+    def maybe_go_dormant(self, sim_date: date) -> bool:
+        """Roll the archetype's churn hazard once. On a hit the merchant stops
+        transacting for good; the state engine then carries it to Churned through the
+        usual GPV decline, because no transactions for 30 days is what Churned means.
+
+        monthly_churn_prob is "the monthly chance the merchant permanently stops
+        transacting" (Simulator Design), so it becomes a daily hazard of
+        1 - (1 - p) ** (1 / 30), scaled by churn_multiplier in calibration.yaml.
+        Only merchants that have started trading can go dormant. Reactivation is not
+        modelled.
+        """
+        if self.dormant_since is not None or self.first_transaction_at is None:
+            return False
+        monthly = get_archetype(self.archetype).monthly_churn_prob * _CHURN_MULTIPLIER
+        daily = 1.0 - (1.0 - min(monthly, 1.0)) ** (1.0 / 30.0)
+        if _roll(daily):
+            self.dormant_since = sim_date
+            return True
+        return False
+
     # -----------------------------------------------------------------------
     # Chain 2: state evaluation
     # -----------------------------------------------------------------------
@@ -130,9 +170,9 @@ class Merchant:
         needs c about 33% below p, and 40% needs c about 57% below p. Retune the
         thresholds in causal_rules.yaml if Stressed or Delinquent are underpopulated.
         """
-        if len(self.daily_gpv_minor) < _HISTORY_DAYS:
+        history = self._latest_60_days()
+        if history is None:
             return None
-        history = list(self.daily_gpv_minor)
         prior = sum(history[:_WINDOW_DAYS]) / _WINDOW_DAYS
         current = sum(history[_WINDOW_DAYS:]) / _WINDOW_DAYS
         baseline_60d = (prior + current) / 2
@@ -172,6 +212,8 @@ class Merchant:
         candidates: list[tuple[str, float]] = []
 
         if state == "new":
+            if self.days_without_txn >= _ST["churn_no_txn_days"]:
+                candidates.append(("churned", _PROB["new_to_churned"]))
             if mom_growth is not None:
                 if self.months_on_platform >= 1 and mom_growth >= _ST["growth_threshold"]:
                     candidates.append(("growing", _PROB["new_to_growing"]))
@@ -199,8 +241,9 @@ class Merchant:
             if delinquent_p > 0.0:
                 candidates.append(("delinquent", delinquent_p))
             baseline_60d = None
-            if len(self.daily_gpv_minor) >= _HISTORY_DAYS:
-                baseline_60d = sum(self.daily_gpv_minor) / _HISTORY_DAYS
+            latest_60 = self._latest_60_days()
+            if latest_60 is not None:
+                baseline_60d = sum(latest_60) / _HISTORY_DAYS
             if (
                 baseline_60d is not None
                 and current_30d_avg >= (1 - _ST["stressed_recovery_band"]) * baseline_60d

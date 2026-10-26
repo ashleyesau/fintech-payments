@@ -277,6 +277,13 @@ def _eft_path(txn: dict, merchant: Any) -> None:
     txn["risk_score"], txn["risk_action"] = _risk(blocked=False)
 
 
+def _card_auth_rate(archetype_name: str, channel: str) -> float:
+    return _PAY["card_auth_rate_overrides"].get(
+        archetype_name,
+        _PAY["card_auth_rate_by_channel"].get(channel, _PAY["card_auth_rate"]),
+    )
+
+
 def simulate_transaction(merchant: Any, sim_date: date) -> dict:
     """
     Generate a single payment event for a merchant.
@@ -300,8 +307,7 @@ def simulate_transaction(merchant: Any, sim_date: date) -> dict:
         txn["entry_mode"] = (
             _choose(_PAY["card_entry_mode_mix"]) if channel == "card_present" else "ecom"
         )
-        auth_rate = _PAY["card_auth_rate_overrides"].get(merchant.archetype, _PAY["card_auth_rate"])
-        _card_style_path(txn, merchant, auth_rate)
+        _card_style_path(txn, merchant, _card_auth_rate(merchant.archetype, channel))
     return txn
 
 
@@ -357,8 +363,9 @@ def simulate_day(merchant: Any, sim_date: date) -> list[dict]:
     Generate all transaction events for one merchant on one simulated day.
 
     Returns payments dated sim_date plus any refunds and chargebacks that fall due,
-    ordered by created_at. Also records the day on the merchant (GPV and transaction
-    count), so the caller should then run merchant.evaluate_state() and decay_risk().
+    ordered by created_at. A merchant that goes dormant today (maybe_go_dormant) stops
+    generating payments from today. Also records the day on the merchant (GPV and
+    transaction count), so the caller should then run merchant.evaluate_state() and decay_risk().
     """
     events = [
         _followup_event(merchant, f, sim_date)
@@ -372,8 +379,11 @@ def simulate_day(merchant: Any, sim_date: date) -> list[dict]:
     payments: list[dict] = []
     not_yet_onboarded = merchant.onboarded_at is not None and sim_date < merchant.onboarded_at
     if not not_yet_onboarded:
-        intensity = get_intensity_multiplier(sim_date, merchant.archetype, merchant.stress_modifier())
-        lam = merchant.effective_tx_rate() * intensity * get_tx_count_modifier(sim_date)
+        merchant.maybe_go_dormant(sim_date)
+        lam = 0.0
+        if merchant.dormant_since is None:
+            intensity = get_intensity_multiplier(sim_date, merchant.archetype, merchant.stress_modifier())
+            lam = merchant.effective_tx_rate() * intensity * get_tx_count_modifier(sim_date)
         count = int(np.random.poisson(lam)) if lam > 0 else 0
         for _ in range(count):
             txn = simulate_transaction(merchant, sim_date)

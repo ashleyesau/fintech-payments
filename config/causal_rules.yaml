@@ -45,6 +45,10 @@ state_transitions:
     stressed_to_delinquent_missed_repayment: 0.90
     stressed_to_stable: 0.50
     delinquent_to_churned: 0.85
+    # Not in Causal Rules. The table has no way out of New for a merchant that stops
+    # trading before it has grown or stabilised, so it would stay New forever with zero
+    # GPV. Same probability as delinquent_to_churned.
+    new_to_churned: 0.85
 
 # Chain 3: lending eligibility gates
 lending_eligibility:

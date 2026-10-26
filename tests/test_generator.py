@@ -120,6 +120,20 @@ def test_card_authorization_rate_default_and_spaza_override():
     assert card_auth("spaza_shop") == pytest.approx(0.98, abs=0.012)
 
 
+def test_card_not_present_authorization_rate_is_lower():
+    rows = [t for t in sample("e_commerce", 9000) if t["channel"] == "card_ecom"]
+    assert sum(t["status"] == "completed" for t in rows) / len(rows) == pytest.approx(0.90, abs=0.02)
+
+
+def test_auth_rate_resolution_order():
+    from simulator.generator import _card_auth_rate
+
+    assert _card_auth_rate("spaza_shop", "card_present") == 0.98   # archetype override
+    assert _card_auth_rate("restaurant", "card_present") == 0.95   # default
+    assert _card_auth_rate("e_commerce", "card_ecom") == 0.90      # channel override
+    assert _card_auth_rate("wholesale", "payment_link") == 0.90
+
+
 def test_eft_funnel_completion_rate():
     rows = [t for t in sample("wholesale", 12000) if t["channel"] == "instant_eft"]
     expected = 0.95 * 0.90 * 0.85 * 0.92 * 0.99
@@ -369,3 +383,39 @@ def test_refund_and_chargeback_volumes_track_archetype_rates():
     # Pending followups were drawn at about refund_rate 5% and fraud_rate 1% of completed card sales.
     kinds = Counter(f["kind"] for f in m.scheduled_followups)
     assert kinds["refund"] > kinds["chargeback"]
+
+
+# ---------------------------------------------------------------------------
+# Dormancy
+# ---------------------------------------------------------------------------
+
+def test_dormant_merchant_generates_no_payments_but_still_gets_followups():
+    np.random.seed(1)
+    m = merchant("restaurant")
+    simulate_day(m, WEDNESDAY)  # start trading
+    m.dormant_since = WEDNESDAY
+    m.scheduled_followups = [{
+        "kind": "refund", "due_date": WEDNESDAY + timedelta(days=1), "transaction_id": "t-1",
+        "channel": "card_present", "payment_method": "visa", "amount_minor": 9000,
+    }]
+    events = simulate_day(m, WEDNESDAY + timedelta(days=1))
+    assert [e["event_type"] for e in events] == ["refund"]
+    assert list(m.daily_gpv_minor)[-1] == 0
+    assert m.days_without_txn == 1
+
+
+def test_going_dormant_stops_payments_the_same_day(monkeypatch):
+    np.random.seed(1)
+    m = merchant("restaurant")
+    simulate_day(m, WEDNESDAY)
+    monkeypatch.setattr(m, "maybe_go_dormant", lambda d: setattr(m, "dormant_since", d) or True)
+    assert simulate_day(m, WEDNESDAY + timedelta(days=1)) == []
+
+
+def test_merchant_that_never_traded_is_not_rolled_for_dormancy(monkeypatch):
+    called = []
+    m = merchant("restaurant")
+    monkeypatch.setattr(np.random, "poisson", lambda lam: 0)
+    monkeypatch.setattr(np.random, "random", lambda: called.append(1) or 0.0)
+    simulate_day(m, WEDNESDAY)
+    assert m.dormant_since is None

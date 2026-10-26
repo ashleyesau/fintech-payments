@@ -61,10 +61,31 @@ def test_nothing_recorded_before_first_transaction():
     assert list(m.daily_gpv_minor) == [5000]
 
 
-def test_history_buffer_capped_at_60_days():
-    m = build([100] * 75)
-    assert len(m.daily_gpv_minor) == 60
-    assert m.trading_days == 75
+def test_history_buffer_capped_at_90_days():
+    m = build([100] * 120)
+    assert len(m.daily_gpv_minor) == 90
+    assert m.trading_days == 120
+
+
+def test_gpv_90d_sums_the_buffer():
+    assert build([100] * 40).gpv_90d_minor() == 4000
+    # Only the latest 90 days count.
+    assert build([1000] * 30 + [100] * 90).gpv_90d_minor() == 9000
+
+
+def test_state_metrics_use_only_the_latest_60_days():
+    # 30 old days of 5000 must not leak into the 60-day windows.
+    m = build([5000] * 30 + [1000] * 30 + [500] * 30)
+    growth, decline, current = m._gpv_metrics()
+    assert current == 500
+    assert growth == pytest.approx(-0.5)
+    assert decline == pytest.approx((750 - 500) / 750)
+
+
+def test_stressed_recovery_uses_latest_60_days_with_a_longer_buffer(always):
+    # Latest 60: 700 then 1000, which recovers. The old 90-day-ago spike must be ignored.
+    m = build([9000] * 30 + [700] * 30 + [1000] * 30, state="stressed")
+    assert m.evaluate_state(today(m)) == "stable"
 
 
 def test_days_without_txn_counts_and_resets():
@@ -245,6 +266,20 @@ def test_delinquent_stays_while_still_trading(always):
     assert m.evaluate_state(today(m)) is None
 
 
+def test_new_merchant_that_goes_dark_can_churn(always):
+    # No path out of New by GPV decline exists in Chain 2, so a dark merchant needs this.
+    m = build([1000] * 30, state="new")
+    for i in range(30, 60):
+        m.record_day(START + timedelta(days=i), 0, 0)
+    assert m.days_without_txn == 30
+    assert m.evaluate_state(today(m)) == "churned"
+
+
+def test_new_merchant_still_trading_does_not_churn(always):
+    m = build([100] * 60, state="new")
+    assert m.evaluate_state(today(m)) != "churned"
+
+
 def test_churned_is_terminal(always):
     m = build([0] * 60, state="churned")
     assert m.evaluate_state(today(m)) is None
@@ -350,3 +385,77 @@ def test_loan_id_is_application_id():
 def test_loan_generates_one_id_when_none_given():
     loan = Loan()
     assert loan.application_id and loan.loan_id == loan.application_id
+
+
+# ---------------------------------------------------------------------------
+# Dormancy (monthly churn hazard)
+# ---------------------------------------------------------------------------
+
+def test_dormancy_needs_a_first_transaction():
+    m = Merchant(archetype="spaza_shop", onboarded_at=START)
+    assert m.maybe_go_dormant(START) is False
+    assert m.dormant_since is None
+
+
+def test_dormancy_hits_when_the_roll_succeeds(always):
+    m = build([100] * 5)
+    assert m.maybe_go_dormant(today(m)) is True
+    assert m.dormant_since == today(m)
+
+
+def test_dormancy_misses_when_the_roll_fails(never):
+    m = build([100] * 5)
+    assert m.maybe_go_dormant(today(m)) is False
+    assert m.dormant_since is None
+
+
+def test_dormant_merchant_is_not_rolled_again(always):
+    m = build([100] * 5)
+    m.maybe_go_dormant(today(m))
+    first = m.dormant_since
+    assert m.maybe_go_dormant(today(m) + timedelta(days=1)) is False
+    assert m.dormant_since == first
+
+
+def test_daily_hazard_compounds_to_the_monthly_probability(monkeypatch):
+    # A roll just under the daily hazard hits, just over misses, and 30 days of that
+    # hazard add up to monthly_churn_prob.
+    from simulator.archetypes import get_archetype
+
+    monthly = get_archetype("spaza_shop").monthly_churn_prob
+    daily = 1 - (1 - monthly) ** (1 / 30)
+
+    monkeypatch.setattr(np.random, "random", lambda: daily * 0.999)
+    assert build([100] * 5).maybe_go_dormant(START) is True
+    monkeypatch.setattr(np.random, "random", lambda: daily * 1.001)
+    assert build([100] * 5).maybe_go_dormant(START) is False
+    assert 1 - (1 - daily) ** 30 == pytest.approx(monthly)
+
+
+def test_dormancy_rate_over_a_year_matches_archetype():
+    np.random.seed(8)
+    gone = 0
+    n = 3000
+    for _ in range(n):
+        m = build([100] * 2, onboarded_days_ago=0)
+        m.archetype = "e_commerce"  # 5% a month
+        for d in range(360):
+            if m.maybe_go_dormant(START + timedelta(days=d)):
+                gone += 1
+                break
+    assert gone / n == pytest.approx(1 - 0.95 ** 12, abs=0.03)
+
+
+def test_dormant_merchant_walks_down_to_churned(always):
+    # A merchant that has stopped trading reaches Churned through the normal chain.
+    m = build([1000] * 60, state="stable")
+    m.dormant_since = START
+    seen = []
+    for i in range(60, 200):
+        m.record_day(START + timedelta(days=i), 0, 0)
+        moved = m.evaluate_state(START + timedelta(days=i))
+        if moved:
+            seen.append(moved)
+        if m.merchant_state == "churned":
+            break
+    assert seen == ["stressed", "delinquent", "churned"]

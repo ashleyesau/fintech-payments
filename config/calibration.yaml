@@ -77,6 +77,13 @@ seasonal:
   black_friday_ticket_default: 1.00
   saturation_cap: 2.50
 
+# Merchant lifecycle.
+# churn_multiplier scales every archetype's monthly_churn_prob in the dormancy hazard.
+# Leave at 1.0 unless Phase 8 retention checks need tuning; activation (Phase 7) is the
+# other lever for the retention targets.
+lifecycle:
+  churn_multiplier: 1.0
+
 # Geographic effects.
 # Applied on top of archetype multipliers for qualifying province+archetype combos.
 geographic:

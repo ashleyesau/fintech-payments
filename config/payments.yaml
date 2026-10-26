@@ -32,11 +32,14 @@ card_type_mix: {debit: 0.75, credit: 0.25}
 emv_compliance: 0.99
 threeds_compliance: 0.95
 
-# Card funnel: share reaching authorized. Simulator Design gives 95% for the card
-# funnel and about 98% for small-ticket Spaza; its "about 90% for others" line
-# conflicts with the funnel figure, so the funnel figure is the default.
+# Share of card attempts reaching authorized. Resolution order: archetype override,
+# then channel override, then the default. Simulator Design gives 95% for the card
+# funnel, about 98% for small-ticket Spaza and about 90% for others; Validation Targets
+# put card-present Spaza and Wholesale at 95-98% and E-commerce at 85-92%. Card-not-
+# present is therefore 90%.
 card_auth_rate: 0.95
 card_auth_rate_overrides: {spaza_shop: 0.98}
+card_auth_rate_by_channel: {card_ecom: 0.90, payment_link: 0.90}
 # PayShap has no documented funnel; it follows the card-style path.
 payshap_auth_rate: 0.97
 

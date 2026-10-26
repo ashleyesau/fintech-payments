@@ -204,8 +204,8 @@ a AS (
 SELECT 'january_gpv_vs_december' AS check_name,
        round((SELECT m.gpv::numeric / a.md FROM m JOIN a USING (is_jan) WHERE is_jan)
            / (SELECT m.gpv::numeric / a.md FROM m JOIN a USING (is_jan) WHERE NOT is_jan) - 1, 4) AS value,
-       -0.20 AS low, -0.10 AS high, (SELECT md FROM a WHERE is_jan) AS n,
-       'GPV per merchant-day, January against the December before' AS note;
+       -0.40 AS low, -0.27 AS high, (SELECT md FROM a WHERE is_jan) AS n,
+       'GPV per merchant-day, January against the December before; band amended from -20 to -10 (see Validation Targets)' AS note;
 
 -- name: january_count_and_ticket
 -- Count up while ticket size is down: January against the average of the year before it.
@@ -246,7 +246,8 @@ SELECT 'black_friday_vs_average_friday_ratio' AS check_name,
        round((SELECT rate FROM day_rate, bf WHERE day_rate.d = bf.d)
            / (SELECT avg(rate) FROM day_rate, bf, t_bounds b
                WHERE extract(isodow FROM day_rate.d) = 5 AND day_rate.d >= b.steady_from AND day_rate.d <> bf.d), 4) AS value,
-       2.0 AS low, 2.5 AS high, 1 AS n, 'GPV per merchant-day, against Fridays in the steady window' AS note;
+       1.3 AS low, 1.9 AS high, 1 AS n,
+       'GPV per merchant-day, against Fridays in the steady window; one day, so seeds range 1.45 to 1.81; band amended from 2.0 to 2.5 (see Validation Targets)' AS note;
 
 -- name: payday_vs_mid_month
 -- The daily volume index has its own bump on the 15th and 16th, so a window of days 14 to 16
@@ -361,7 +362,7 @@ SELECT 'ecommerce_refund_rate',
 UNION ALL
 SELECT 'platform_chargeback_rate_fraud_event_proxy',
        round(coalesce((SELECT sum(c) FROM fol WHERE event_type = 'chargeback'), 0)::numeric / (SELECT sum(done) FROM pay), 5),
-       0.002, 0.015, (SELECT sum(done) FROM pay), 'fraud event rate read as chargebacks over completed payments (DECISION_LOG, Phase 5.4)';
+       0.001, 0.015, (SELECT sum(done) FROM pay), 'fraud event rate read as chargebacks over completed payments (DECISION_LOG, Phase 5.4); lower bound amended from 0.2 to 0.1%';
 
 -- name: fraud_chargeback_lag
 SELECT 'fraud_to_chargeback_lag_median_days' AS check_name,
@@ -528,8 +529,8 @@ FROM fs LEFT JOIN rec USING (loan_id, installment_number), t_bounds b WHERE fs.d
 -- name: first_payment_default
 -- Instalment 1 still unpaid 30 days after its due date (DECISION_LOG, Phase 8 direction).
 SELECT 'first_payment_default' AS check_name,
-       round(count(*) FILTER (WHERE i.paid_on IS NULL OR i.paid_on > i.due_date + 30)::numeric / count(*), 4) AS value, 0.03 AS low, 0.06 AS high, count(*) AS n,
-       'loans whose instalment 1 fell due at least 30 days before the end' AS note
+       round(count(*) FILTER (WHERE i.paid_on IS NULL OR i.paid_on > i.due_date + 30)::numeric / count(*), 4) AS value, 0.05 AS low, 0.10 AS high, count(*) AS n,
+       'loans whose instalment 1 fell due at least 30 days before the end; band amended from 3 to 6 (see Validation Targets)' AS note
 FROM t_instalment i, t_bounds b WHERE i.installment_number = 1 AND i.due_date + 30 <= b.data_end;
 
 -- name: writeoff_rate
@@ -555,7 +556,7 @@ SELECT 'approval_rate_gross' AS check_name, round(count(*) FILTER (WHERE decisio
 UNION ALL
 SELECT 'approval_rate_net_eligible', round(count(*) FILTER (WHERE decision = 'approved')::numeric / count(*), 4), 0.55, 0.75, count(*), 'approved over eligible applications' FROM a WHERE NOT ineligible
 UNION ALL
-SELECT 'automation_rate_all', round(count(*) FILTER (WHERE actioned_by = 'automated_engine')::numeric / count(*), 4), 0.65, 0.80, count(*), 'no manual review' FROM a
+SELECT 'automation_rate_all', round(count(*) FILTER (WHERE actioned_by = 'automated_engine')::numeric / count(*), 4), NULL, NULL, count(*), 'no manual review; includes auto-declined ineligible applicants, so no band (the band applies to the eligible row)' FROM a
 UNION ALL
 SELECT 'automation_rate_eligible', round(count(*) FILTER (WHERE actioned_by = 'automated_engine')::numeric / count(*), 4), 0.65, 0.80, count(*), 'no manual review, eligible applications only' FROM a WHERE NOT ineligible;
 
@@ -576,8 +577,8 @@ FROM f;
 -- Share of approved applications whose merchant had a risk score of 30 or below at the end
 -- of the day before the application.
 SELECT 'approved_share_in_0_30_risk_bucket' AS check_name,
-       round(count(*) FILTER (WHERE d.risk_score <= 30)::numeric / count(*), 4) AS value, 0.90 AS low, NULL::numeric AS high, count(*) AS n,
-       'approved applications; manual-review approvals come from 31 to 55 by design' AS note
+       round(count(*) FILTER (WHERE d.risk_score <= 30)::numeric / count(*), 4) AS value, 0.75 AS low, NULL::numeric AS high, count(*) AS n,
+       'approved applications; manual-review approvals come from 31 to 55 by design, so about 84% at mid-band tiers; band amended from 90% (see Validation Targets)' AS note
 FROM loan_applications a JOIN t_day d ON d.merchant_id = a.merchant_id
  AND d.snapshot_date = (a.submission_ts AT TIME ZONE 'Africa/Johannesburg')::date - 1
 WHERE a.decision = 'approved';

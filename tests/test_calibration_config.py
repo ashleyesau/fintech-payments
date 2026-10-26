@@ -139,3 +139,121 @@ def test_eft_funnel_is_simulator_designs_and_sits_in_the_amended_bands():
     assert 0.62 <= completion <= 0.70
     assert 0.34 <= failures["otp"] / sum(failures.values()) <= 0.42
     assert completion + sum(failures.values()) == pytest.approx(1.0)
+
+
+def test_fraud_event_rate_follows_the_archetype_rates_and_the_amended_band():
+    """The platform fraud event rate (chargebacks over completed payments) is the archetype
+    fraud rates weighted by the payments each archetype produces, and only card channels
+    can charge back. That is 0.15%, under Validation Targets' original 0.2% floor even though
+    the same rates weighted by merchant count give 0.30%: the high-volume archetypes (Spaza,
+    Grocery) carry the lowest rates and a fifth of payments are not card. The floor was
+    amended to 0.1% (Phase 8). Raising E-commerce from 10 to 12% of the mix moved this by
+    about 0.001 points; reaching 0.2% would need E-commerce at about 13% of payments."""
+    from simulator.archetypes import ARCHETYPES
+    from simulator.config import load_payments
+
+    mix = load_calibration()["archetype_mix"]
+    channels = load_payments()["channel_mix"]
+    weights, rate = 0.0, 0.0
+    for name, share in mix.items():
+        a = ARCHETYPES[name]
+        payments = share * a.tx_per_day * (len(a.open_days) / 7) * sum(a.monthly_seasonal_multipliers) / 12
+        card = sum(v for k, v in channels[name].items() if k in ("card_present", "card_ecom", "payment_link"))
+        weights += payments
+        rate += payments * a.fraud_rate * card
+    by_payments = rate / weights
+    by_merchants = sum(share * ARCHETYPES[n].fraud_rate for n, share in mix.items())
+    assert 0.001 <= by_payments <= 0.015
+    assert by_payments < 0.002 < by_merchants   # why the original floor could not hold
+
+
+# ---------------------------------------------------------------------------
+# Bands amended in Phase 8 because the sourced parameters cannot reach them
+# ---------------------------------------------------------------------------
+
+def _weights():
+    """Expected GPV per onboarded merchant by archetype: share x tx per day x open-day
+    fraction x mean ticket (the same weighting as the take-rate guard)."""
+    from simulator.archetypes import ARCHETYPES
+
+    mix = load_calibration()["archetype_mix"]
+    return {
+        n: share * ARCHETYPES[n].tx_per_day * (len(ARCHETYPES[n].open_days) / 7) * ARCHETYPES[n].mean_ticket_zar
+        for n, share in mix.items()
+    }
+
+
+def test_january_against_december_follows_the_modifiers_and_the_amended_band():
+    """December runs 25 to 35% above the annual average and January's count and ticket
+    modifiers multiply to 0.91, so January is at most 0.91 / 1.25 = 0.73 of December
+    before any seasonal table, and 0.91 / 1.35 = 0.67 at the other end. Weighted by the
+    archetype seasonal tables (Jan over Dec 0.72) it is about 0.65. Validation Targets'
+    original 10 to 20% below (0.80 to 0.90) cannot hold with the other two bands; the band
+    was amended to 27 to 40% below (Phase 8)."""
+    from simulator.archetypes import ARCHETYPES
+
+    cal = load_calibration()
+    modifiers = cal["seasonal"]["january_tx_count_modifier"] * cal["seasonal"]["january_ticket_size_modifier"]
+    assert 0.67 <= modifiers / 1.35 < modifiers / 1.25 <= 0.73
+    assert modifiers / 1.25 < 0.80            # why the original band could not hold
+
+    weights = _weights()
+    jan = sum(w * ARCHETYPES[n].monthly_seasonal_multipliers[0] for n, w in weights.items())
+    dec = sum(w * ARCHETYPES[n].monthly_seasonal_multipliers[11] for n, w in weights.items())
+    expected = modifiers * jan / dec - 1
+    assert -0.40 <= expected <= -0.27
+
+
+def test_black_friday_follows_the_ticket_lifts_and_the_amended_band():
+    """Causal Rules lifts tickets after the cap on three archetypes only (E-commerce 2.5,
+    Spaza 1.3, Restaurant 1.1). Weighted by GPV that is 1.30 on the day, and November
+    runs about 1.15 above an average month, so about 1.49 against an average Friday.
+    The original 2.0 to 2.5x needs lifts Causal Rules does not give the other eight
+    archetypes; the band was amended to 1.3 to 1.9x (Phase 8): 1.49 expected, and a single
+    day's ratio ranged 1.45 to 1.81 across seeds."""
+    from simulator.archetypes import ARCHETYPES
+
+    cal = load_calibration()
+    lifts = cal["seasonal"]["black_friday_ticket_multipliers"]
+    default = cal["seasonal"]["black_friday_ticket_default"]
+    weights = _weights()
+    total = sum(weights.values())
+    day_lift = sum(w * lifts.get(n, default) for n, w in weights.items()) / total
+    nov = sum(w * ARCHETYPES[n].monthly_seasonal_multipliers[10] for n, w in weights.items()) / total
+    year = sum(w * sum(ARCHETYPES[n].monthly_seasonal_multipliers) / 12 for n, w in weights.items()) / total
+    expected = day_lift * nov / year
+    assert 1.4 <= expected <= 1.7
+    assert day_lift < 1.4 and expected < 2.0   # why the original band could not hold
+
+
+def test_first_payment_default_follows_the_matrix_and_the_amended_band():
+    """For a neutral merchant an instalment is still unpaid a month after its due date
+    with the probability of the matrix's Current to 1-30 step (6%), by construction of the
+    late-cure probability. Any state mix adds to that (Stressed and Delinquent merchants cure
+    and recover less), so full runs read 7 to 10%. Validation Targets' 3 to 6% sits below the
+    matrix it was meant to agree with; the band was amended to 5 to 10% (Phase 8)."""
+    from simulator.repayments import first_strike_probability, late_cure_probability, retry_probability
+    from simulator.state import Merchant
+
+    m = Merchant(merchant_state="stable")
+    from simulator.config import load_causal_rules
+
+    retries = load_causal_rules()["debicheck"]["max_retries"]
+    unpaid_after_retries = (1 - first_strike_probability(m)) * (1 - retry_probability(m)) ** retries
+    neutral = unpaid_after_retries * (1 - late_cure_probability(m))
+    assert neutral == pytest.approx(0.06, abs=0.003)
+    assert 0.05 <= neutral <= 0.10
+
+
+def test_approved_share_in_the_low_risk_bucket_follows_manual_review_and_the_amended_band():
+    """Applications from the 0-30 tier are approved automatically; the 31-55 tier goes to
+    manual review, which approves 60% (lending.yaml), and those count as approved. At the
+    middle of Validation Targets' risk buckets (62.5% and 20%) the approved share from 0-30
+    is 62.5 / (62.5 + 20 x 0.6) = 84%. The original "90% or more" cannot hold with a 60%
+    manual approval rate; the band was amended to 75% or more (Phase 8)."""
+    import yaml
+    from pathlib import Path
+
+    rate = yaml.safe_load((Path(__file__).parent.parent / "config" / "lending.yaml").read_text())["manual_review_approve_rate"]
+    share = 0.625 / (0.625 + 0.20 * rate)
+    assert 0.75 <= share < 0.90

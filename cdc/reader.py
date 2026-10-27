@@ -82,7 +82,7 @@ class Reader:
             raise self._missing() from None
         except pg_errors.ObjectNotInPrerequisiteState as error:
             if "can no longer get changes" in (error.diag.message_primary or ""):
-                raise self._lost() from None
+                raise self.lost_error() from None
             raise
         messages = [(parse_lsn(lsn), bytes(data)) for lsn, data in rows]
         if messages:
@@ -104,7 +104,7 @@ class Reader:
             raise self._missing() from None
         except pg_errors.ObjectNotInPrerequisiteState as error:
             if "cannot be advanced" in (error.diag.message_primary or ""):
-                raise self._lost() from None   # lost while the batch was uploading
+                raise self.lost_error() from None   # lost while the batch was uploading
             raise
         reached = parse_lsn(row[0])
         if reached != end_lsn:
@@ -119,7 +119,7 @@ class Reader:
         return SlotStatus(wal_status, safe_wal_size, None if cap < 0 else cap,
                           parse_lsn(confirmed), None if restart is None else parse_lsn(restart))
 
-    def _lost(self) -> SlotLost:
+    def lost_error(self) -> SlotLost:
         return SlotLost(
             f"Slot {self.slot_name} is lost: Postgres removed the WAL it was holding because the slot fell "
             "further behind than max_slot_wal_keep_size allows, and a lost slot cannot be repaired. The only "

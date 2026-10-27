@@ -148,7 +148,7 @@ Every non-zero exit prints one `error:` line to stderr, never prints a credentia
 - **The free tier.** The bucket is in us-east1, where the Always Free allowance (as summarised from Google's pricing page; check it) is 5 GB of storage and 5,000 Class A operations a month, and an upload is one. The number of objects has a floor of the distinct (table, event date) pairs, however large the batches: about 2 objects per simulated day, so the 45-day, 100-merchant run in "CDC setup" lands as 83 objects and a 100-merchant year as roughly 750 to 1,000. Streaming at the default 3,600x speed lands about 315 objects an hour at the default poll interval (more at shorter ones), so about 16 hours of it would use a month's operations; `--follow` against a stream is for short demos. Gzip is about 14x on this data, so storage is not the constraint.
 - **Speed.** Uploads from South Africa to us-east1 took about 0.5 to 1 second an object whatever its size when measured, so they run in parallel; `scripts/measure_upload_latency.py` measures that against the bucket (about 60 Class A operations a run, and it deletes what it writes).
 - **Intel Macs.** `cryptography` 50 has wheels for Apple Silicon only, so `requirements.txt` pins `cryptography<49`. On a slow connection use `pip install --default-timeout 100 -r requirements.txt`.
-- **Tests never touch the real bucket.** Delivery is tested with an in-memory sink and a scripted reader (`tests/fakes.py`), and on a real slot with a real reader; the GCS writer is tested against a fake client that raises Google's real exception classes. The real bucket is covered by a manual smoke test.
+- **Tests never touch the real bucket.** Delivery is tested with an in-memory sink and a scripted reader (`tests/fakes.py`), and on a real slot with a real reader; the GCS writer is tested against a fake client that raises Google's real exception classes. The real bucket is covered by a manual smoke test and by the run in "A run from start to finish".
 
 ## Watching the slot
 
@@ -165,7 +165,7 @@ The lag report asks Postgres alone, so it loads no Google library, touches no bu
 
 ## Larger runs: chunking
 
-The 3 GB cap holds roughly 4 million rows of WAL (about 750 bytes a row) and a 100-merchant year is about 1.0 million changes, so a consumer running alongside it cannot lose the slot: in a rehearsal it never fell more than 10.2 MB behind and the slot never held more than 82.3 MB. A far larger backfill, such as 1,000 merchants (about 11 million transactions), has not been put through the consumer. If one is run, run the generator in chunks and let the consumer drain between them, so the slot cannot be outrun. A chunk stops at its exclusive end date, and `--resume` continues from the checkpoint:
+The 3 GB cap holds roughly 4 million rows of WAL (about 750 bytes a row) and a 100-merchant year is about 1.0 million changes, so a consumer running alongside it cannot lose the slot: on the Air, with the generator and consumer sharing its two cores, it never fell more than 96.0 MB behind and the slot never held more than 105.9 MB (the sandbox rehearsal peaked at 10.2 MB behind). A far larger backfill, such as 1,000 merchants (about 11 million transactions), has not been put through the consumer. If one is run, run the generator in chunks and let the consumer drain between them, so the slot cannot be outrun. A chunk stops at its exclusive end date, and `--resume` continues from the checkpoint:
 
 ```bash
 POSTGRES_DB=fintech_cdc python -m simulator.main --mode backfill --start-date 2025-01-01 --end-date 2025-05-01 --merchant-count 1000 --checkpoint checkpoint_cdc.json
@@ -199,7 +199,7 @@ Duplicates (the same change landed twice, as at-least-once delivery allows) are 
 | 1 | Anything else, such as a lost database connection |
 
 - **The source must be quiet and the consumer drained**: stop `--follow`, and `python -m cdc.main --once` must say "nothing was waiting".
-- **The replay database** is created on the server the `CDC_` settings name, so the user needs `CREATEDB` (`sim` is a superuser in the compose file), and it is dropped afterwards. The replay writes about as much WAL as the source did (38.8 MB for a 34.4 MB source in a 3-month run), in another database, and the idle slot holds it until the consumer next reads.
+- **The replay database** is created on the server the `CDC_` settings name, so the user needs `CREATEDB` (`sim` is a superuser in the compose file), and it is dropped afterwards. The replay writes about as much WAL as the source did (38.8 MB for a 34.4 MB source in a 3-month run), in another database, and the idle slot holds it until the consumer next reads: after the 100-merchant year the lag report showed 732.7 MB held, with 2,355 MB of headroom left under the 3 GB cap.
 - **Cost against the bucket.** It lists the prefix once (a Class A operation) and reads each object once (a Class B operation, a free allowance of 50,000 a month as summarised from Google's pricing page; check it).
 
 ## A run from start to finish
@@ -226,6 +226,18 @@ CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.reconcile
 ```
 
 The `--once` run should say "nothing was waiting", and the reconcile should end in `RECONCILED`. The objects stay in the bucket. A repeat run needs a new slot name (`cdc_r02`) and so a new prefix, a fresh database and a new checkpoint file.
+
+Measured on a 2017 MacBook Air against the real bucket (slot `cdc_r01`, seed 42, 100 merchants over 2025):
+
+| What | Result |
+|---|---|
+| Generator | 663 s, 1,017,902 rows: 997,650 transactions, 20,078 merchant snapshots, 37 applications (18 disbursed), 76 repayments, 43 risk events. The sandbox run of the same seed wrote the same counts |
+| Consumer alongside | Never more than 96.0 MB behind or 105.9 MB held; least headroom 2,977 MB of 3,072 MB; level healthy throughout. Fully caught up (56 bytes behind) within 11 s of the generator ending |
+| Landed | 908 objects, 91.9 MB gzipped, one upload each (908 Class A operations of the month's 5,000) |
+| `--once` afterwards | "nothing was waiting in the slot" |
+| Reconcile against the bucket | `RECONCILED` in 3 min 43 s: 908 objects, 1,017,902 events, 0 duplicates, 1,017,884 inserts and 18 updates, and the replay equals the source in all five tables |
+
+The consumer was not restarted during this run; restarts, kills and a lost slot are covered by the tests (`tests/test_cdc_killpoints.py`, `tests/test_cdc_lost_slot.py`).
 
 ## Validating a run
 

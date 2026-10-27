@@ -29,9 +29,13 @@ class CdcSettings(BaseSettings):
     # GCS sink. Authentication is application-default credentials; nothing goes in the repo.
     gcs_bucket: str = "cdc_landing"
 
-    # Provisional defaults, fixed in M4 once decode speed and upload latency are measured.
+    # Fixed in M4 from the measured decode speed and per-object upload latency (DECISION_LOG,
+    # "M4 design decisions"). batch_size is a floor of changes: a batch is whole transactions.
+    # poll_interval_seconds is how long --follow sleeps when a fetch returns nothing; a drain
+    # never sleeps. upload_workers is the number of objects uploaded at once in one flush.
     batch_size: int = 10_000
-    poll_interval_seconds: float = 5.0
+    poll_interval_seconds: float = 60.0
+    upload_workers: int = 8
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="CDC_", extra="ignore")
 

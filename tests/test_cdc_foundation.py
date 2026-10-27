@@ -79,6 +79,15 @@ def test_the_defaults_name_the_first_run(monkeypatch):
     assert s.dsn == "host=localhost port=5432 dbname=fintech_cdc user=sim password=sim"
 
 
+def test_the_delivery_defaults_are_the_decided_ones(monkeypatch):
+    # DECISION_LOG M4-Q3 and M4-Q4a: batches of 10,000 changes, a 60 second poll for --follow,
+    # 8 uploads at once. The parity test above would pass if both files changed together.
+    for key in env_example():
+        monkeypatch.delenv(key, raising=False)
+    s = CdcSettings(_env_file=None)
+    assert (s.batch_size, s.poll_interval_seconds, s.upload_workers) == (10_000, 60.0, 8)
+
+
 def test_a_new_slot_name_gives_a_new_prefix_and_the_consumer_has_its_own_connection(monkeypatch):
     monkeypatch.setenv("CDC_SLOT_NAME", "cdc_r02")
     monkeypatch.setenv("CDC_USER", "cdc_reader")

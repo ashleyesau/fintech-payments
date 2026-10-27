@@ -7,3 +7,8 @@ faker>=24.0
 python-dotenv>=1.0
 python-dateutil>=2.0
 click>=8.0
+google-cloud-storage>=3
+# cryptography 50 ships Apple Silicon wheels only, so on an Intel Mac pip would try a source
+# build (Rust) and fail. Drop this bound when the project leaves the Intel Mac or cryptography
+# restores Intel wheels.
+cryptography<49

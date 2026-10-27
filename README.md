@@ -36,6 +36,7 @@ cp .env.example .env
 # 3. Apply the schema migrations in order (first time only)
 docker exec -i fintech_pg psql -U sim -d fintech < migrations/001_initial_schema.sql
 docker exec -i fintech_pg psql -U sim -d fintech < migrations/002_loan_repayments_fk.sql
+docker exec -i fintech_pg psql -U sim -d fintech < migrations/003_loan_applications_replica_identity.sql
 
 # 4. Run tests (DB tests are skipped if Postgres is not running)
 pytest tests/ -q                 # everything
@@ -72,9 +73,9 @@ python -m simulator.main --mode stream --duration-days 1 --checkpoint demo.json
 - The streaming writer commits every row and manages about 900 rows a second in earlier measurements. At 1,000 merchants a day is about 43,000 rows, which is roughly 1,800 rows a second at the default speed, so a stream of that size falls behind its schedule. It writes late, logs a warning with the worst lateness, and drops nothing. A stream of about 50 merchants stays on schedule: a day of 1,181 transactions took 24 seconds.
 - A stream stopped part-way through a day replays that day on the next run and skips the rows already written.
 
-## CDC setup (V2, in progress)
+## CDC setup (V2)
 
-The CDC work reads the write-ahead log of a separate database, `fintech_cdc`, so the data in `fintech` is never touched. The plan is in the project's Notion workspace (CDC Plan (V2)); this section covers only what is built. So far that is the foundation (the database, the replication slot and the settings), the decoder and the change-event envelope. The reader and the GCS sink are not built yet.
+The CDC work reads the write-ahead log of a separate database, `fintech_cdc`, so the data in `fintech` is never touched. The plan is in the project's Notion workspace (CDC Plan (V2)); this section covers the database, the slot, the decoder and the change-event envelope, and "Running the CDC consumer" below covers the consumer that lands the events in GCS.
 
 - **Migration 003** sets `REPLICA IDENTITY FULL` on `loan_applications`, the only table the generator updates (the disbursement). An update then carries the old row as well as the new one. The other four tables are insert-only and keep the default.
 - **`max_slot_wal_keep_size=3GB`** in `docker-compose.yml` caps how much WAL an unread slot can pin. An unread slot grows the disk until it fills, and a slot that passes the cap is invalidated and cannot be recovered. About 750 bytes of WAL a row means 3 GB is roughly 35 to 40 minutes of consumer downtime during a backfill on a 2017 MacBook Air.
@@ -111,6 +112,42 @@ The first query returns message types: `B` and `C` (begin and commit), `R` (a ta
 
 The CDC tests (`tests/test_cdc_foundation.py` and later files) need Postgres with `wal_level=logical`, which the compose file sets. They skip when Postgres is unreachable and fail when it is reachable but not logical, or when `CI` is set and it is unreachable.
 
+## Running the CDC consumer
+
+The consumer reads the slot and lands the changes in a GCS bucket as gzipped NDJSON, one object per table and event date, confirming the slot only after the objects have landed.
+
+```bash
+python -m cdc.main --once
+python -m cdc.main --follow
+```
+
+`--once` drains what is waiting and exits. `--follow` drains, then looks again every `CDC_POLL_INTERVAL_SECONDS` (60) until Ctrl-C. Exactly one of the two is required. Run it alongside a backfill (a second terminal), with the generator pointed at the same database and the consumer's `CDC_DB` and `CDC_SLOT_NAME` matching it.
+
+- **Credentials.** Google application-default credentials: `gcloud auth application-default login`, then `gcloud auth application-default set-quota-project <project>`. Never a key file; nothing is read from the repo. The bucket is `CDC_GCS_BUCKET` (`cdc_landing`).
+- **What it does.** A batch is whole transactions, at least `CDC_BATCH_SIZE` messages (10,000; Postgres counts begin, commit and relation messages too). Each batch becomes one object per table and event date (the row's own event time, as a South African date), named `cdc/<slot>/<table>/event_date=YYYY-MM-DD/lsn_<first>_<last>.ndjson.gz`, with the lowest and highest commit LSN as 16 hex digits. The objects upload `CDC_UPLOAD_WORKERS` (8) at a time, each created only if the name is free. Only when every object has landed does it confirm the slot, to the `end_lsn` of the last transaction. A crash or a failed upload before that leaves the slot where it was, and the next run replays the batch.
+- **Replays.** A replay builds the same names with the same events, but `ts_ms` and `ingested_at` are the consumer's clock, so the bytes differ. When a name is taken the consumer reads the existing object and compares the events without those two fields: the same events mean it already landed, anything else stops the run (exit 2) and nothing is overwritten. Downstream, dedup on `(source.commit_lsn, transaction.position)`; `cdc/dedup.py` has the helper.
+- **Retries.** An upload or read that fails transiently (a timeout, a dropped connection, HTTP 408, 429 or 5xx) is retried up to 5 attempts, waiting 1, 2, 4 and 8 seconds, each attempt with a 60 second timeout. A permission or login error fails at once.
+- **The slot.** Before every batch it checks `pg_replication_slots`. It warns once when the WAL headroom falls under half of the cap and again under a tenth, and when the slot is `unreserved`; a lost slot stops the run (exit 4). A lost slot cannot be repaired: regenerate the run with the same seed into a fresh database, a new slot name (`cdc_r02`) and so a new bucket prefix.
+- **Ctrl-C.** The first one finishes the batch in hand (landed and confirmed), then exits 0. The second stops at once without confirming (exit 130); uploads already running still have to end before the process exits.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Drained, or stopped cleanly with Ctrl-C |
+| 1 | Anything else: a lost database connection, a missing slot, a usage error, a bug (a bug also prints its traceback) |
+| 2 | A contract stop: a delete or truncate, schema drift, an undecodable message, or an existing object with different events |
+| 3 | The sink failed after its retries, or Google credentials are missing |
+| 4 | The slot is lost |
+| 130 | A second Ctrl-C |
+
+Every non-zero exit prints one `error:` line to stderr, never prints a credential, and leaves the slot unconfirmed past what has landed.
+
+- **Settings** are the `CDC_` variables in `.env.example`: `CDC_HOST`, `CDC_PORT`, `CDC_DB`, `CDC_USER`, `CDC_PASSWORD`, `CDC_SLOT_NAME`, `CDC_PUBLICATION`, `CDC_GCS_BUCKET`, `CDC_BATCH_SIZE`, `CDC_POLL_INTERVAL_SECONDS` and `CDC_UPLOAD_WORKERS`. The prefix in the bucket comes from the slot name, so a new slot name is a new prefix and runs never mix.
+- **Changing the WAL cap.** `max_slot_wal_keep_size` is passed to Postgres as a `-c` flag in `docker-compose.yml`, and a flag overrides `ALTER SYSTEM`, so to change it edit the compose file and run `docker compose up -d --force-recreate` (the volume is kept).
+- **The free tier.** The bucket is in us-east1, where the Always Free allowance (as summarised from Google's pricing page; check it) is 5 GB of storage and 5,000 Class A operations a month, and an upload is one. The number of objects has a floor of the distinct (table, event date) pairs, however large the batches: about 2 objects per simulated day, so the 45-day, 100-merchant run in "CDC setup" lands as 83 objects and a 100-merchant year as roughly 750 to 1,000. Streaming at the default 3,600x speed lands about 315 objects an hour at the default poll interval (more at shorter ones), so about 16 hours of it would use a month's operations; `--follow` against a stream is for short demos. Gzip is about 14x on this data, so storage is not the constraint.
+- **Speed.** Uploads from South Africa to us-east1 took about 0.5 to 1 second an object whatever its size when measured, so they run in parallel; `scripts/measure_upload_latency.py` measures that against the bucket (about 60 Class A operations a run, and it deletes what it writes).
+- **Intel Macs.** `cryptography` 50 has wheels for Apple Silicon only, so `requirements.txt` pins `cryptography<49`. On a slow connection use `pip install --default-timeout 100 -r requirements.txt`.
+- **Tests never touch the real bucket.** Delivery is tested with an in-memory sink and a scripted reader (`tests/fakes.py`), and on a real slot with a real reader; the GCS writer is tested against a fake client that raises Google's real exception classes. The real bucket is covered by a manual smoke test.
+
 ## Validating a run
 
 `validate.sql` holds the reconciliation queries. Each one reads the five tables and returns a value next to the band from the Simulation Validation Targets, with the number of rows the value rests on.
@@ -145,12 +182,12 @@ Two limits on what the checks can say. At the default application rate a 15-mont
 
 ```
 simulator/          Core simulation modules
-cdc/                CDC consumer, in progress: settings, the pgoutput decoder and type map, transactions, the change-event envelope, the column drift check, LSN helpers, errors
+cdc/                The CDC consumer: settings, the pgoutput decoder and type map, transactions, the change-event envelope, the column drift check, LSN helpers, errors; the slot reader, object naming and the replay compare (landing.py), the sink interface and its GCS writer, the loop (consumer.py), the dedup helper and the command line (main.py)
 config/             YAML calibration, archetypes, fees and causal rules
-scripts/            capture_pgoutput_fixtures.py and measure_decode_speed.py (CDC decoder fixtures and speed); portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test); boosted_backfill.py: a backfill with more loans, for the lending checks
+scripts/            capture_pgoutput_fixtures.py, measure_decode_speed.py and measure_upload_latency.py (CDC decoder fixtures, decode speed, upload latency to the bucket); portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test); boosted_backfill.py: a backfill with more loans, for the lending checks
 validate.sql        Reconciliation queries against the Validation Targets bands (run by simulator/validation.py)
-tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation, DB, CDC foundation, CDC decoder and CDC envelope tests
+tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation, DB, CDC foundation, decoder, envelope, landing, reader, consumer, GCS writer and command line tests (tests/fakes.py holds the in-memory sink, the scripted reader and the fake storage client)
 migrations/         Postgres DDL (001 schema, 002 repayments foreign key, 003 replica identity)
 docker-compose.yml  Local Postgres stack
-.github/workflows/  CI: Postgres service container, migrations, full test suite
+.github/workflows/  CI: Postgres 16 started with logical decoding, migrations 001 to 003, full test suite
 ```

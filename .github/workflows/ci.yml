@@ -10,28 +10,28 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
 
-    # Same credentials as docker-compose.yml. The service container cannot take
-    # server flags, so wal_level stays at the default here; no test depends on it.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: sim
-          POSTGRES_PASSWORD: sim
-          POSTGRES_DB: fintech
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U sim -d fintech"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     env:
       PGPASSWORD: sim
 
     steps:
       - uses: actions/checkout@v4
+
+      # Same flags as docker-compose.yml. A service container cannot take server flags, and
+      # the CDC tests need wal_level=logical (they fail without it). The wait uses -h
+      # localhost because the image's start-up runs a temporary server on the socket only.
+      - name: Start Postgres with logical decoding
+        run: |
+          docker run -d --name fintech_pg -p 5432:5432 \
+            -e POSTGRES_USER=sim -e POSTGRES_PASSWORD=sim -e POSTGRES_DB=fintech \
+            postgres:16 postgres \
+            -c wal_level=logical -c max_replication_slots=4 -c max_wal_senders=4 \
+            -c max_slot_wal_keep_size=3GB
+          for i in $(seq 1 30); do
+            docker exec fintech_pg pg_isready -h localhost -U sim -d fintech && exit 0
+            sleep 2
+          done
+          docker logs fintech_pg
+          exit 1
 
       - uses: actions/setup-python@v5
         with:
@@ -48,6 +48,7 @@ jobs:
         run: |
           psql -h localhost -U sim -d fintech -f migrations/001_initial_schema.sql
           psql -h localhost -U sim -d fintech -f migrations/002_loan_repayments_fk.sql
+          psql -h localhost -U sim -d fintech -f migrations/003_loan_applications_replica_identity.sql
 
       # The full suite, slow tests included. Locally -m "not slow" skips them.
       - name: Run tests

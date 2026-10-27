@@ -747,9 +747,9 @@ cb AS (
 SELECT 'ecommerce_over_wholesale_chargeback_ratio' AS check_name,
        round(((SELECT c FROM cb WHERE archetype = 'e_commerce')::numeric / (SELECT done FROM card WHERE archetype = 'e_commerce'))
            / nullif((SELECT c FROM cb WHERE archetype = 'wholesale')::numeric / (SELECT done FROM card WHERE archetype = 'wholesale'), 0), 2) AS value,
-       5 AS low, 10 AS high,
+       5 AS low, 15 AS high,
        coalesce((SELECT c FROM cb WHERE archetype = 'wholesale'), 0) AS n,
-       'card payments only (DECISION_LOG); n is the Wholesale chargebacks, NULL value means none' AS note;
+       'card payments only (DECISION_LOG); n is the Wholesale chargebacks, NULL value means none; band amended from 5 to 10 to 5 to 15 (see Validation Targets)' AS note;
 
 -- name: x_vintage_writeoffs
 -- Written-off share of loans by disbursement season.

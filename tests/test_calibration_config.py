@@ -276,3 +276,17 @@ def test_automation_and_net_approval_follow_the_risk_tiers_and_the_amended_bands
     net_at_mid_buckets = 0.625 + 0.20 * rate
     assert 0.55 <= net_at_mid_buckets <= 0.80
     assert net_at_mid_buckets < 0.75 < 0.80
+
+
+def test_ecommerce_over_wholesale_chargeback_ratio_follows_the_fraud_rates_and_the_amended_band():
+    """A completed card payment charges back at its archetype's fraud rate. E-commerce is
+    1.0% and Wholesale 0.1%, so the ratio is 10 before fraud clusters, which raise
+    E-commerce chargebacks further; full runs read 7.8 to 15.4 (about 11.5 on average, with 8
+    to 28 Wholesale chargebacks a run). The original 5 to 10x had its top edge at the design
+    ratio itself, so any cluster effect put the measure above it. The band was amended to 5 to
+    15x (Phase 8)."""
+    from simulator.archetypes import ARCHETYPES
+
+    ratio = ARCHETYPES["e_commerce"].fraud_rate / ARCHETYPES["wholesale"].fraud_rate
+    assert ratio == pytest.approx(10.0)
+    assert 5 <= ratio <= 15

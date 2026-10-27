@@ -29,3 +29,14 @@ class SchemaDriftError(CdcError):
     """A table's columns differ from the column list of its Pydantic model (decision D6), or the
     table is not one of the five. The fix is a new migration, an updated model and a deliberate
     decision, never an envelope change (contract section 10)."""
+
+
+class SinkError(CdcError):
+    """The sink could not write or read an object after its own retries (exit code 3). The batch
+    is not confirmed, so the next run replays it."""
+
+
+class ObjectMismatch(CdcError):
+    """An object already exists under the name this batch would write, and its events are not
+    the events this batch holds (exit code 2). The same name means the same changes, so this is
+    an integrity failure: the batch boundaries or the data changed. Never overwrite."""

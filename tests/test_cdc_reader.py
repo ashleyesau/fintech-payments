@@ -23,8 +23,14 @@ from cdc.transactions import TransactionAssembler
 
 PUBLICATION = "fintech_cdc"
 
-LOST_ON_PEEK = 'can no longer get changes from replication slot "cdc_x"'
-LOST_ON_ADVANCE = 'replication slot "cdc_x" cannot be advanced'
+# What Postgres said when a slot was lost: version 16 (checked by hand), and a later release (seen on GitHub's
+# runner, where the first version of the reader failed to recognise it), plus a wording nobody has seen yet.
+LOST_WORDINGS = [
+    'can no longer get changes from replication slot "cdc_x"',
+    'replication slot "cdc_x" cannot be advanced',
+    'can no longer access replication slot "cdc_x"',
+    'some future wording for a slot that is gone',
+]
 BACKWARDS = "cannot advance replication slot to 0/E726A68, minimum is 0/E726AA0"
 
 
@@ -233,18 +239,23 @@ def test_status_follows_the_slot_as_it_is_confirmed(cdc_dsn, reader):
 
 class FakeConnection:
     """Stands in for the psycopg connection to feed the reader rows and errors Postgres gave."""
-    def __init__(self, row=None, error=None):
+    def __init__(self, row=None, error=None, wal_status="reserved"):
         self.row, self.error, self.calls = row, error, []
+        self.wal_status = wal_status           # what the slot answers when asked whether it is lost
+        self.asked_status = False
         self.info = type("Info", (), {"dbname": "fintech_cdc"})()
 
     def execute(self, sql, params=None):
         self.calls.append((sql, params))
+        self.asked_status = sql.startswith("SELECT wal_status FROM pg_replication_slots")
+        if self.asked_status:
+            return self
         if self.error is not None:
             raise self.error
         return self
 
     def fetchone(self):
-        return self.row
+        return (self.wal_status,) if self.asked_status else self.row
 
     def fetchall(self):
         return self.row
@@ -280,8 +291,9 @@ def test_an_unlimited_cap_reads_as_none(reader):
 # lost and missing slots
 # ---------------------------------------------------------------------------
 
-def test_a_lost_slot_on_a_fetch_is_a_slotlost_that_says_what_to_do(reader):
-    reader._conn = FakeConnection(error=pg_error(pg_errors.ObjectNotInPrerequisiteState, LOST_ON_PEEK))
+@pytest.mark.parametrize("wording", LOST_WORDINGS)
+def test_a_lost_slot_on_a_fetch_is_a_slotlost_that_says_what_to_do_whatever_postgres_called_it(reader, wording):
+    reader._conn = FakeConnection(error=pg_error(pg_errors.ObjectNotInPrerequisiteState, wording), wal_status="lost")
     with pytest.raises(SlotLost) as raised:
         reader.fetch(10)
     message = str(raised.value)
@@ -289,23 +301,35 @@ def test_a_lost_slot_on_a_fetch_is_a_slotlost_that_says_what_to_do(reader):
     assert "same seed" in message and "new slot name" in message and "cdc_r02" in message
 
 
-def test_a_slot_lost_while_a_batch_was_uploading_is_a_slotlost_on_the_confirm(cdc_dsn, reader):
+@pytest.mark.parametrize("wording", LOST_WORDINGS)
+def test_a_slot_lost_while_a_batch_was_uploading_is_a_slotlost_on_the_confirm_whatever_postgres_called_it(cdc_dsn, reader, wording):
     write_transactions(cdc_dsn, [1])
     end = assemble(reader.fetch(10))[0].end_lsn
-    reader._conn = FakeConnection(error=pg_error(pg_errors.ObjectNotInPrerequisiteState, LOST_ON_ADVANCE))
+    reader._conn = FakeConnection(error=pg_error(pg_errors.ObjectNotInPrerequisiteState, wording), wal_status="lost")
     with pytest.raises(SlotLost):
         reader.confirm(end)
 
 
-def test_other_slot_errors_are_not_mistaken_for_a_lost_slot(cdc_dsn, reader):
+@pytest.mark.parametrize("wording", LOST_WORDINGS + [BACKWARDS, "replication slot is active"])
+def test_the_slots_own_state_decides_so_the_same_error_on_a_slot_that_is_not_lost_is_postgres_own_error(cdc_dsn, reader, wording):
     write_transactions(cdc_dsn, [1])
     end = assemble(reader.fetch(10))[0].end_lsn
-    reader._conn = FakeConnection(error=pg_error(pg_errors.ObjectNotInPrerequisiteState, BACKWARDS))
-    with pytest.raises(pg_errors.ObjectNotInPrerequisiteState):
-        reader.confirm(end)
-    reader._conn = FakeConnection(error=pg_error(pg_errors.ObjectNotInPrerequisiteState, "replication slot is active"))
-    with pytest.raises(pg_errors.ObjectNotInPrerequisiteState):
+    for state in ("reserved", "extended", "unreserved"):
+        reader._conn = FakeConnection(error=pg_error(pg_errors.ObjectNotInPrerequisiteState, wording), wal_status=state)
+        with pytest.raises(pg_errors.ObjectNotInPrerequisiteState):
+            reader.confirm(end)
+        with pytest.raises(pg_errors.ObjectNotInPrerequisiteState):
+            reader.fetch(10)
+
+
+def test_the_slot_is_asked_only_when_the_error_is_of_the_kind_that_can_mean_lost(cdc_dsn, reader):
+    write_transactions(cdc_dsn, [1])
+    reader._conn = FakeConnection(error=pg_error(pg_errors.UndefinedObject, 'replication slot "cdc_x" does not exist'))
+    with pytest.raises(SlotMissing):
         reader.fetch(10)
+    assert not any(sql.startswith("SELECT wal_status") for sql, _ in reader._conn.calls)
+    reader._conn = FakeConnection(row=[])
+    assert reader.fetch(10) == [] and not any(sql.startswith("SELECT wal_status") for sql, _ in reader._conn.calls)
 
 
 def test_a_missing_slot_is_a_clear_error_for_every_call(cdc_dsn):

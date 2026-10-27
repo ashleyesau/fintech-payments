@@ -15,8 +15,13 @@ Facts about Postgres 16 this module relies on, each checked against a real serve
 fetch ends on a Commit; 0 or NULL means no limit at all; advancing the slot backwards raises
 55000, advancing to the same position does nothing, and advancing past the end of the WAL
 silently moves the slot to the end, skipping everything unread; a lost slot raises 55000 on a
-peek ("can no longer get changes") and on an advance ("cannot be advanced"); a missing slot
-raises 42704. The connection stays autocommit, with TimeZone UTC so timestamp text is
+peek and on an advance; a missing slot raises 42704.
+
+A lost slot is recognised by asking the slot (`wal_status` is "lost"), never by the wording of the
+error: the wording changed between Postgres 16 ("can no longer get changes from replication slot"
+on a peek, "cannot be advanced" on an advance) and later releases ("can no longer access
+replication slot ... invalidated due to wal_removed"), which GitHub's runner showed when the first
+version of this module matched the Postgres 16 text and reported a lost slot as an unknown error. The connection stays autocommit, with TimeZone UTC so timestamp text is
 deterministic. A dropped connection raises psycopg's OperationalError and stops the consumer:
 the slot keeps its position, so the operator just restarts it.
 """
@@ -34,6 +39,7 @@ from cdc.lsn import format_lsn, parse_lsn
 _PEEK = ("SELECT lsn::text, data FROM pg_logical_slot_peek_binary_changes("
          "%s, NULL, %s, 'proto_version', '1', 'publication_names', %s)")
 _ADVANCE = "SELECT end_lsn::text FROM pg_replication_slot_advance(%s, %s::pg_lsn)"
+_WAL_STATUS = "SELECT wal_status FROM pg_replication_slots WHERE slot_name = %s"
 _STATUS = ("SELECT wal_status, safe_wal_size, confirmed_flush_lsn::text, restart_lsn::text, "
            "pg_size_bytes(current_setting('max_slot_wal_keep_size')) "
            "FROM pg_replication_slots WHERE slot_name = %s")
@@ -80,8 +86,8 @@ class Reader:
             rows = self._conn.execute(_PEEK, (self.slot_name, limit, self.publication)).fetchall()
         except pg_errors.UndefinedObject:
             raise self._missing() from None
-        except pg_errors.ObjectNotInPrerequisiteState as error:
-            if "can no longer get changes" in (error.diag.message_primary or ""):
+        except pg_errors.ObjectNotInPrerequisiteState:
+            if self._is_lost():
                 raise self.lost_error() from None
             raise
         messages = [(parse_lsn(lsn), bytes(data)) for lsn, data in rows]
@@ -102,10 +108,10 @@ class Reader:
             row = self._conn.execute(_ADVANCE, (self.slot_name, format_lsn(end_lsn))).fetchone()
         except pg_errors.UndefinedObject:
             raise self._missing() from None
-        except pg_errors.ObjectNotInPrerequisiteState as error:
-            if "cannot be advanced" in (error.diag.message_primary or ""):
+        except pg_errors.ObjectNotInPrerequisiteState:
+            if self._is_lost():
                 raise self.lost_error() from None   # lost while the batch was uploading
-            raise
+            raise                                   # anything else of this kind (going backwards) is Postgres's own error
         reached = parse_lsn(row[0])
         if reached != end_lsn:
             raise RuntimeError(f"asked Postgres to confirm {format_lsn(end_lsn)} but the slot is at "
@@ -118,6 +124,11 @@ class Reader:
         wal_status, safe_wal_size, confirmed, restart, cap = row
         return SlotStatus(wal_status, safe_wal_size, None if cap < 0 else cap,
                           parse_lsn(confirmed), None if restart is None else parse_lsn(restart))
+
+    def _is_lost(self) -> bool:
+        """Whether Postgres has invalidated the slot, which is what makes it unreadable and unrepairable."""
+        row = self._conn.execute(_WAL_STATUS, (self.slot_name,)).fetchone()
+        return row is not None and row[0] == "lost"
 
     def lost_error(self) -> SlotLost:
         return SlotLost(

@@ -9,8 +9,14 @@
 --   - BIGINT for all amounts (minor units / ZAR cents)
 --   - TIMESTAMPTZ for all timestamps
 --   - TEXT + CHECK for enums
---   - Hard FK constraints and CHECK constraints
+--   - CHECK constraints. No foreign keys in this file: a merchant_id reference cannot
+--     target the composite primary key (merchant_id, snapshot_at) on merchants. The one
+--     foreign key, loan_repayments.loan_id, is added by migration 002.
 --   - wal_level=logical set in docker-compose.yml
+--
+-- Comment corrected 2026-10-27: the conventions list used to say "Hard FK constraints",
+-- which has been untrue since the merchant_id foreign key was removed in Phase 1. Only
+-- comments changed; the SQL is identical.
 
 -- ---------------------------------------------------------------------------
 -- 1. merchants (dimension snapshot, emitted daily by the generator)

@@ -118,3 +118,77 @@ class FakeReader:
     def lost_error(self):
         return SlotLost(f"Slot {self.slot_name} is lost (fake)")
 
+
+class Lost:
+    """A scripted outcome for FakeGcsBucket: do the operation, then fail with `error`, as when a
+    request reaches GCS but the reply never comes back."""
+    def __init__(self, error):
+        self.error = error
+
+
+class FakeBlob:
+    def __init__(self, bucket, name):
+        self.bucket, self.name = bucket, name
+        self.content_encoding = None   # the writer must leave this alone (no Content-Encoding: gzip)
+
+    def upload_from_string(self, data, *args, **kwargs):
+        return self.bucket.handle("upload", self.name, data, args, kwargs)
+
+    def download_as_bytes(self, *args, **kwargs):
+        return self.bucket.handle("download", self.name, None, args, kwargs)
+
+
+class FakeGcsBucket:
+    """The part of google.cloud.storage.Bucket the GCS writer uses, with GCS's rules: an upload with
+    if_generation_match=0 fails with PreconditionFailed when the object exists, and a read of a
+    missing object is NotFound. `script` lists what each call should do in turn: None for the normal
+    behaviour, an exception to raise before doing anything, or Lost(error) to do it and then raise.
+    Every call is recorded in `calls`, with the exact arguments."""
+
+    def __init__(self, name="cdc_landing", script=None):
+        self.name = name
+        self.objects: dict[str, bytes] = {}
+        self.content_types: dict[str, str] = {}
+        self.calls: list[dict] = []
+        self.script = list(script or [])
+        self._lock = threading.Lock()
+        self.blobs: list[FakeBlob] = []
+
+    def blob(self, name):
+        blob = FakeBlob(self, name)
+        self.blobs.append(blob)
+        return blob
+
+    def handle(self, operation, name, data, args, kwargs):
+        from google.api_core import exceptions as api_errors
+        with self._lock:
+            self.calls.append({"op": operation, "name": name, "args": args, "kwargs": dict(kwargs),
+                               "data": data})
+            outcome = self.script.pop(0) if self.script else None
+            if isinstance(outcome, BaseException):
+                raise outcome
+            if operation == "upload":
+                if kwargs.get("if_generation_match") == 0 and name in self.objects:
+                    raise api_errors.PreconditionFailed(f"{name} already exists")
+                self.objects[name] = data
+                self.content_types[name] = kwargs.get("content_type", "text/plain")
+                result = None
+            else:
+                if name not in self.objects:
+                    raise api_errors.NotFound(f"{name} not found")
+                result = self.objects[name]
+            if isinstance(outcome, Lost):
+                raise outcome.error
+            return result
+
+
+class FakeStorageClient:
+    def __init__(self, bucket=None):
+        self._bucket = bucket or FakeGcsBucket()
+        self.requested: list[str] = []
+
+    def bucket(self, name):
+        self.requested.append(name)
+        self._bucket.name = name
+        return self._bucket
+

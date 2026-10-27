@@ -40,3 +40,14 @@ class ObjectMismatch(CdcError):
     """An object already exists under the name this batch would write, and its events are not
     the events this batch holds (exit code 2). The same name means the same changes, so this is
     an integrity failure: the batch boundaries or the data changed. Never overwrite."""
+
+
+class SlotLost(CdcError):
+    """Postgres invalidated the slot: the WAL it was holding went past max_slot_wal_keep_size and
+    was removed (exit code 4). A lost slot cannot be read or repaired."""
+
+
+class SlotMissing(CdcError):
+    """The slot does not exist in the database (exit code 1). It must be created before any
+    data is written, or the first run would miss rows."""
+

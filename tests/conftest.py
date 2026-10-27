@@ -3,6 +3,7 @@
 Each test session gets its own database (fintech_test_<pid>), so nothing touches the
 fintech database. Tests that need it skip when Postgres is not reachable.
 """
+import itertools
 import os
 from pathlib import Path
 
@@ -40,6 +41,59 @@ def dsn():
     finally:
         admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
         admin.close()
+
+
+@pytest.fixture(scope="session")
+def cdc_dsn():
+    """A throwaway database for the CDC tests, built from the migrations like `dsn`.
+
+    Unlike `dsn` this one fails rather than skips when Postgres is reachable but wal_level
+    is not logical, and fails under CI when Postgres is unreachable (decision D9).
+    """
+    from tests.helpers import require_cdc_postgres
+
+    name = f"fintech_cdc_test_{os.getpid()}"
+    admin = require_cdc_postgres(
+        lambda: psycopg.connect(_dsn(settings.postgres_db), autocommit=True),
+        ci=os.environ.get("CI") == "true",
+    )
+    admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    admin.execute(f'CREATE DATABASE "{name}"')
+    try:
+        with psycopg.connect(_dsn(name), autocommit=True) as setup:
+            for path in MIGRATIONS:
+                setup.execute(path.read_text())
+        yield _dsn(name)
+    finally:
+        admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        admin.close()
+
+
+_slot_numbers = itertools.count(1)
+
+
+@pytest.fixture
+def cdc_slot(cdc_dsn):
+    """A logical replication slot on `cdc_dsn`, created after the tables are emptied.
+
+    Order matters: a slot publishes whatever happens after it exists, and TRUNCATE is
+    published, so the reset comes first. Slot names are cluster-wide and the cluster allows
+    four slots, so each test gets a unique name and the slot is dropped afterwards.
+    Yields the slot name.
+    """
+    from tests.helpers import reset
+
+    name = f"cdc_t{os.getpid()}_{next(_slot_numbers)}"
+    with psycopg.connect(cdc_dsn, autocommit=True) as control:
+        reset(control)
+        control.execute("SELECT pg_create_logical_replication_slot(%s, 'pgoutput')", (name,))
+        try:
+            yield name
+        finally:
+            control.execute(
+                "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = %s",
+                (name,),
+            )
 
 
 @pytest.fixture

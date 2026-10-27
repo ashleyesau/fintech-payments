@@ -2,7 +2,7 @@
 
 A synthetic-data platform for an SA SME fintech: merchant acquiring (card + instant EFT) and term lending with DebiCheck collection. Generates stateful, causally coherent event data written to a local Postgres OLTP store, ready for a CDC pipeline downstream.
 
-This is not real data, a model fitted to any company's books, or a benchmark. Parameters come from the project's design documents where those give a value, and are marked illustrative in `config/` where they do not. The generator has been run at up to 500 merchants onboarded; the design target of 500 to 1,000 active merchants has not been run.
+This is not real data, a model fitted to any company's books, or a benchmark. Parameters come from the project's design documents where those give a value, and are marked illustrative in `config/` where they do not. The largest run onboarded 1,000 merchants over 15 months (1,251 with replacements, about 700 not churned at the end), which is the low-to-middle of the design target of 500 to 1,000 active merchants. Loan counts at the default application rate are small: that run originated 205 loans.
 
 ## What this demonstrates
 
@@ -56,7 +56,7 @@ Backfill advances one simulated day at a time as fast as the machine allows, wri
 - `--seed` (default `RANDOM_SEED`) seeds a fresh run.
 - The run prints merchants onboarded, merchants that ever transacted, the final merchant states and the rows written.
 
-A 100-merchant, 365-day backfill took 183 seconds in the sandbox. Scaling by merchant count puts 1,000 merchants at about 30 minutes, plus a checkpoint of about 1 second a day at that size. That is an extrapolation, not a measurement, and a laptop is slower.
+A 100-merchant, 365-day backfill took 183 seconds in the sandbox. A 1,000-merchant backfill over 455 days (1,251 merchants onboarded, 11.0 million transactions, 279,000 snapshot rows) took 3,337 seconds, about 56 minutes, including a checkpoint after every simulated day. A laptop is slower: the 100-merchant run took 476 seconds on a 2017 MacBook Air.
 
 ## Running a stream
 

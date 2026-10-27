@@ -112,6 +112,8 @@ The first query returns message types: `B` and `C` (begin and commit), `R` (a ta
 
 The CDC tests (`tests/test_cdc_foundation.py` and later files) need Postgres with `wal_level=logical`, which the compose file sets. They skip when Postgres is unreachable and fail when it is reachable but not logical, or when `CI` is set and it is unreachable.
 
+The lost-slot tests (`tests/test_cdc_lost_slot.py`) need a Postgres they can lose a slot on, and the compose container's 3 GB cap is too large and cannot be changed from SQL, so they start a throwaway cluster with a 16 MB cap from local Postgres binaries (`initdb` and `pg_ctl`, found on the `PATH` or under `/usr/lib/postgresql`), on a free port in a temporary directory, and delete it afterwards. Docker is not used and no data of yours is touched. Without the binaries, which a Mac running only Docker does not have, those tests skip; under CI they fail instead. The cluster's Postgres version is the local binaries' version, not the container's, and the test run prints it.
+
 ## Running the CDC consumer
 
 The consumer reads the slot and lands the changes in a GCS bucket as gzipped NDJSON, one object per table and event date, confirming the slot only after the objects have landed.
@@ -148,6 +150,83 @@ Every non-zero exit prints one `error:` line to stderr, never prints a credentia
 - **Intel Macs.** `cryptography` 50 has wheels for Apple Silicon only, so `requirements.txt` pins `cryptography<49`. On a slow connection use `pip install --default-timeout 100 -r requirements.txt`.
 - **Tests never touch the real bucket.** Delivery is tested with an in-memory sink and a scripted reader (`tests/fakes.py`), and on a real slot with a real reader; the GCS writer is tested against a fake client that raises Google's real exception classes. The real bucket is covered by a manual smoke test.
 
+## Watching the slot
+
+```bash
+python -m cdc.lag
+python -m cdc.lag --watch 10
+```
+
+The lag report asks Postgres alone, so it loads no Google library, touches no bucket and costs no operations. It prints where the slot is (its confirmed position), where the server's WAL is now, how far behind that is, how much WAL the slot is holding, the cap and the headroom left, and a level: healthy, under half the cap left, under a tenth left, unreserved, lost, or no cap. `--watch 10` prints one compact line every 10 seconds until Ctrl-C. It reads the same `CDC_` settings as the consumer, so `CDC_DB` and `CDC_SLOT_NAME` point it at the run being watched.
+
+- **Behind and held are different numbers.** Behind is all the WAL the server has written since the slot's confirmed position, including other databases' and rows the publication does not cover. Held is the WAL the slot keeps from its restart position, which Postgres moves forward some time after a confirm, so held can stay above behind for a while after the consumer has drained.
+- **Exit codes.** 0 for a slot at any level but lost (a warning is information here, not a failure), 4 for a lost slot (the report is printed, with the recovery), 1 for a missing slot, a lost connection or a usage error.
+- **Before a big run** run it on the slot. A slot that has sat unread since it was created is already holding WAL, and its headroom is what the run starts with.
+
+## Larger runs: chunking
+
+The 3 GB cap holds roughly 4 million rows of WAL (about 750 bytes a row) and a 100-merchant year is about 1.0 million changes, so a consumer running alongside it cannot lose the slot: in a rehearsal it never fell more than 10.2 MB behind and the slot never held more than 82.3 MB. A far larger backfill, such as 1,000 merchants (about 11 million transactions), has not been put through the consumer. If one is run, run the generator in chunks and let the consumer drain between them, so the slot cannot be outrun. A chunk stops at its exclusive end date, and `--resume` continues from the checkpoint:
+
+```bash
+POSTGRES_DB=fintech_cdc python -m simulator.main --mode backfill --start-date 2025-01-01 --end-date 2025-05-01 --merchant-count 1000 --checkpoint checkpoint_cdc.json
+python -m cdc.lag --watch 10
+POSTGRES_DB=fintech_cdc python -m simulator.main --mode backfill --end-date 2025-09-01 --resume --checkpoint checkpoint_cdc.json
+```
+
+Start the next chunk when `behind` in the lag report is close to zero (with `--follow` running that happens within a poll interval of a chunk ending). If the headroom falls under half the cap while the generator is running, stop the generator, let the consumer catch up and `--resume`. The checkpoint is written after every simulated day, and a resumed run equals an uninterrupted one (`tests/test_checkpoint.py`, with loans in flight); a two-chunk run of 30 merchants over two months matched a single run by row count and by a digest of every table. The number of objects grows with the number of batches, so check the free-tier arithmetic above before a bigger run.
+
+## Checking a run against its source
+
+```bash
+python -m cdc.reconcile
+python -m cdc.reconcile --directory DIR
+```
+
+Do the landed objects add up to the source database? The command reads every object under the slot's prefix, from the bucket or from a directory laid out like it, one at a time (a 100-merchant year is about 1.3 GB as JSON, so it never holds the run), and checks, in this order:
+
+- each object is what its name says (table, event date, first and last commit LSN), is valid gzipped NDJSON of events, and its events ascend strictly by commit LSN and position;
+- every transaction is whole once duplicates are removed (positions 0 to size minus 1);
+- the landed inserts of each table equal the rows in the source, and the landed updates touch exactly the loans the source shows as disbursed;
+- the events replayed into a temporary blank database reproduce every table of the source, compared by row count and an order-independent digest of every row, computed in SQL. A mismatch is explained by key ("350 in the source only, for example ...").
+
+Duplicates (the same change landed twice, as at-least-once delivery allows) are counted and absorbed. Objects whose LSN ranges overlap within a table and event date are a note, not a failure, because a replay that covered more data writes overlapping objects by design.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Reconciled: it prints `RECONCILED` with the object, event, duplicate, insert and update counts |
+| 2 | Not reconciled: every problem is printed on its own `PROBLEM:` line |
+| 3 | The bucket failed after its retries, or Google credentials are missing |
+| 1 | Anything else, such as a lost database connection |
+
+- **The source must be quiet and the consumer drained**: stop `--follow`, and `python -m cdc.main --once` must say "nothing was waiting".
+- **The replay database** is created on the server the `CDC_` settings name, so the user needs `CREATEDB` (`sim` is a superuser in the compose file), and it is dropped afterwards. The replay writes about as much WAL as the source did (38.8 MB for a 34.4 MB source in a 3-month run), in another database, and the idle slot holds it until the consumer next reads.
+- **Cost against the bucket.** It lists the prefix once (a Class A operation) and reads each object once (a Class B operation, a free allowance of 50,000 a month as summarised from Google's pricing page; check it).
+
+## A run from start to finish
+
+The definition of done for the CDC work is one 100-merchant year taken through the whole path: generated into `fintech_cdc`, consumed into the bucket while it is generated, and reconciled. It needs the database and the slot from "CDC setup", an empty `fintech_cdc` (check with `docker exec fintech_pg psql -U sim -d fintech_cdc -c "SELECT count(1) FROM merchants"`) and no `checkpoint_cdc.json`, then `python -m cdc.lag` on the slot as the pre-flight. Three terminals:
+
+```bash
+CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.main --follow
+```
+
+```bash
+POSTGRES_DB=fintech_cdc python -m simulator.main --mode backfill --start-date 2025-01-01 --end-date 2026-01-01 --merchant-count 100 --checkpoint checkpoint_cdc.json
+```
+
+```bash
+CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.lag --watch 10
+```
+
+Start the consumer first, so nothing waits in the slot. When the generator finishes, wait until `behind` in the lag report is close to zero, press Ctrl-C once in the consumer terminal (it finishes the batch in hand and exits 0), then:
+
+```bash
+CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.main --once
+CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.reconcile
+```
+
+The `--once` run should say "nothing was waiting", and the reconcile should end in `RECONCILED`. The objects stay in the bucket. A repeat run needs a new slot name (`cdc_r02`) and so a new prefix, a fresh database and a new checkpoint file.
+
 ## Validating a run
 
 `validate.sql` holds the reconciliation queries. Each one reads the five tables and returns a value next to the band from the Simulation Validation Targets, with the number of rows the value rests on.
@@ -182,12 +261,12 @@ Two limits on what the checks can say. At the default application rate a 15-mont
 
 ```
 simulator/          Core simulation modules
-cdc/                The CDC consumer: settings, the pgoutput decoder and type map, transactions, the change-event envelope, the column drift check, LSN helpers, errors; the slot reader, object naming and the replay compare (landing.py), the sink interface and its GCS writer, the loop (consumer.py), the dedup helper and the command line (main.py)
+cdc/                The CDC consumer: settings, the pgoutput decoder and type map, transactions, the change-event envelope, the column drift check, LSN helpers, errors; the slot reader, object naming and the replay compare (landing.py), the sink interface and its GCS writer, the loop (consumer.py), the dedup helper and the command line (main.py); the lag report (lag.py) and the reconciler (reconcile.py), each its own command
 config/             YAML calibration, archetypes, fees and causal rules
 scripts/            capture_pgoutput_fixtures.py, measure_decode_speed.py and measure_upload_latency.py (CDC decoder fixtures, decode speed, upload latency to the bucket); portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test); boosted_backfill.py: a backfill with more loans, for the lending checks
 validate.sql        Reconciliation queries against the Validation Targets bands (run by simulator/validation.py)
-tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation, DB, CDC foundation, decoder, envelope, landing, reader, consumer, GCS writer and command line tests (tests/fakes.py holds the in-memory sink, the scripted reader and the fake storage client)
+tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation, DB, CDC foundation, decoder, envelope, landing, reader, consumer, GCS writer, command line, round trip, kill point, failure, lost slot, lag report and reconciler tests (tests/fakes.py holds the in-memory sink, the scripted reader and the fake storage client; tests/pgcluster.py starts the throwaway small-cap cluster)
 migrations/         Postgres DDL (001 schema, 002 repayments foreign key, 003 replica identity)
 docker-compose.yml  Local Postgres stack
-.github/workflows/  CI: Postgres 16 started with logical decoding, migrations 001 to 003, full test suite
+.github/workflows/  CI: Postgres 16 started with logical decoding, migrations 001 to 003, full test suite (the lost-slot tests use the runner's own Postgres binaries and print their version)
 ```

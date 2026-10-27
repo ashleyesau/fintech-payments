@@ -40,6 +40,21 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
+def report_version(config, dsn) -> str:
+    """Write the cluster's Postgres version into the test output and return it. The cluster runs the local
+    binaries, not the container's Postgres 16, so on CI it can be a newer version than the rest of the suite
+    (it was, when a message's wording changed); the log should say which."""
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        version = conn.execute("SHOW server_version").fetchone()[0]
+    reporter = config.pluginmanager.get_plugin("terminalreporter")
+    capture = config.pluginmanager.get_plugin("capturemanager")
+    line = f"lost-slot tests: the throwaway cluster runs Postgres {version} from {find_bindir()}, cap {CAP}"
+    if reporter is not None and capture is not None:
+        with capture.global_and_fixture_disabled():       # a fixture's output is captured unless capture is lifted
+            reporter.write_line(line)
+    return version
+
+
 @contextlib.contextmanager
 def small_cap_cluster(migrations):
     """Start the cluster, create a database from `migrations` and yield its DSN; stop and delete it afterwards."""

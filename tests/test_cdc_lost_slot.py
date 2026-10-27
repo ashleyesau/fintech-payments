@@ -18,7 +18,7 @@ from cdc.main import execute
 from cdc.reader import Reader
 from tests.conftest import MIGRATIONS, new_cdc_slot
 from tests.fakes import MemorySink
-from tests.pgcluster import CAP_BYTES, small_cap_cluster
+from tests.pgcluster import CAP_BYTES, report_version, small_cap_cluster
 from tests.test_cdc_consumer_live import expected_keys, write_chain5
 from tests.test_cdc_failures import keys_landed, waiting
 from tests.test_cdc_main import live_settings
@@ -34,8 +34,9 @@ def default_cdc_settings(monkeypatch):
 
 
 @pytest.fixture(scope="module")
-def cluster():
+def cluster(request):
     with small_cap_cluster(MIGRATIONS) as dsn:
+        report_version(request.config, dsn)
         yield dsn
 
 

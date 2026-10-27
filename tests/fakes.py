@@ -118,6 +118,15 @@ class FakeReader:
     def lost_error(self):
         return SlotLost(f"Slot {self.slot_name} is lost (fake)")
 
+    wal = None       # where the server's WAL "is now" for the lag report; defaults to the slot's position
+    closed = False
+
+    def wal_position(self):
+        return self.position if self.wal is None else self.wal
+
+    def close(self):
+        self.closed = True
+
 
 class Lost:
     """A scripted outcome for FakeGcsBucket: do the operation, then fail with `error`, as when a

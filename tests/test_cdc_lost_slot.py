@@ -13,6 +13,7 @@ import psycopg
 import pytest
 
 from cdc.errors import SlotLost
+from cdc.lag import execute as lag_report
 from cdc.main import execute
 from cdc.reader import Reader
 from tests.conftest import MIGRATIONS, new_cdc_slot
@@ -190,3 +191,33 @@ def test_a_slot_lost_while_a_batch_is_uploading_is_reported_at_the_confirm_as_ex
     lines = err.strip().splitlines()
     assert len(lines) == 1 and f"Slot {slot} is lost" in lines[0] and "cannot be repaired" in lines[0]
     assert slot_state(cluster, slot)[0] == "lost" and "done:" not in out
+
+
+def lag(dsn, slot):
+    out, err = io.StringIO(), io.StringIO()
+    code = lag_report(live_settings(dsn, slot), None, out=out, err=err)
+    return code, out.getvalue(), err.getvalue()
+
+
+def test_the_lag_report_follows_a_stalled_slot_down_through_every_level_to_lost_and_exits_four(cluster, slot):
+    half, tenth = CAP_BYTES / 2, CAP_BYTES / 10
+    code, out, err = lag(cluster, slot)
+    assert code == 0 and err == "" and "cap 16.0 MB" in out and "level               healthy" in out
+
+    fill_until(cluster, slot, lambda status, safe: safe is not None and tenth < safe < half)
+    code, out, err = lag(cluster, slot)
+    assert code == 0 and "under half the cap is left" in out and ": reserved" in out
+
+    fill_until(cluster, slot, lambda status, safe: safe is not None and 0 < safe < tenth)
+    code, out, err = lag(cluster, slot)
+    assert code == 0 and "under a tenth of the cap is left" in out
+
+    fill_until(cluster, slot, lambda status, safe: status == "unreserved")
+    code, out, err = lag(cluster, slot)
+    assert code == 0 and ": unreserved" in out and "past the cap but not lost yet" in out and "headroom -" in out
+
+    lose_slot(cluster, slot)
+    code, out, err = lag(cluster, slot)
+    assert code == 4 and ": lost" in out and "LOST" in out and "cannot be repaired" in out
+    assert "held by the slot    none" in out
+

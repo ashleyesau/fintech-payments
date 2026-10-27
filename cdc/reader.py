@@ -125,6 +125,10 @@ class Reader:
         return SlotStatus(wal_status, safe_wal_size, None if cap < 0 else cap,
                           parse_lsn(confirmed), None if restart is None else parse_lsn(restart))
 
+    def wal_position(self) -> int:
+        """Where the server's WAL has reached now, for measuring how far behind the slot is."""
+        return parse_lsn(self._conn.execute("SELECT pg_current_wal_lsn()::text").fetchone()[0])
+
     def _is_lost(self) -> bool:
         """Whether Postgres has invalidated the slot, which is what makes it unreadable and unrepairable."""
         row = self._conn.execute(_WAL_STATUS, (self.slot_name,)).fetchone()

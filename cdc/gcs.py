@@ -90,6 +90,13 @@ class GcsSink:
         return self._retrying(
             f"read {key}", lambda: self._bucket.blob(key).download_as_bytes(timeout=TIMEOUT_SECONDS, retry=None))
 
+    def list_keys(self, prefix: str) -> list[str]:
+        """The names of the objects under `prefix`, sorted. One listing (a Class A operation for each page of 1,000
+        names), made once by the reconciler and never in a loop, with the same retries as a write."""
+        return self._retrying(
+            f"list {prefix}",
+            lambda: sorted(blob.name for blob in self._bucket.list_blobs(prefix=prefix, timeout=TIMEOUT_SECONDS, retry=None)))
+
     def _retrying(self, what: str, attempt: Callable[[], T]) -> T:
         for number in range(1, ATTEMPTS + 1):
             try:

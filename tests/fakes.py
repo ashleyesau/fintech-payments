@@ -168,6 +168,9 @@ class FakeGcsBucket:
         self.blobs.append(blob)
         return blob
 
+    def list_blobs(self, *args, **kwargs):
+        return self.handle("list", None, None, args, kwargs)
+
     def handle(self, operation, name, data, args, kwargs):
         from google.api_core import exceptions as api_errors
         with self._lock:
@@ -176,7 +179,9 @@ class FakeGcsBucket:
             outcome = self.script.pop(0) if self.script else None
             if isinstance(outcome, BaseException):
                 raise outcome
-            if operation == "upload":
+            if operation == "list":
+                result = [type("Blob", (), {"name": n})() for n in sorted(self.objects) if n.startswith(kwargs.get("prefix") or "")]
+            elif operation == "upload":
                 if kwargs.get("if_generation_match") == 0 and name in self.objects:
                     raise api_errors.PreconditionFailed(f"{name} already exists")
                 self.objects[name] = data

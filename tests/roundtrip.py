@@ -1,86 +1,18 @@
-"""tests/roundtrip.py: replay landed events into a blank database, to check them against the source.
+"""tests/roundtrip.py: helpers for the round-trip tests.
 
-Test support, not shipped code (applying events to tables is the later Bronze step's job). The point
-is an independent check of the landed events: the rows are rebuilt by Postgres itself from each
-event's `after` image (json_populate_record), so a mistake in the decoder's conversion of a
-timestamp, a numeric or an array shows up as a difference instead of being undone by a matching
-reverse conversion in the test.
+The replay itself (blank database, `apply_events`, `in_commit_order`) now lives in cdc/reconcile.py, because the
+definition of done runs it against the real bucket (M6-Q2); this module re-exports it and keeps the two helpers that
+read a sink and check the strict order of a run with no crashes. The rows are rebuilt by Postgres itself from each
+event's `after` image (json_populate_record), so a mistake in the decoder's conversion of a timestamp, a numeric or
+an array shows up as a difference instead of being undone by a matching reverse conversion in the test.
 """
-import contextlib
-import json
-import os
-
-import psycopg
-from psycopg import conninfo
-
-from cdc.columns import EXPECTED_COLUMNS
-from cdc.dedup import dedup, events_in, key
-from simulator.db import STREAMS
-from tests.conftest import MIGRATIONS
-
-RUN = 1000   # consecutive inserts into one table applied in a single statement
-
-
-@contextlib.contextmanager
-def blank_database(dsn):
-    """A new database on the same server, built from the migrations, dropped afterwards. Yields its DSN."""
-    name = f"fintech_replay_{os.getpid()}"
-    with psycopg.connect(dsn, autocommit=True) as admin:
-        admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        admin.execute(f'CREATE DATABASE "{name}"')
-        replay_dsn = conninfo.make_conninfo(dsn, dbname=name)
-        try:
-            with psycopg.connect(replay_dsn, autocommit=True) as setup:
-                for path in MIGRATIONS:
-                    setup.execute(path.read_text())
-            yield replay_dsn
-        finally:
-            admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-
+from cdc.dedup import events_in, key
+from cdc.reconcile import apply_events, blank_database, in_commit_order  # noqa: F401  (the shipped implementation, re-exported)
 
 def landed_events(sink) -> list[dict]:
     """Every event in every object, in object-name order (so not necessarily commit order, and with
     any duplicates that landed)."""
     return [event for name in sorted(sink.objects) for event in events_in(sink.objects[name])]
-
-
-def in_commit_order(events: list[dict]) -> list[dict]:
-    """Each change once, in (commit_lsn, position) order: what a consumer of the landed objects does."""
-    return sorted(dedup(events), key=key)
-
-
-def apply_events(conn, events: list[dict]) -> None:
-    """Apply deduplicated events in commit order: an insert adds the row, an update replaces the row with
-    that primary key. Strict: a duplicate insert or an update that finds no row raises."""
-    run: list[dict] = []
-
-    def flush() -> None:
-        if not run:
-            return
-        table = run[0]["source"]["table"]
-        conn.execute(f"INSERT INTO {table} SELECT * FROM json_populate_recordset(NULL::{table}, %s::json)",
-                     (json.dumps([e["after"] for e in run]),))
-        run.clear()
-
-    for event in events:
-        table, op = event["source"]["table"], event["op"]
-        if op == "c":
-            if run and (run[0]["source"]["table"] != table or len(run) >= RUN):
-                flush()
-            run.append(event)
-            continue
-        flush()
-        assert op == "u", f"unexpected operation {op!r}"
-        keys = STREAMS[table].key
-        columns = [c for c in EXPECTED_COLUMNS[table] if c not in keys]
-        sets = ", ".join(f"{c} = r.{c}" for c in columns)
-        match = " AND ".join(f"x.{k} = r.{k}" for k in keys)
-        updated = conn.execute(
-            f"UPDATE {table} AS x SET {sets} FROM json_populate_record(NULL::{table}, %s::json) AS r WHERE {match}",
-            (json.dumps(event["after"]),)).rowcount
-        if updated != 1:
-            raise AssertionError(f"an update of {table} found {updated} rows to replace, not 1: {event['source']}")
-    flush()
 
 
 def partition_order_problems(sink) -> list[str]:

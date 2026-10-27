@@ -7,6 +7,7 @@ source tables; the counts and the order are checked on the landed objects. Slow:
 """
 import copy
 import gzip
+import io
 import json
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -16,7 +17,12 @@ import pytest
 
 from cdc.consumer import Consumer
 from cdc.dedup import dedup, events_in, incomplete_transactions, key
+from cdc.errors import SinkError
+from cdc.landing import object_key
+from cdc.lsn import format_lsn
 from cdc.reader import Reader
+from cdc.reconcile import DirectoryObjects, MemoryObjects, execute as reconcile_command, parse_name, reconcile
+from tests.test_cdc_main import live_settings, settings
 from simulator import db, lending, repayments
 from simulator.db import STREAMS
 from simulator.runner import RunSettings, run_backfill
@@ -239,3 +245,159 @@ def test_every_transaction_landed_whole_and_the_run_has_no_duplicates(run):
     events = landed_events(run["sink"])
     assert incomplete_transactions(events) == {}
     assert len({key(e) for e in events}) == len(events)
+
+
+# ---------------------------------------------------------------------------
+# the reconciler (cdc/reconcile.py), the definition of done's check, on the same run
+# ---------------------------------------------------------------------------
+
+def reconciled(run, objects=None):
+    return reconcile(MemoryObjects(dict(run["sink"].objects if objects is None else objects)), run["dsn"])
+
+
+def rewrite(data, change):
+    """An object's gzipped bytes with its events changed by `change(events)`."""
+    events = events_in(data)
+    change(events)
+    return gzip.compress(b"".join(json.dumps(e, separators=(",", ":")).encode() + b"\n" for e in events), mtime=0)
+
+
+def pick(run, table):
+    return next(n for n in sorted(run["sink"].objects) if f"/{table}/" in n)
+
+
+def test_the_run_reconciles_and_every_count_is_reported(run):
+    result = reconciled(run)
+    assert result.ok, result.problems
+    assert result.objects == len(run["sink"].objects) and result.duplicates == 0 and result.notes == []
+    assert result.inserts == {t: len(run["source"][t]) for t in result.inserts}
+    assert result.events == sum(result.inserts.values()) + result.updates and result.updates > 0 and result.megabytes > 0
+
+
+def test_a_replay_that_landed_again_under_other_names_is_absorbed_and_noted(run):
+    # A replay that covered less data than the original batch writes an object with another name (its LSN range
+    # differs) holding events that are already in the original: pick an object that spans several transactions
+    # and land its first transaction's events again.
+    objects = dict(run["sink"].objects)
+    name = max((n for n in objects if "/loan_applications/" in n and parse_name(n)[2] != parse_name(n)[3]),
+               key=lambda n: len(events_in(objects[n])))      # an application and its later disbursement update
+    events = events_in(objects[name])
+    first = events[0]["source"]["commit_lsn"]
+    again_events = [e for e in events if e["source"]["commit_lsn"] == first]
+    assert 0 < len(again_events) < len(events)
+    new_name = object_key("cdc/cdc_r01/", "loan_applications", events[0]["event_date"], first, first)
+    assert new_name not in objects and new_name != name
+    objects[new_name] = gzip.compress(b"".join(json.dumps(e, separators=(",", ":")).encode() + b"\n" for e in again_events), mtime=0)
+    result = reconciled(run, objects)
+    assert result.ok, result.problems
+    assert result.duplicates == len(again_events)
+    assert result.inserts["loan_applications"] == len(run["source"]["loan_applications"])
+    assert len(result.notes) == 1 and "overlap" in result.notes[0]
+
+
+def test_an_object_that_is_missing_is_caught_by_the_counts_and_by_the_digest(run):
+    objects = dict(run["sink"].objects)
+    del objects[pick(run, "risk_events")]
+    problems = " | ".join(reconciled(run, objects).problems)
+    assert "risk_events:" in problems and "inserts landed" in problems and "the replayed table differs" in problems
+
+
+def test_one_wrong_value_is_found_and_the_difference_is_explained(run):
+    objects = dict(run["sink"].objects)
+    name = pick(run, "merchant_transactions")
+    objects[name] = rewrite(objects[name], lambda events: events[3]["after"].update(amount_minor=events[3]["after"]["amount_minor"] + 1))
+    problems = reconciled(run, objects).problems
+    assert len(problems) == 1 and problems[0].startswith("merchant_transactions: the replayed table differs")
+    assert "1 with different values" in problems[0]
+
+
+def test_a_missing_update_is_found(run):
+    objects = dict(run["sink"].objects)
+    name = next(n for n in sorted(objects) if "/loan_applications/" in n and any(e["op"] == "u" for e in events_in(objects[n])))
+    objects[name] = rewrite(objects[name], lambda events: events.remove(next(e for e in events if e["op"] == "u")))
+    problems = " | ".join(reconciled(run, objects).problems)
+    assert "updates landed for" in problems and "the replayed table differs" in problems
+
+
+def test_an_incomplete_transaction_is_found(run):
+    objects = dict(run["sink"].objects)
+    name = pick(run, "risk_events")
+    objects[name] = rewrite(objects[name], lambda events: events.pop(0))
+    problems = " | ".join(reconciled(run, objects).problems)
+    assert "landed positions" in problems and "of " in problems
+
+
+def test_an_object_that_is_not_what_its_name_says_is_found(run):
+    objects = dict(run["sink"].objects)
+    name = pick(run, "merchants")
+    objects[name.replace("/merchants/", "/risk_events/")] = objects.pop(name)           # the name lies about the table
+    problems = " | ".join(reconciled(run, objects).problems)
+    assert "holds events of other tables" in problems
+
+
+def test_events_out_of_order_inside_an_object_are_found(run):
+    objects = dict(run["sink"].objects)
+    name = pick(run, "merchant_transactions")
+    objects[name] = rewrite(objects[name], lambda events: events.reverse())
+    assert any("do not ascend strictly" in p for p in reconciled(run, objects).problems)
+
+
+def test_garbage_and_strangers_are_found(run):
+    objects = dict(run["sink"].objects)
+    objects[pick(run, "merchants")] = b"not gzip at all"
+    objects["cdc/cdc_r01/readme.txt.ndjson.gz"] = b"x"
+    objects["cdc/cdc_r01/widgets/event_date=2025-03-01/lsn_0000000000000001_0000000000000002.ndjson.gz"] = b"x"
+    problems = " | ".join(reconciled(run, objects).problems)
+    assert "not gzipped NDJSON" in problems and "not an object name" in problems and "widgets is not one of the five tables" in problems
+
+
+def test_an_empty_prefix_does_not_reconcile_because_the_source_has_rows(run):
+    problems = reconciled(run, {}).problems
+    assert any("inserts landed, the source has" in p for p in problems) and any("the replayed table differs" in p for p in problems)
+
+
+# the command
+
+def settings_for_run(run, **kwargs):
+    return live_settings(run["dsn"], "cdc_r01", **kwargs)
+
+
+def test_the_command_reconciles_a_directory_laid_out_like_the_bucket_and_exits_zero(run, tmp_path):
+    for name, data in run["sink"].objects.items():
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    (tmp_path / "cdc" / "cdc_r02").mkdir(parents=True)
+    (tmp_path / "cdc" / "cdc_r02" / "stranger.ndjson.gz").write_bytes(b"another run's object, outside the prefix")
+    out, err = io.StringIO(), io.StringIO()
+    code = reconcile_command(settings_for_run(run), directory=str(tmp_path), out=out, err=err)
+    assert code == 0 and err.getvalue() == ""
+    lines = out.getvalue().splitlines()
+    assert lines[0].startswith("reconciling directory ") and "with fintech_cdc_test_" in lines[0]
+    assert lines[-1].startswith("RECONCILED: ") and "the replay equals fintech_cdc_test_" in lines[-1]
+    assert sum("the replay equals the source" in line for line in lines) == 5
+
+
+def test_the_command_exits_two_and_lists_every_problem_when_it_does_not_reconcile(run):
+    objects = dict(run["sink"].objects)
+    del objects[pick(run, "risk_events")]
+    out, err = io.StringIO(), io.StringIO()
+    code = reconcile_command(settings_for_run(run), objects_factory=lambda s: MemoryObjects(objects), out=out, err=err)
+    assert code == 2 and "RECONCILED" not in out.getvalue()
+    lines = err.getvalue().splitlines()
+    assert lines[-1].startswith("error: not reconciled: ") and all(line.startswith("PROBLEM: ") for line in lines[:-1])
+
+
+def test_a_bucket_failure_exits_three_and_a_dropped_connection_exits_one(run):
+    class Broken:
+        def keys(self):
+            raise SinkError("could not list cdc/cdc_r01/ in bucket cdc_landing: gave up after 5 attempts")
+
+    out, err = io.StringIO(), io.StringIO()
+    assert reconcile_command(settings_for_run(run), objects_factory=lambda s: Broken(), out=out, err=err) == 3
+    assert err.getvalue().startswith("error: could not list cdc/cdc_r01/") and len(err.getvalue().splitlines()) == 1
+    out, err = io.StringIO(), io.StringIO()
+    code = reconcile_command(settings(host="localhost", port=1, password="s3cret-pa55word"),
+                             objects_factory=lambda s: MemoryObjects({}), out=out, err=err)
+    assert code == 1 and "s3cret-pa55word" not in out.getvalue() + err.getvalue()
+

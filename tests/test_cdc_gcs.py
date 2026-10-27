@@ -193,6 +193,37 @@ def test_a_read_gives_up_after_five_attempts_like_a_write():
 
 
 # ---------------------------------------------------------------------------
+# listing (the reconciler's one listing)
+# ---------------------------------------------------------------------------
+
+def test_list_keys_makes_one_listing_under_the_prefix_and_returns_sorted_names():
+    sink, bucket, sleeps = make()
+    for name in ("cdc/cdc_r01/b", "cdc/cdc_r01/a", "cdc/cdc_r02/z", "other/q"):
+        bucket.objects[name] = b"x"
+    assert sink.list_keys("cdc/cdc_r01/") == ["cdc/cdc_r01/a", "cdc/cdc_r01/b"]
+    [call] = bucket.calls
+    assert call["op"] == "list" and call["kwargs"] == {"prefix": "cdc/cdc_r01/", "timeout": 60, "retry": None}
+    assert sleeps == []
+
+
+def test_a_listing_is_retried_like_a_write_and_gives_up_after_five_attempts():
+    sink, bucket, sleeps = make(script=[api_errors.ServiceUnavailable("try later")] * 2)
+    bucket.objects["p/a"] = b"x"
+    assert sink.list_keys("p/") == ["p/a"] and sleeps == [1, 2] and len(bucket.calls) == 3
+    sink, bucket, sleeps = make(script=[api_errors.ServiceUnavailable("try later")] * 6)
+    with pytest.raises(SinkError, match="could not list p/ .* gave up after 5 attempts"):
+        sink.list_keys("p/")
+    assert sleeps == [1, 2, 4, 8]
+
+
+def test_a_listing_that_is_refused_fails_at_once():
+    sink, bucket, sleeps = make(script=[api_errors.Forbidden("no access")])
+    with pytest.raises(SinkError, match="application-default login"):
+        sink.list_keys("p/")
+    assert len(bucket.calls) == 1 and sleeps == []
+
+
+# ---------------------------------------------------------------------------
 # with the landing logic (M4-Q5, option B) and the flush
 # ---------------------------------------------------------------------------
 
@@ -267,7 +298,7 @@ def test_missing_credentials_are_a_sink_error_that_says_how_to_sign_in():
 
 def test_nothing_but_the_gcs_module_pulls_in_googles_libraries():
     code = ("import sys, cdc.consumer, cdc.landing, cdc.reader, cdc.dedup, cdc.envelope, cdc.pgoutput, "
-            "cdc.transactions, cdc.columns, cdc.sink; "
+            "cdc.transactions, cdc.columns, cdc.sink, cdc.lag, cdc.reconcile; "
             "bad = sorted(m for m in sys.modules if m.split('.')[0] in ('google', 'googleapiclient', 'requests')); "
             "print(bad); sys.exit(1 if bad else 0)")
     result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True,

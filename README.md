@@ -74,11 +74,13 @@ python -m simulator.main --mode stream --duration-days 1 --checkpoint demo.json
 
 ## CDC setup (V2, in progress)
 
-The CDC work reads the write-ahead log of a separate database, `fintech_cdc`, so the data in `fintech` is never touched. The plan is in the project's Notion workspace (CDC Plan (V2)); this section covers only what is built. So far that is the foundation: the database, the replication slot and the settings. The consumer itself is not built yet.
+The CDC work reads the write-ahead log of a separate database, `fintech_cdc`, so the data in `fintech` is never touched. The plan is in the project's Notion workspace (CDC Plan (V2)); this section covers only what is built. So far that is the foundation (the database, the replication slot and the settings) and the decoder. The reader, the change-event envelope and the GCS sink are not built yet.
 
 - **Migration 003** sets `REPLICA IDENTITY FULL` on `loan_applications`, the only table the generator updates (the disbursement). An update then carries the old row as well as the new one. The other four tables are insert-only and keep the default.
 - **`max_slot_wal_keep_size=3GB`** in `docker-compose.yml` caps how much WAL an unread slot can pin. An unread slot grows the disk until it fills, and a slot that passes the cap is invalidated and cannot be recovered. About 750 bytes of WAL a row means 3 GB is roughly 35 to 40 minutes of consumer downtime during a backfill on a 2017 MacBook Air.
 - **Settings** are in `cdc/config.py` (`CdcSettings`, `CDC_` prefix, mirrored in `.env.example`). The consumer has its own connection fields, separate from the generator's `POSTGRES_` ones.
+- **The decoder** is `cdc/pgoutput.py`: it turns the binary `pgoutput` messages (begin, relation, insert, update, delete, truncate, commit) into typed messages, one at a time, with the column values mapped by `cdc/types.py` to the JSON values the change-event contract specifies (timestamps in UTC with six fractional digits, `NUMERIC` as a string, arrays as lists). Anything it cannot decode exactly, such as an unmapped column type, an unchanged TOAST marker or a truncated message, raises an error that stops the consumer without confirming the batch (`cdc/errors.py`). `require_supported()` additionally refuses deletes, truncates and updates that lack the full old row. `cdc/lsn.py` converts LSNs between Postgres text and integers.
+- **Decoder tests** run on raw messages captured from a real Postgres 16 slot (`tests/fixtures/pgoutput.json`, rewritten by `PYTHONPATH=. python scripts/capture_pgoutput_fixtures.py`, which needs a Postgres with `wal_level=logical` and uses a scratch database), so they need no database. `scripts/measure_decode_speed.py --slot cdc_r01` times the decoder on the messages waiting in a slot without consuming them.
 
 Set up the database and the first slot once. The slot must exist before any data is written, so every row arrives as a normal insert and no snapshot phase is needed.
 
@@ -142,11 +144,11 @@ Two limits on what the checks can say. At the default application rate a 15-mont
 
 ```
 simulator/          Core simulation modules
-cdc/                CDC consumer settings (the consumer itself is V2 work in progress)
+cdc/                CDC consumer, in progress: settings, the pgoutput decoder and type map, LSN helpers, errors
 config/             YAML calibration, archetypes, fees and causal rules
-scripts/            portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test); boosted_backfill.py: a backfill with more loans, for the lending checks
+scripts/            capture_pgoutput_fixtures.py and measure_decode_speed.py (CDC decoder fixtures and speed); portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test); boosted_backfill.py: a backfill with more loans, for the lending checks
 validate.sql        Reconciliation queries against the Validation Targets bands (run by simulator/validation.py)
-tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation, DB and CDC foundation tests
+tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation, DB, CDC foundation and CDC decoder tests
 migrations/         Postgres DDL (001 schema, 002 repayments foreign key, 003 replica identity)
 docker-compose.yml  Local Postgres stack
 .github/workflows/  CI: Postgres service container, migrations, full test suite

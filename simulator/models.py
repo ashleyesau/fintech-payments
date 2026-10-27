@@ -194,7 +194,7 @@ class MerchantSnapshot(BaseModel):
         "new", "growing", "stable", "stressed", "delinquent", "churned"
     ] = "new"
     risk_score: int = Field(default=10, ge=0, le=100)
-    # Stored as loan_count in Postgres (Event Schemas uses the legacy name mca_count).
+    # loan_count replaces the legacy name mca_count: the V1 product is a term loan.
     loan_count: int = Field(default=0, ge=0)
     has_active_loan: bool = False
     snapshot_at: datetime

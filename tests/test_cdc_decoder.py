@@ -18,6 +18,7 @@ from cdc.lsn import format_lsn, parse_lsn
 from cdc.pgoutput import (
     Begin, Commit, Decoder, Delete, Insert, Relation, Truncate, Update, require_supported,
 )
+from tests.helpers import NULL, UNCHANGED, insert_message, relation_message, text, tuple_data
 
 FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "pgoutput.json").read_text())["scenarios"]
 
@@ -60,31 +61,6 @@ def expected(name):
 # ---------------------------------------------------------------------------
 # Hand-built messages
 # ---------------------------------------------------------------------------
-
-NULL, UNCHANGED = b"n", b"u"
-
-
-def text(value: str) -> bytes:
-    data = value.encode()
-    return b"t" + struct.pack(">I", len(data)) + data
-
-
-def tuple_data(*values: bytes) -> bytes:
-    return struct.pack(">H", len(values)) + b"".join(values)
-
-
-def relation_message(oid: int, name: str, columns: list, schema="public", identity=b"d") -> bytes:
-    """columns: (name, type oid) pairs; the first is the key."""
-    body = struct.pack(">I", oid) + schema.encode() + b"\0" + name.encode() + b"\0" + identity
-    body += struct.pack(">H", len(columns))
-    for i, (column, type_oid) in enumerate(columns):
-        body += bytes([1 if i == 0 else 0]) + column.encode() + b"\0" + struct.pack(">Ii", type_oid, -1)
-    return b"R" + body
-
-
-def insert_message(oid: int, *values: bytes) -> bytes:
-    return b"I" + struct.pack(">I", oid) + b"N" + tuple_data(*values)
-
 
 THING = relation_message(7, "thing", [("id", types.INT4), ("label", types.TEXT)])
 

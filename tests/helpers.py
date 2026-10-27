@@ -1,6 +1,10 @@
 """Helpers shared by the runner, streaming and CDC tests."""
 from datetime import date, timedelta
 
+import json
+import struct
+from pathlib import Path
+
 import psycopg
 import pytest
 
@@ -109,3 +113,50 @@ def split_update(message: bytes):
         pos = end
     assert message[pos:pos + 1] == b"N", "an update message ends with the new tuple"
     return kind, old, message[pos + 1:tuple_end(message, pos + 1)]
+
+
+# ---------------------------------------------------------------------------
+# Captured and hand-built pgoutput messages
+# ---------------------------------------------------------------------------
+
+PGOUTPUT_FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "pgoutput.json").read_text())["scenarios"]
+
+
+def pgoutput_scenario(name: str) -> list[tuple[int, bytes]]:
+    """(slot lsn as an integer, message bytes) for each captured message of a scenario."""
+    from cdc.lsn import parse_lsn
+
+    return [(parse_lsn(m["lsn"]), bytes.fromhex(m["hex"])) for m in PGOUTPUT_FIXTURES[name]["messages"]]
+
+
+NULL, UNCHANGED = b"n", b"u"
+
+
+def text(value: str) -> bytes:
+    data = value.encode()
+    return b"t" + struct.pack(">I", len(data)) + data
+
+
+def tuple_data(*values: bytes) -> bytes:
+    return struct.pack(">H", len(values)) + b"".join(values)
+
+
+def relation_message(oid: int, name: str, columns: list, schema="public", identity=b"d") -> bytes:
+    """columns: (name, type oid) pairs; the first is the key."""
+    body = struct.pack(">I", oid) + schema.encode() + b"\0" + name.encode() + b"\0" + identity
+    body += struct.pack(">H", len(columns))
+    for i, (column, type_oid) in enumerate(columns):
+        body += bytes([1 if i == 0 else 0]) + column.encode() + b"\0" + struct.pack(">Ii", type_oid, -1)
+    return b"R" + body
+
+
+def insert_message(oid: int, *values: bytes) -> bytes:
+    return b"I" + struct.pack(">I", oid) + b"N" + tuple_data(*values)
+
+
+def begin_message(final_lsn: int, xid: int, micros: int = 0) -> bytes:
+    return b"B" + struct.pack(">QqI", final_lsn, micros, xid)
+
+
+def commit_message(commit_lsn: int, end_lsn: int, micros: int = 0) -> bytes:
+    return b"C" + struct.pack(">BQQq", 0, commit_lsn, end_lsn, micros)

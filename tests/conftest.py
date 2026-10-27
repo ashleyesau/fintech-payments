@@ -3,6 +3,7 @@
 Each test session gets its own database (fintech_test_<pid>), so nothing touches the
 fintech database. Tests that need it skip when Postgres is not reachable.
 """
+import contextlib
 import itertools
 import os
 from pathlib import Path
@@ -72,14 +73,13 @@ def cdc_dsn():
 _slot_numbers = itertools.count(1)
 
 
-@pytest.fixture
-def cdc_slot(cdc_dsn):
+@contextlib.contextmanager
+def new_cdc_slot(cdc_dsn):
     """A logical replication slot on `cdc_dsn`, created after the tables are emptied.
 
     Order matters: a slot publishes whatever happens after it exists, and TRUNCATE is
     published, so the reset comes first. Slot names are cluster-wide and the cluster allows
-    four slots, so each test gets a unique name and the slot is dropped afterwards.
-    Yields the slot name.
+    four slots, so each slot gets a unique name and is dropped afterwards. Yields the name.
     """
     from tests.helpers import reset
 
@@ -94,6 +94,13 @@ def cdc_slot(cdc_dsn):
                 "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = %s",
                 (name,),
             )
+
+
+@pytest.fixture
+def cdc_slot(cdc_dsn):
+    """A fresh slot for one test (see new_cdc_slot)."""
+    with new_cdc_slot(cdc_dsn) as name:
+        yield name
 
 
 @pytest.fixture

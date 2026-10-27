@@ -17,7 +17,7 @@ This is not real data, a model fitted to any company's books, or a benchmark. Pa
 |---|---|---|
 | Generator | Python + psycopg3 | |
 | OLTP store | Postgres 16 (Docker) | |
-| CDC | | Python WAL reader / Debezium |
+| CDC | | Python `pgoutput` consumer (`cdc/`), landing gzipped NDJSON in GCS |
 | Lakehouse | | Iceberg on GCS |
 | Warehouse | | BigQuery |
 | Transforms | | dbt |
@@ -72,6 +72,42 @@ python -m simulator.main --mode stream --duration-days 1 --checkpoint demo.json
 - The streaming writer commits every row and manages about 900 rows a second in earlier measurements. At 1,000 merchants a day is about 43,000 rows, which is roughly 1,800 rows a second at the default speed, so a stream of that size falls behind its schedule. It writes late, logs a warning with the worst lateness, and drops nothing. A stream of about 50 merchants stays on schedule: a day of 1,181 transactions took 24 seconds.
 - A stream stopped part-way through a day replays that day on the next run and skips the rows already written.
 
+## CDC setup (V2, in progress)
+
+The CDC work reads the write-ahead log of a separate database, `fintech_cdc`, so the data in `fintech` is never touched. The plan is in the project's Notion workspace (CDC Plan (V2)); this section covers only what is built. So far that is the foundation: the database, the replication slot and the settings. The consumer itself is not built yet.
+
+- **Migration 003** sets `REPLICA IDENTITY FULL` on `loan_applications`, the only table the generator updates (the disbursement). An update then carries the old row as well as the new one. The other four tables are insert-only and keep the default.
+- **`max_slot_wal_keep_size=3GB`** in `docker-compose.yml` caps how much WAL an unread slot can pin. An unread slot grows the disk until it fills, and a slot that passes the cap is invalidated and cannot be recovered. About 750 bytes of WAL a row means 3 GB is roughly 35 to 40 minutes of consumer downtime during a backfill on a 2017 MacBook Air.
+- **Settings** are in `cdc/config.py` (`CdcSettings`, `CDC_` prefix, mirrored in `.env.example`). The consumer has its own connection fields, separate from the generator's `POSTGRES_` ones.
+
+Set up the database and the first slot once. The slot must exist before any data is written, so every row arrives as a normal insert and no snapshot phase is needed.
+
+```bash
+docker compose up -d --force-recreate
+docker exec fintech_pg psql -U sim -d fintech -c "CREATE DATABASE fintech_cdc OWNER sim"
+for f in migrations/*.sql; do docker exec -i fintech_pg psql -U sim -d fintech_cdc -v ON_ERROR_STOP=1 < "$f"; done
+docker exec fintech_pg psql -U sim -d fintech_cdc -c "SELECT pg_create_logical_replication_slot('cdc_r01', 'pgoutput')"
+```
+
+`--force-recreate` replaces the container so it picks up the new flag. It keeps the `postgres_data` volume; never add `-v` or run `docker compose down -v`, which deletes the data.
+
+Point the generator at the CDC database with its own checkpoint (a fresh run refuses a non-empty `merchants` table or an existing checkpoint):
+
+```bash
+POSTGRES_DB=fintech_cdc python -m simulator.main --mode backfill --start-date 2025-01-01 --end-date 2025-02-15 --merchant-count 100 --checkpoint checkpoint_cdc.json
+```
+
+Look at what the slot holds, without consuming it, and how much WAL it pins:
+
+```bash
+docker exec fintech_pg psql -U sim -d fintech_cdc -c "SELECT chr(get_byte(data, 0)) AS message, count(*) FROM pg_logical_slot_peek_binary_changes('cdc_r01', NULL, 5000, 'proto_version', '1', 'publication_names', 'fintech_cdc') GROUP BY 1 ORDER BY 1"
+docker exec fintech_pg psql -U sim -d fintech_cdc -c "SELECT slot_name, wal_status, pg_size_pretty(safe_wal_size) AS safe, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)) AS lag FROM pg_replication_slots"
+```
+
+The first query returns message types: `B` and `C` (begin and commit), `R` (a table's column list), `I` (insert) and `U` (update). The 5,000 is a lower bound on changes, because a transaction is never cut. An unread slot pins WAL until something reads it, so do not leave one idle through a large backfill. To abandon a run, drop its slot with `SELECT pg_drop_replication_slot('cdc_r01')`. Slot names are cluster-wide and the cluster allows four.
+
+The CDC tests (`tests/test_cdc_foundation.py` and later files) need Postgres with `wal_level=logical`, which the compose file sets. They skip when Postgres is unreachable and fail when it is reachable but not logical, or when `CI` is set and it is unreachable.
+
 ## Validating a run
 
 `validate.sql` holds the reconciliation queries. Each one reads the five tables and returns a value next to the band from the Simulation Validation Targets, with the number of rows the value rests on.
@@ -106,11 +142,12 @@ Two limits on what the checks can say. At the default application rate a 15-mont
 
 ```
 simulator/          Core simulation modules
+cdc/                CDC consumer settings (the consumer itself is V2 work in progress)
 config/             YAML calibration, archetypes, fees and causal rules
 scripts/            portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test); boosted_backfill.py: a backfill with more loans, for the lending checks
 validate.sql        Reconciliation queries against the Validation Targets bands (run by simulator/validation.py)
-tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation and DB tests
-migrations/         Postgres DDL
+tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation, DB and CDC foundation tests
+migrations/         Postgres DDL (001 schema, 002 repayments foreign key, 003 replica identity)
 docker-compose.yml  Local Postgres stack
 .github/workflows/  CI: Postgres service container, migrations, full test suite
 ```

@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from cdc.columns import EXPECTED_COLUMNS, check_relation
+from cdc import types
+from cdc.columns import EXPECTED_COLUMNS, EXPECTED_TYPES, check_relation
 from cdc.envelope import Envelope, build_events, event_time, sast_date, to_line
 from cdc.errors import DecodeError, SchemaDriftError, UnsupportedChange
 from cdc.pgoutput import Relation
@@ -416,4 +417,86 @@ def test_a_drifted_table_is_caught_before_any_row_of_it_is_decoded_into_an_event
     assembler.feed(1, begin_message(10, 1))
     columns = [(c.name, c.type_oid) for c in real_relations()["merchants"].columns] + [("extra", 25)]
     with pytest.raises(SchemaDriftError):
+        assembler.feed(2, relation_message(77, "merchants", columns))
+
+
+# ---------------------------------------------------------------------------
+# The type drift check
+# ---------------------------------------------------------------------------
+
+def with_type(relation: Relation, column: str, type_oid: int) -> Relation:
+    changed = [dataclasses.replace(c, type_oid=type_oid) if c.name == column else c for c in relation.columns]
+    return dataclasses.replace(relation, columns=tuple(changed))
+
+
+def a_wrong_type_for(allowed: frozenset) -> int:
+    """A type the contract maps, that this column must not have."""
+    return next(oid for oid in (types.TEXT, types.BOOL, types.DATE, types.NUMERIC, types.TIMESTAMPTZ) if oid not in allowed)
+
+
+ALL_COLUMNS = [(table, column) for table, columns in EXPECTED_COLUMNS.items() for column in columns]
+
+
+def test_the_expected_types_cover_every_column_of_every_table():
+    assert {t: tuple(c) for t, c in EXPECTED_TYPES.items()} == EXPECTED_COLUMNS
+    assert len(ALL_COLUMNS) == 11 + 32 + 24 + 22 + 13
+    assert all(oids <= set(types.CONVERTERS) for columns in EXPECTED_TYPES.values() for oids in columns.values())
+
+
+@pytest.mark.parametrize("table, column", ALL_COLUMNS)
+def test_a_change_of_any_columns_type_is_detected(table, column):
+    relation = real_relations()[table]
+    wrong = a_wrong_type_for(EXPECTED_TYPES[table][column])
+    with pytest.raises(SchemaDriftError, match=rf"{column} is .*the model expects"):
+        check_relation(with_type(relation, column, wrong))
+
+
+def test_the_message_names_the_column_the_new_type_and_the_expected_one():
+    relation = with_type(real_relations()["merchants"], "risk_score", types.TEXT)
+    with pytest.raises(SchemaDriftError, match=r"merchants: column types differ.*risk_score is text, the model expects bigint or integer"):
+        check_relation(relation)
+    relation = with_type(real_relations()["loan_applications"], "decline_reasons", types.TEXT)
+    with pytest.raises(SchemaDriftError, match=r"decline_reasons is text, the model expects text\[\]"):
+        check_relation(relation)
+
+
+def test_every_changed_column_is_listed_not_only_the_first():
+    relation = with_type(with_type(real_relations()["merchants"], "is_metro", types.TEXT), "snapshot_at", types.DATE)
+    with pytest.raises(SchemaDriftError) as caught:
+        check_relation(relation)
+    assert "is_metro is text" in str(caught.value) and "snapshot_at is date" in str(caught.value)
+
+
+def test_integer_and_bigint_are_interchangeable_because_both_are_json_integers():
+    for table, columns in EXPECTED_TYPES.items():
+        relation = real_relations()[table]
+        for column, allowed in columns.items():
+            if allowed == frozenset({types.INT4, types.INT8}):
+                current = next(c.type_oid for c in relation.columns if c.name == column)
+                other = types.INT8 if current == types.INT4 else types.INT4
+                check_relation(with_type(relation, column, other))
+
+
+def test_an_integer_column_that_becomes_numeric_is_detected():
+    relation = real_relations()["merchant_transactions"]
+    with pytest.raises(SchemaDriftError, match="amount_minor is numeric"):
+        check_relation(with_type(relation, "amount_minor", types.NUMERIC))
+
+
+def test_a_relation_message_that_changes_a_type_in_the_middle_of_a_stream_stops_the_consumer():
+    columns = [(c.name, c.type_oid) for c in real_relations()["merchants"].columns]
+    columns[7] = (columns[7][0], types.TEXT)  # risk_score
+    assembler = TransactionAssembler()
+    assembler.feed(1, begin_message(10, 1))
+    with pytest.raises(SchemaDriftError, match="risk_score is text"):
+        assembler.feed(2, relation_message(77, "merchants", columns))
+
+
+def test_a_type_the_contract_does_not_map_still_stops_at_the_decoder():
+    from cdc.errors import UnknownTypeError
+    columns = [(c.name, c.type_oid) for c in real_relations()["merchants"].columns]
+    columns[7] = (columns[7][0], 701)  # float8
+    assembler = TransactionAssembler()
+    assembler.feed(1, begin_message(10, 1))
+    with pytest.raises(UnknownTypeError):
         assembler.feed(2, relation_message(77, "merchants", columns))

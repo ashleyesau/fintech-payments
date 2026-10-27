@@ -199,7 +199,7 @@ Duplicates (the same change landed twice, as at-least-once delivery allows) are 
 | 1 | Anything else, such as a lost database connection |
 
 - **The source must be quiet and the consumer drained**: stop `--follow`, and `python -m cdc.main --once` must say "nothing was waiting".
-- **The replay database** is created on the server the `CDC_` settings name, so the user needs `CREATEDB` (`sim` is a superuser in the compose file), and it is dropped afterwards. The replay writes about as much WAL as the source did (38.8 MB for a 34.4 MB source in a 3-month run), in another database, and the idle slot holds it until the consumer next reads: after the 100-merchant year the lag report showed 732.7 MB held, with 2,355 MB of headroom left under the 3 GB cap.
+- **The replay database** is created on the server the `CDC_` settings name, so the user needs `CREATEDB` (`sim` is a superuser in the compose file), and it is dropped afterwards. The replay writes about as much WAL as the source did (38.8 MB for a 34.4 MB source in a 3-month run), in another database, and the idle slot holds it until Postgres moves the slot's restart position on (which can take a while after a drain): after the 100-merchant year the lag report showed 732.7 MB held, with 2,355 MB of headroom left under the 3 GB cap.
 - **Cost against the bucket.** It lists the prefix once (a Class A operation) and reads each object once (a Class B operation, a free allowance of 50,000 a month as summarised from Google's pricing page; check it).
 
 ## A run from start to finish

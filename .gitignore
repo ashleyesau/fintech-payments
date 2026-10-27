@@ -13,4 +13,5 @@ venv/
 htmlcov/
 .DS_Store
 checkpoint.json
+checkpoint_*.json
 checkpoints/

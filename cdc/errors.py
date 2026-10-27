@@ -23,3 +23,9 @@ class UnknownTypeError(DecodeError):
 class UnsupportedChange(CdcError):
     """A well-formed change the contract does not allow: a delete, a truncate, an update on
     a table other than loan_applications, or an update without the full old row."""
+
+
+class SchemaDriftError(CdcError):
+    """A table's columns differ from the column list of its Pydantic model (decision D6), or the
+    table is not one of the five. The fix is a new migration, an updated model and a deliberate
+    decision, never an envelope change (contract section 10)."""

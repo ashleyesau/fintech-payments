@@ -296,6 +296,39 @@ def test_missing_credentials_are_a_sink_error_that_says_how_to_sign_in():
     assert "gcloud auth application-default login" in str(raised.value)
 
 
+def recording_client(monkeypatch):
+    """Replace the real storage.Client with one that records how it was called."""
+    import cdc.gcs
+    calls = []
+
+    def make(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeStorageClient()
+
+    monkeypatch.setattr(cdc.gcs.storage, "Client", make)
+    return calls
+
+
+def test_connect_without_a_project_makes_the_client_exactly_as_before(monkeypatch):
+    # storage.Client(project=None) is "no project" to Google, not "work it out": the consumer must not pass it.
+    calls = recording_client(monkeypatch)
+    GcsSink.connect("cdc_landing")
+    assert calls == [((), {})]
+
+
+def test_connect_with_a_project_makes_the_client_for_that_project(monkeypatch):
+    calls = recording_client(monkeypatch)
+    GcsSink.connect("cdc_landing", project="payments-512910")
+    assert calls == [((), {"project": "payments-512910"})]
+
+
+def test_an_injected_client_factory_is_used_as_it_is_whatever_the_project(monkeypatch):
+    calls = recording_client(monkeypatch)
+    made = []
+    GcsSink.connect("cdc_landing", client_factory=lambda: made.append(1) or FakeStorageClient(), project="p")
+    assert made == [1] and calls == []
+
+
 def test_nothing_but_the_gcs_module_pulls_in_googles_libraries():
     code = ("import sys, cdc.consumer, cdc.landing, cdc.reader, cdc.dedup, cdc.envelope, cdc.pgoutput, "
             "cdc.transactions, cdc.columns, cdc.sink, cdc.lag, cdc.reconcile; "

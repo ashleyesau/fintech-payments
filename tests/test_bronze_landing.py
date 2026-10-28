@@ -264,3 +264,62 @@ def test_a_new_slot_name_moves_the_reader_to_its_prefix(monkeypatch, tmp_path):
     reader = open_landing(BronzeSettings(_env_file=None), environ={CREDENTIALS_VARIABLE: str(creds)},
                           client_factory=lambda: client)
     assert client.requested == ["elsewhere"] and reader.prefix == "cdc/cdc_r02/"
+
+
+# ---------------------------------------------------------------------------
+# the project (found by the first real-bucket run: an impersonated service account's file has none)
+# ---------------------------------------------------------------------------
+
+IMPERSONATED_FILE = (
+    '{"type": "impersonated_service_account", "service_account_impersonation_url": '
+    '"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/'
+    'bronze-writer@payments-512910.iam.gserviceaccount.com:generateAccessToken", '
+    '"source_credentials": {"type": "authorized_user", "client_id": "x", "client_secret": "y", '
+    '"refresh_token": "z"}, "delegates": []}')
+
+
+def recording_client(monkeypatch):
+    import cdc.gcs
+    calls = []
+
+    def make(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeStorageClient()
+
+    monkeypatch.setattr(cdc.gcs.storage, "Client", make)
+    return calls
+
+
+def test_the_default_client_is_made_for_the_bronze_project(monkeypatch, tmp_path):
+    clear(monkeypatch)
+    monkeypatch.delenv("BRONZE_PROJECT", raising=False)
+    calls = recording_client(monkeypatch)
+    creds = tmp_path / "creds.json"
+    creds.write_text("{}")
+    open_landing(BronzeSettings(_env_file=None), environ={CREDENTIALS_VARIABLE: str(creds)})
+    assert calls == [((), {"project": "payments-512910"})]
+
+
+def test_the_project_is_a_setting(monkeypatch, tmp_path):
+    clear(monkeypatch)
+    monkeypatch.setenv("BRONZE_PROJECT", "another-project")
+    calls = recording_client(monkeypatch)
+    creds = tmp_path / "creds.json"
+    creds.write_text("{}")
+    open_landing(BronzeSettings(_env_file=None), environ={CREDENTIALS_VARIABLE: str(creds)})
+    assert calls == [((), {"project": "another-project"})]
+
+
+def test_the_real_client_can_be_made_from_an_impersonated_credentials_file_with_no_project_anywhere(monkeypatch, tmp_path):
+    # The bug as it happened on the Air: no project in the file and none in the environment. This builds
+    # the real storage.Client (no network: nothing is sent until the first list or read).
+    clear(monkeypatch)
+    for variable in ("GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "BRONZE_PROJECT"):
+        monkeypatch.delenv(variable, raising=False)
+    creds = tmp_path / "application_default_credentials.json"
+    creds.write_text(IMPERSONATED_FILE)
+    monkeypatch.setenv(CREDENTIALS_VARIABLE, str(creds))
+    reader = open_landing(BronzeSettings(_env_file=None))
+    assert reader.prefix == PREFIX
+    assert reader._source._bucket.client.project == "payments-512910"
+

@@ -29,6 +29,10 @@ class BronzeSettings(BaseSettings):
     # The Bronze bucket (decided G-D7). Table locations are gs://<bucket>/bronze/<table>/.
     bucket: str = "fintech_bronze"
 
+    # The Google project the Bronze job's client is made for. The bronze-writer credentials file (an
+    # impersonated service account) carries no project, and without one the client cannot be made.
+    project: str = "payments-512910"
+
     # The local SQLite catalog (decided G-D3). It is a cache of the bucket's metadata files, so it
     # lives outside the repo; the default is under the user's config directory.
     catalog_path: str = "~/.config/fintech_bronze/catalog.db"

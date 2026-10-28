@@ -66,11 +66,18 @@ class GcsSink:
 
     @classmethod
     def connect(cls, bucket_name: str, client_factory: Optional[Callable[[], "storage.Client"]] = None,
-                sleep: Callable[[float], None] = time.sleep) -> "GcsSink":
+                sleep: Callable[[float], None] = time.sleep, project: Optional[str] = None) -> "GcsSink":
         """A sink for `bucket_name`, signed in with the application-default credentials (never a key
-        file; nothing is read from the repo)."""
+        file; nothing is read from the repo).
+
+        `project` names the Google project the client is made for. The consumer leaves it out: its
+        application-default login carries one (set-quota-project). An impersonated service account's
+        credentials file does not, and the client then cannot be made, so the Bronze job passes one.
+        Left out, the client is made exactly as before: storage.Client(project=None) would not do,
+        because Google reads an explicit None as "no project" and not as "work it out"."""
         try:
-            client = (client_factory or storage.Client)()
+            client = (client_factory or (lambda: storage.Client() if project is None
+                                         else storage.Client(project=project)))()
         except auth_errors.DefaultCredentialsError as error:
             raise SinkError("No Google credentials found. Sign in with: gcloud auth application-default login "
                             "(then: gcloud auth application-default set-quota-project <project>)") from error

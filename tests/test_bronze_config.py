@@ -41,6 +41,7 @@ def test_the_defaults_are_the_decided_ones(monkeypatch):
     clear_settings_env(monkeypatch)
     s = BronzeSettings(_env_file=None)
     assert s.bucket == "fintech_bronze"
+    assert s.project == "payments-512910"
     assert s.catalog_file.is_absolute()
     assert ROOT not in s.catalog_file.parents
 

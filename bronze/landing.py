@@ -91,5 +91,5 @@ def open_landing(settings: Optional[BronzeSettings] = None, environ: Optional[Ma
     no real-bucket access starts without the guard. Costs no operation until the first list or read."""
     settings = settings or BronzeSettings()
     require_credentials(environ)
-    sink = GcsSink.connect(settings.landing_bucket, client_factory)
+    sink = GcsSink.connect(settings.landing_bucket, client_factory, project=settings.project)
     return LandingReader(sink, settings.landing_prefix)

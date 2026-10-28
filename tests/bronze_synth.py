@@ -18,6 +18,7 @@ made invalid by editing an event and passing the events to put().
 """
 from __future__ import annotations
 
+import datetime
 import gzip
 import json
 from dataclasses import dataclass
@@ -122,3 +123,72 @@ class Landing:
 
     def reader(self) -> LandingReader:
         return LandingReader(self.sink, self.prefix)
+
+
+# Sentinels that turn one real event into a line template: each stands for a value that changes from
+# event to event. They are distinct, far from any other number in an event, and not substrings of each other.
+_S = {"lsn": 4_444_444_440, "pos": 5_555_555_551, "size": 6_666_666_663, "xid": 7_777_777_775, "serial": 8_888_888_887}
+_S_CHANGE = _S["lsn"] - 0x40 + _S["pos"]
+_S_DATE = "2099-12-31"
+_TEMPLATES: dict = {}
+
+
+def line_template(table: str, op: str) -> str:
+    """The JSON line of an event with %(lsn)d, %(change)d, %(pos)d, %(size)d, %(xid)d, %(serial)d and
+    %(date)s where those values go, so a line is one string format instead of a dict and a dump."""
+    if (table, op) not in _TEMPLATES:
+        e = event(table, op, _S["lsn"], _S["pos"], _S["size"], date=_S_DATE, xid=_S["xid"], serial=_S["serial"])
+        text = json.dumps(e, separators=(",", ":"), ensure_ascii=True)
+        for token, number in (("%(change)d", _S_CHANGE), ("%(lsn)d", _S["lsn"]), ("%(pos)d", _S["pos"]),
+                              ("%(size)d", _S["size"]), ("%(xid)d", _S["xid"]), ("%(serial)d", _S["serial"])):
+            text = text.replace(str(number), token)
+        _TEMPLATES[(table, op)] = text.replace(_S_DATE, "%(date)s")
+    return _TEMPLATES[(table, op)]
+
+
+class LazyLanding:
+    """A landing generated on demand, for sets too big to hold. It answers list_keys and read like a
+    sink and keeps nothing: read(key) builds that object's bytes and returns them.
+
+    Transaction i has `tx_size` changes: tx_size - merchants of them merchant_transactions inserts, then
+    `merchants` merchants inserts, all on day i // 2 of 2025. Each transaction makes two objects, so a
+    set of 600 transactions of 2,000 changes is 1.2M events in 1,200 objects, about the real run's
+    shape (908 objects, 1.02M events) and larger. Its lines equal, byte for byte, the lines Landing makes
+    from the same transactions (tests/test_bronze_synth.py); the gzip is level 1 here, for speed.
+    """
+
+    def __init__(self, transactions: int, tx_size: int = 2000, merchants: int = 50, prefix: str = PREFIX) -> None:
+        self.transactions, self.tx_size, self.merchants, self.prefix = transactions, tx_size, merchants, prefix
+        self.events = transactions * tx_size
+        self._names: dict[str, tuple[int, str]] = {}
+        for i in range(transactions):
+            lsn, date = self.commit_lsn(i), self.date(i)
+            for table in ("merchant_transactions", "merchants"):
+                self._names[object_key(prefix, table, date, lsn, lsn)] = (i, table)
+
+    @staticmethod
+    def commit_lsn(i: int) -> int:
+        return FIRST_LSN + i * LSN_STEP
+
+    @staticmethod
+    def date(i: int) -> str:
+        return (datetime.date(2025, 1, 1) + datetime.timedelta(days=i // 2)).isoformat()
+
+    def changes(self) -> list:
+        """The (table, op) of each position of every transaction."""
+        return ([("merchant_transactions", "c")] * (self.tx_size - self.merchants) + [("merchants", "c")] * self.merchants)
+
+    def list_keys(self, prefix: str) -> list[str]:
+        return sorted(key for key in self._names if key.startswith(prefix))
+
+    def read(self, key: str) -> bytes:
+        i, table = self._names[key]
+        template = line_template(table, "c")
+        lsn, date, xid = self.commit_lsn(i), self.date(i), 700 + i
+        first = 0 if table == "merchant_transactions" else self.tx_size - self.merchants
+        last = self.tx_size - self.merchants if table == "merchant_transactions" else self.tx_size
+        lines = "\n".join(
+            template % {"lsn": lsn, "change": lsn - 0x40 + p, "pos": p, "size": self.tx_size, "xid": xid,
+                        "serial": i * self.tx_size + p, "date": date}
+            for p in range(first, last)) + "\n"
+        return gzip.compress(lines.encode("ascii"), compresslevel=1, mtime=0)

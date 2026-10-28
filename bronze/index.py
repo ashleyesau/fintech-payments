@@ -31,7 +31,7 @@ from array import array
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Container, Iterator
+from typing import Callable, Container, Iterator, Optional
 
 from bronze.errors import ConfigError, DisagreementError, IncompleteTransactions
 from bronze.events import ObjectSummary, summarise_object
@@ -170,9 +170,11 @@ class Index:
             incomplete=len(self.incomplete()), by_table={t: dict(c) for t, c in self._by_table.items()})
 
 
-def build_index(reader: LandingReader, workers: int = 8) -> Index:
+def build_index(reader: LandingReader, workers: int = 8,
+                progress: Optional[Callable[[int, int], None]] = None) -> Index:
     """List the landing prefix once and read every object once. Raises on the first object that fails;
-    objects still being read are left to finish and their results dropped."""
+    objects still being read are left to finish and their results dropped. `progress(done, total)` is
+    called after each object is folded in."""
     if workers < 1:
         raise ConfigError(f"workers must be at least 1, not {workers}")
     objects = reader.list_keys()
@@ -198,6 +200,8 @@ def build_index(reader: LandingReader, workers: int = 8) -> Index:
                     break
                 index.add(number, pending.popleft().result())
                 number += 1
+                if progress is not None:
+                    progress(number, len(objects))
         except BaseException:
             for future in pending:
                 future.cancel()

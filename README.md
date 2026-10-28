@@ -18,7 +18,7 @@ This is not real data, a model fitted to any company's books, or a benchmark. Pa
 | Generator | Python + psycopg3 | |
 | OLTP store | Postgres 16 (Docker) | |
 | CDC | | Python `pgoutput` consumer (`cdc/`), landing gzipped NDJSON in GCS |
-| Lakehouse | | Iceberg on GCS |
+| Lakehouse | | Iceberg on GCS (read side built, writing next) |
 | Warehouse | | BigQuery |
 | Transforms | | dbt |
 
@@ -241,6 +241,35 @@ Measured on a 2017 MacBook Air against the real bucket (slot `cdc_r01`, seed 42,
 
 The consumer was not restarted during this run; restarts, kills and a lost slot are covered by the tests (`tests/test_cdc_killpoints.py`, `tests/test_cdc_lost_slot.py`).
 
+## Reading the landed objects (Bronze, the read side)
+
+The next layer is an Apache Iceberg Bronze layer on GCS over the objects the consumer lands (the GCS phase). The read side is built: a package, `bronze/`, that lists the landed objects, reads each one once, checks every event against the change-event contract and keeps a small index of what is there. It writes nothing, anywhere. `python -m bronze.check` runs it and prints the result.
+
+- **What it checks.** Every object name against the contract (`cdc/<slot>/<table>/event_date=YYYY-MM-DD/lsn_<first>_<last>.ndjson.gz`) and every event: the fields, `envelope_version` 1, one of the five tables, `after` (and `before`) columns equal to the models in name, number and order, no before image on an insert, updates only on `loan_applications`, a position inside its transaction, and the event agreeing with its object's name. Copies of one change (`source.commit_lsn`, `transaction.position`) must agree on everything except `ts_ms` and `ingested_at`, and every transaction must have all of its positions. The index holds about 12 bytes an event, not the events, so a run of 1M events needs a few hundred MB, not 7 GB.
+- **Credentials.** The Bronze job runs as the `bronze-writer` service account: it may read `cdc_landing` and read and write `fintech_bronze`, and it has no write permission on the landing bucket. It is used through an impersonated credentials file in its own gcloud configuration directory (never in the repo, never a key file), selected for one command with `GOOGLE_APPLICATION_CREDENTIALS`. Anything run without that variable uses your own login, which is not restricted, so the command refuses to start without it. The file carries no Google project, so the project comes from `BRONZE_PROJECT`.
+- **Settings.** `BRONZE_PROJECT` (`payments-512910`), `BRONZE_BUCKET` (`fintech_bronze`), `BRONZE_CATALOG_PATH` (a local SQLite file outside the repo, used by the write side), `BRONZE_READ_WORKERS` (8 objects read at once). The landing bucket and the slot, and so the prefix being read, are the consumer's `CDC_GCS_BUCKET` and `CDC_SLOT_NAME`: there is one place that says where the landed objects are.
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/bronze_credentials.json python -m bronze.check
+```
+
+It lists the prefix once and reads every object once (one listing, which is a Class A operation, and one read per object, which is a Class B operation: about 1 and 908 for a 100-merchant year), printing progress to stderr. Exit codes: 0 every object is valid and every transaction is complete; 1 anything else that is not a contract stop (missing credentials, a usage error, a bug); 2 a contract stop (a bad name or event, copies that disagree, an incomplete transaction: the counts are still printed); 3 the bucket failed; 130 Ctrl-C.
+
+The 100-merchant run in `gs://cdc_landing/cdc/cdc_r01/`, read on the MacBook Air (2026-10-28):
+
+| | |
+|---|---|
+| Objects | 908 |
+| Events | 1,017,902 (1,017,902 unique, 0 duplicates) |
+| Transactions | 694 (0 incomplete) |
+| Inserts and updates | 1,017,884 and 18 (the 18 updates are the loan disbursements) |
+| Per table | `merchants` 20,078; `merchant_transactions` 997,650; `risk_events` 43; `loan_applications` 37 inserts and 18 updates; `loan_repayments` 76 |
+| Time and memory | 2 min 43 s; 352 MB peak for the whole process, of 8 GiB |
+
+These are the figures the reconciler printed for the same objects: a second, independent reader agrees with the first.
+
+The Bronze tests are `tests/test_bronze_*.py`. They run on synthetic landings (`tests/bronze_synth.py`), including a generated one of 1.2M events in 1,200 objects, larger than the real run, that the memory test reads in its own process under a 400 MB ceiling (slow: about 100 to 160 s). `tests/test_bronze_dependencies.py` checks that the exact PyIceberg, PyIceberg-core and PyArrow pins in `requirements.txt` are installed and work (they are the set verified on the Air, Python 3.13 and macOS 12) and never skips.
+
 ## Validating a run
 
 `validate.sql` holds the reconciliation queries. Each one reads the five tables and returns a value next to the band from the Simulation Validation Targets, with the number of rows the value rests on.
@@ -276,10 +305,11 @@ Two limits on what the checks can say. At the default application rate a 15-mont
 ```
 simulator/          Core simulation modules
 cdc/                The CDC consumer: settings, the pgoutput decoder and type map, transactions, the change-event envelope, the column drift check, LSN helpers, errors; the slot reader, object naming and the replay compare (landing.py), the sink interface and its GCS writer, the loop (consumer.py), the dedup helper and the command line (main.py); the lag report (lag.py) and the reconciler (reconcile.py), each its own command
+bronze/             The Bronze read side: settings and the credentials guard, the read-only landing reader, the per-object checks and the content hash (events.py), the streaming index (index.py) and the command (check.py); read only, nothing is written yet
 config/             YAML calibration, archetypes, fees and causal rules
 scripts/            capture_pgoutput_fixtures.py, measure_decode_speed.py and measure_upload_latency.py (CDC decoder fixtures, decode speed, upload latency to the bucket); portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test); boosted_backfill.py: a backfill with more loans, for the lending checks
 validate.sql        Reconciliation queries against the Validation Targets bands (run by simulator/validation.py)
-tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation, DB, CDC foundation, decoder, envelope, landing, reader, consumer, GCS writer, command line, round trip, kill point, failure, lost slot, lag report and reconciler tests (tests/fakes.py holds the in-memory sink, the scripted reader and the fake storage client; tests/pgcluster.py starts the throwaway small-cap cluster)
+tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation, DB, CDC foundation, decoder, envelope, landing, reader, consumer, GCS writer, command line, round trip, kill point, failure, lost slot, lag report and reconciler tests, and the Bronze tests (landing reader, event checks, index, command, memory ceiling, dependencies; tests/bronze_synth.py builds the synthetic landings) (tests/fakes.py holds the in-memory sink, the scripted reader and the fake storage client; tests/pgcluster.py starts the throwaway small-cap cluster)
 migrations/         Postgres DDL (001 schema, 002 repayments foreign key, 003 replica identity)
 docker-compose.yml  Local Postgres stack
 .github/workflows/  CI: Postgres 16 started with logical decoding, migrations 001 to 003, full test suite (the lost-slot tests use the runner's own Postgres binaries and print their version)

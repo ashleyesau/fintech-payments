@@ -12,3 +12,9 @@ class BronzeError(Exception):
 
 class ConfigError(BronzeError):
     """A setting or credential the command needs is missing or unusable (exit code 1)."""
+
+
+class LandingError(BronzeError):
+    """The landing prefix holds something the CDC contract does not allow, or a request would leave the
+    prefix: an object name that does not follow contract section 2, a listed key outside the run's
+    prefix, a read of a key outside it (exit code 2)."""

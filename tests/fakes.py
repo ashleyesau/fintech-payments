@@ -18,6 +18,7 @@ class MemorySink:
         self.objects: dict[str, bytes] = {}
         self.attempts = 0   # put_if_absent calls, counting the ones that failed
         self.reads = 0
+        self.listings = 0
         self.fail_put: Optional[Callable[[int, str], bool]] = None   # (attempt number from 1, key)
         self.fail_read: Optional[Callable[[str], bool]] = None
         self._lock = threading.Lock()
@@ -31,6 +32,11 @@ class MemorySink:
                 return False
             self.objects[key] = data
             return True
+
+    def list_keys(self, prefix: str) -> list[str]:
+        with self._lock:
+            self.listings += 1
+            return sorted(key for key in self.objects if key.startswith(prefix))
 
     def read(self, key: str) -> bytes:
         with self._lock:

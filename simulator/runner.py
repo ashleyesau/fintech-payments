@@ -94,6 +94,8 @@ class RunSummary:
     days: int
     merchants_onboarded: int
     merchants_ever_transacted: int
+    churned_never_activated: int   # Churned without ever transacting: a funnel drop-off, not churn
+    churned_after_trading: int     # Churned having traded: the figure comparable to real attrition
     states: Counter
     rows_written: Counter
     elapsed_seconds: float
@@ -214,12 +216,31 @@ def summarise(
         days=(next_day - first_day).days,
         merchants_onboarded=len(merchants),
         merchants_ever_transacted=sum(1 for m in merchants if m.first_transaction_at is not None),
+        churned_never_activated=sum(
+            1 for m in merchants if m.merchant_state == "churned" and m.never_activates
+        ),
+        churned_after_trading=sum(
+            1 for m in merchants if m.merchant_state == "churned" and not m.never_activates
+        ),
         states=Counter(m.merchant_state for m in merchants),
         rows_written=written,
         elapsed_seconds=time.monotonic() - started,
         resumed=resumed,
         checkpoint_path=checkpoint_path,
     )
+
+
+def _churn_lines(summary: RunSummary) -> list[str]:
+    """Churn split in two. Never-activators are churned by rule 30 days after onboarding;
+    the Churned count over everything ever onboarded is cumulative, not a churn rate."""
+    never, after = summary.churned_never_activated, summary.churned_after_trading
+    onboarded, traded = summary.merchants_onboarded, summary.merchants_ever_transacted
+    share = lambda n, d: f"{100 * n / d:.1f}%" if d else "n/a"
+    return [
+        f"Merchants churned: {never + after} ({share(never + after, onboarded)} of onboarded, cumulative)",
+        f"  never activated: {never} ({share(never, onboarded)} of onboarded; signed up, never transacted)",
+        f"  churned after trading: {after} ({share(after, traded)} of the {traded} that transacted)",
+    ]
 
 
 def format_summary(summary: RunSummary) -> str:
@@ -230,6 +251,7 @@ def format_summary(summary: RunSummary) -> str:
         f"Merchants onboarded: {summary.merchants_onboarded}",
         f"Merchants that ever transacted: {summary.merchants_ever_transacted}",
         "Merchant states: " + ", ".join(f"{s} {n}" for s, n in sorted(summary.states.items())),
+        *_churn_lines(summary),
         "Rows written this run:",
     ]
     lines += [f"  {name}: {count}" for name, count in sorted(summary.rows_written.items())]

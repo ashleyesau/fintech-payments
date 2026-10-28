@@ -101,7 +101,8 @@ def stream_calls(monkeypatch):
         calls.update(run=run, duration=duration_days, speed=speed_factor)
         return RunSummary(
             first_day=date(2025, 3, 2), last_day=date(2025, 3, 2), days=1, merchants_onboarded=1,
-            merchants_ever_transacted=1, states=Counter(new=1), rows_written=Counter(), elapsed_seconds=1.0,
+            merchants_ever_transacted=1, churned_never_activated=0,
+            churned_after_trading=0, states=Counter(new=1), rows_written=Counter(), elapsed_seconds=1.0,
             resumed=True, checkpoint_path="x",
         )
 

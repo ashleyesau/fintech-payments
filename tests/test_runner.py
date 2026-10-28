@@ -4,7 +4,8 @@ advance_day() tests need no database. The backfill tests write to the throwaway 
 from conftest.py and skip when Postgres is not reachable.
 """
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -18,6 +19,7 @@ from simulator.runner import (
     advance_day,
     format_summary,
     run_backfill,
+    summarise,
 )
 from simulator.state import Merchant, load_checkpoint
 from tests.helpers import LONG_RUN, START, reset, settings_for, table_contents
@@ -227,6 +229,33 @@ def test_the_summary_reports_both_counts(conn, tmp_path):
     text = format_summary(summary)
     assert "Merchants onboarded:" in text and "Merchants that ever transacted:" in text
     assert "merchant_transactions:" in text and "Checkpoint:" in text
+
+
+def _fake_merchant(state, never_activates, traded):
+    return SimpleNamespace(
+        merchant_state=state, never_activates=never_activates,
+        first_transaction_at=datetime(2025, 2, 1) if traded else None,
+    )
+
+
+def test_the_summary_splits_churn_into_never_activated_and_after_trading():
+    merchants = (
+        [_fake_merchant("churned", True, False)] * 3
+        + [_fake_merchant("churned", False, True)] * 2
+        + [_fake_merchant("stable", False, True)] * 5
+        + [_fake_merchant("new", True, False)]
+    )
+    summary = summarise(merchants, START, START + timedelta(days=10), Counter(), 0.0, False, "x")
+    assert (summary.churned_never_activated, summary.churned_after_trading) == (3, 2)
+    text = format_summary(summary)
+    assert "Merchants churned: 5 (45.5% of onboarded, cumulative)" in text
+    assert "never activated: 3 (27.3% of onboarded" in text
+    assert "churned after trading: 2 (28.6% of the 7 that transacted)" in text
+
+
+def test_the_churn_lines_survive_an_empty_run():
+    summary = summarise([], START, START + timedelta(days=1), Counter(), 0.0, False, "x")
+    assert "n/a" in format_summary(summary)
 
 
 @pytest.mark.slow

@@ -44,6 +44,21 @@ def reset(conn) -> None:
 # CDC tests
 # ---------------------------------------------------------------------------
 
+def require_postgres(connect, ci: bool):
+    """Return an admin connection, or skip or fail a test that needs a database built from the migrations.
+
+    Skip when Postgres is unreachable, as the other DB tests do; fail when it is unreachable under CI,
+    because a skip there would keep CI green without running the test. Unlike require_cdc_postgres it
+    does not ask for logical replication.
+    """
+    try:
+        return connect()
+    except psycopg.OperationalError as exc:
+        if ci:
+            pytest.fail(f"CI is set and Postgres is not reachable, so a test that needs the migrations cannot run: {exc}")
+        pytest.skip(f"Postgres not reachable: {exc}")
+
+
 def require_cdc_postgres(connect, ci: bool):
     """Return an admin connection, or skip or fail the CDC tests (decision D9).
 

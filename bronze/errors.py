@@ -18,6 +18,13 @@ class ContractError(BronzeError):
     """What was landed breaks the CDC contract, so the run stops with nothing committed (exit code 2)."""
 
 
+class SchemaError(BronzeError):
+    """The Bronze schema cannot be generated from the model column lists: an integer column with no entry in
+    the width table, a type with no Bronze mapping, a column name that clashes with another (case-insensitive)
+    or an unknown table. Raised when a schema is built, so a change to a migration or a model fails at the
+    point of use."""
+
+
 class LandingError(ContractError):
     """The landing prefix holds something the contract does not allow, or a request would leave the
     prefix: an object name that does not follow contract section 2, a listed key outside the run's

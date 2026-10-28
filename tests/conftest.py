@@ -45,6 +45,29 @@ def dsn():
 
 
 @pytest.fixture(scope="session")
+def blank_dsn():
+    """A throwaway database built from the migrations, for tests that read its catalogue (the Bronze width
+    guard). Skips when Postgres is unreachable and fails under CI, so CI cannot pass without running them."""
+    from tests.helpers import require_postgres
+
+    name = f"fintech_blank_test_{os.getpid()}"
+    admin = require_postgres(
+        lambda: psycopg.connect(_dsn(settings.postgres_db), autocommit=True),
+        ci=os.environ.get("CI") == "true",
+    )
+    admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    admin.execute(f'CREATE DATABASE "{name}"')
+    try:
+        with psycopg.connect(_dsn(name), autocommit=True) as setup:
+            for path in MIGRATIONS:
+                setup.execute(path.read_text())
+        yield _dsn(name)
+    finally:
+        admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        admin.close()
+
+
+@pytest.fixture(scope="session")
 def cdc_dsn():
     """A throwaway database for the CDC tests, built from the migrations like `dsn`.
 

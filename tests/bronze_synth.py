@@ -25,8 +25,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from bronze.landing import LandingReader
-from cdc.columns import EXPECTED_COLUMNS
 from cdc.landing import object_key
+from tests.bronze_contract import TABLES as CONTRACT_COLUMNS
 from tests.fakes import MemorySink
 
 PREFIX = "cdc/cdc_r01/"
@@ -39,12 +39,38 @@ def clock_fields(clock: int) -> dict:
     return {"ts_ms": 1_000_000 + clock, "ingested_at": f"2026-10-28T10:00:{clock // 1000 % 60:02d}.{clock % 1000:03d}000Z"}
 
 
+def column_value(column: str, kind: str, serial: int, date: str, old: bool = False):
+    """A value of the right shape for a column of the given contract type (tests/bronze_contract.py). Text
+    carries the serial so rows differ; numbers are constants, small enough for an int column, which also
+    keeps them clear of the sentinels that line_template substitutes."""
+    suffix = ":old" if old else ""
+    if kind == "string":
+        return "0.0700" if column == "total_cost_percent" else f"{column}:{serial}{suffix}"
+    if kind == "int":
+        return 7
+    if kind == "long":
+        return 123456789
+    if kind == "boolean":
+        return not old
+    if kind == "date":
+        return date
+    if kind == "timestamptz":
+        return f"{date}T08:00:00.000000Z"
+    if kind == "list of string":
+        return [f"{column}:{serial}{suffix}"]
+    raise ValueError(f"no value for the contract type {kind!r}")
+
+
+def row_image(table: str, serial: int, date: str, old: bool = False) -> dict:
+    """A full row image in the table's column order, every value shaped as the CDC contract says."""
+    return {column: column_value(column, kind, serial, date, old) for column, kind in CONTRACT_COLUMNS[table]}
+
+
 def event(table: str, op: str, commit_lsn: int, position: int, size: int, *, date: str = DAY, xid: int = 700,
           serial: int = 0, clock: int = 0, flags: Optional[list] = None) -> dict:
     """One event as the consumer would write it. `serial` makes the row's values differ."""
-    columns = EXPECTED_COLUMNS[table]
-    after = {c: f"{c}:{serial}" for c in columns}
-    before = {c: f"{c}:{serial}:old" for c in columns} if op == "u" else None
+    after = row_image(table, serial, date)
+    before = row_image(table, serial, date, old=True) if op == "u" else None
     return {
         "envelope_version": 1, "op": op,
         "source": {"db": "fintech_cdc", "schema": "public", "table": table, "commit_lsn": commit_lsn,

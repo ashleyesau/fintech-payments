@@ -46,3 +46,23 @@ class DisagreementError(ContractError):
 class IncompleteTransactions(ContractError):
     """Some transaction is missing changes (positions 0 to size - 1, contract section 7): the consumer is
     mid-flush, or an object is missing. Writing now would leave Bronze with half a transaction."""
+
+
+class MappingError(ContractError):
+    """A value in an event (or a Bronze row) has the wrong shape for its column, a field is missing or
+    unexpected, or two fields disagree (bronze/mapping.py). The message names the table, the column and
+    what was expected and found, for example `merchant_transactions.created_at: expected a timestamp
+    'YYYY-MM-DDTHH:MM:SS.ffffffZ', got "2025-03-01 10:00:00"`. `where` is a prefix that pass 1 sets to the
+    object and event number before it re-raises, so the message says which line of which object."""
+
+    def __init__(self, table, column: str, problem: str, *, field=None) -> None:
+        self.table, self.column, self.problem, self.field, self.where = table, column, problem, field, ""
+        super().__init__(self._text())
+
+    def _text(self) -> str:
+        subject = f"{self.table}.{self.column}" if self.table else self.column
+        suffix = f" (event field {self.field})" if self.field else ""
+        return f"{self.where}{subject}: {self.problem}{suffix}"
+
+    def __str__(self) -> str:
+        return self._text()

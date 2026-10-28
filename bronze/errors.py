@@ -14,7 +14,28 @@ class ConfigError(BronzeError):
     """A setting or credential the command needs is missing or unusable (exit code 1)."""
 
 
-class LandingError(BronzeError):
-    """The landing prefix holds something the CDC contract does not allow, or a request would leave the
+class ContractError(BronzeError):
+    """What was landed breaks the CDC contract, so the run stops with nothing committed (exit code 2)."""
+
+
+class LandingError(ContractError):
+    """The landing prefix holds something the contract does not allow, or a request would leave the
     prefix: an object name that does not follow contract section 2, a listed key outside the run's
-    prefix, a read of a key outside it (exit code 2)."""
+    prefix, a read of a key outside it."""
+
+
+class EventError(ContractError):
+    """An event in a landed object breaks the envelope contract (section 3): not valid gzipped NDJSON,
+    an unknown table, a wrong envelope_version, columns that differ from the model, a before image where
+    the contract allows none, a transaction position outside its size, or an event that does not belong
+    to the object that holds it. The message names the object and the event."""
+
+
+class DisagreementError(ContractError):
+    """The same change (commit_lsn, position) landed twice and the copies differ in more than ts_ms and
+    ingested_at. Replays can only differ in the consumer's clock, so the landing contract was broken."""
+
+
+class IncompleteTransactions(ContractError):
+    """Some transaction is missing changes (positions 0 to size - 1, contract section 7): the consumer is
+    mid-flush, or an object is missing. Writing now would leave Bronze with half a transaction."""

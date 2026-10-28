@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 from typing import Mapping, Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bronze.errors import ConfigError
@@ -31,6 +32,9 @@ class BronzeSettings(BaseSettings):
     # The local SQLite catalog (decided G-D3). It is a cache of the bucket's metadata files, so it
     # lives outside the repo; the default is under the user's config directory.
     catalog_path: str = "~/.config/fintech_bronze/catalog.db"
+
+    # Landed objects read at once (decision 1, measured at 8 for uploads; reads are the same shape).
+    read_workers: int = Field(default=8, ge=1)
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="BRONZE_", extra="ignore")
 

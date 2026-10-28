@@ -12,3 +12,12 @@ google-cloud-storage>=3
 # build (Rust) and fail. Drop this bound when the project leaves the Intel Mac or cryptography
 # restores Intel wheels.
 cryptography<49
+# Bronze (GCS phase). Exact, because the Intel Air is on macOS 12 and cannot move: this is the set
+# verified there in G0 (Python 3.13.2, macOS 12.7.6) and with Linux cp313 wheels for CI. pyarrow 26.0.0
+# is the last line that still ships a macosx_12_0 x86_64 wheel to check before any bump. pyiceberg does
+# not require pyarrow or pyiceberg-core itself; the writer needs both. sqlalchemy is for the SQLite
+# catalog; the bound is pyiceberg's own for its sql-sqlite extra.
+pyiceberg==0.12.0
+pyiceberg-core==0.10.1
+pyarrow==26.0.0
+sqlalchemy>=2.0.18,<3

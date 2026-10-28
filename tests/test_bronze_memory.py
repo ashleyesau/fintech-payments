@@ -22,8 +22,19 @@ CEILING_MB = 400
 REAL_RUN_EVENTS, REAL_RUN_OBJECTS = 1_017_902, 908
 
 
+# The probe is started through a tiny Python process. On Linux a child starts with its parent's peak
+# memory as its floor (the spawn shares the parent's memory until exec), and the pytest process is big
+# (PyArrow, PyIceberg and the whole suite are loaded): started directly, the probe would report a
+# baseline of the parent's peak and its own working set would hide under it, so the ceiling test could
+# pass for any index. The launcher is small, so the probe's floor is the launcher's.
+LAUNCHER = ("import subprocess, sys; "
+            "r = subprocess.run([sys.executable, '-W', 'ignore', '-m', 'tests.bronze_memory_probe', *sys.argv[1:]], "
+            "capture_output=True, text=True); "
+            "sys.stdout.write(r.stdout); sys.stderr.write(r.stderr); sys.exit(r.returncode)")
+
+
 def probe(transactions: int, ceiling_mb: float, timeout: int):
-    return subprocess.run([sys.executable, "-W", "ignore", "-m", "tests.bronze_memory_probe", str(transactions), str(ceiling_mb)],
+    return subprocess.run([sys.executable, "-W", "ignore", "-c", LAUNCHER, str(transactions), str(ceiling_mb)],
                           cwd=ROOT, capture_output=True, text=True, timeout=timeout)
 
 
@@ -33,6 +44,16 @@ def test_the_probe_reports_what_it_built():
     report = json.loads(run.stdout)
     assert (report["objects"], report["events"], report["unique"], report["incomplete"]) == (10, 10_000, 10_000, 0)
     assert 0 < report["base"] < report["peak"]
+
+
+def test_a_big_parent_process_does_not_raise_the_probes_baseline():
+    big = bytearray(300_000_000)
+    for page in range(0, len(big), 4096):
+        big[page] = 1                     # touch every page: this process has now held 300 MB
+    run = probe(2, 1000, 120)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout)["base"] < 150_000_000
+    del big
 
 
 def test_the_watchdog_ends_a_run_that_passes_the_ceiling():

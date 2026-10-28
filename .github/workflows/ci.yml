@@ -44,6 +44,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
 
+      # The Bronze pins (requirements.txt) have wheels for this runner or the install above fails. This
+      # prints the versions that were installed, and fails if one of the four is missing.
+      - name: Show the Bronze dependencies
+        run: |
+          pip freeze | grep -i -E '^(pyiceberg|pyiceberg[-_]core|pyarrow|sqlalchemy)=='
+          test "$(pip freeze | grep -c -i -E '^(pyiceberg|pyiceberg[-_]core|pyarrow|sqlalchemy)==')" = 4
+
       - name: Apply migrations
         run: |
           psql -h localhost -U sim -d fintech -f migrations/001_initial_schema.sql

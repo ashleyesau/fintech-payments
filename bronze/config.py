@@ -40,6 +40,12 @@ class BronzeSettings(BaseSettings):
     # Landed objects read at once (decision 1, measured at 8 for uploads; reads are the same shape).
     read_workers: int = Field(default=8, ge=1)
 
+    # Rows a pass 2 batch holds before it is sorted and committed (GCS Plan (V2) section 19, question 1). Whole
+    # landed objects are added until the batch holds at least this many rows, so a batch is a little over.
+    # One batch is one Iceberg commit. Measured: 669 and 673 MB above the start at 100,000 with the index live;
+    # 250,000 cost 898 MB for 28 objects against 52. Raise it only after the 11M-event measurement (P6).
+    batch_rows: int = Field(default=100_000, ge=1)
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="BRONZE_", extra="ignore")
 
     @property

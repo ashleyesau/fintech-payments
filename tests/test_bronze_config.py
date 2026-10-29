@@ -46,6 +46,21 @@ def test_the_defaults_are_the_decided_ones(monkeypatch):
     assert ROOT not in s.catalog_file.parents
 
 
+def test_the_batch_size_is_a_setting_with_the_measured_default(monkeypatch):
+    # G3 question 1: batches of at least 100,000 rows (669 and 673 MB above the start with the index live).
+    clear_settings_env(monkeypatch)
+    assert BronzeSettings(_env_file=None).batch_rows == 100_000
+    monkeypatch.setenv("BRONZE_BATCH_ROWS", "250000")
+    assert BronzeSettings(_env_file=None).batch_rows == 250_000
+
+
+@pytest.mark.parametrize("bad", ["0", "-5", "many"])
+def test_a_batch_of_no_rows_or_a_word_is_refused(monkeypatch, bad):
+    monkeypatch.setenv("BRONZE_BATCH_ROWS", bad)
+    with pytest.raises(ValueError):
+        BronzeSettings(_env_file=None)
+
+
 def test_the_catalog_path_is_a_setting(monkeypatch, tmp_path):
     monkeypatch.setenv("BRONZE_CATALOG_PATH", str(tmp_path / "catalog.db"))
     assert BronzeSettings(_env_file=None).catalog_file == tmp_path / "catalog.db"

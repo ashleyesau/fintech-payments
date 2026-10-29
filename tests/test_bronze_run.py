@@ -41,7 +41,7 @@ from bronze.tables import table_differences
 from cdc.dedup import events_in
 from cdc.errors import SinkError
 from tests.bronze_synth import DAY, PREFIX, SOURCE_DB, Landing, encode, event
-from tests.bronze_env import (DATES, TABLES, Env, Spy, bronze_events, busy_landing, landed, spread_landing,
+from tests.bronze_env import (DATES, TABLES, Concurrency, Env, Spy, bronze_events, busy_landing, landed, spread_landing,
                               sort_events, without_clock)
 from tests.fakes import MemorySink, SimulatedCrash
 
@@ -756,24 +756,6 @@ def test_the_load_helper_treats_only_a_missing_table_as_missing(env):
         env.catalog.load_table(f"{NAMESPACE}.merchants")
 
 
-class Concurrency(Spy):
-    """A Spy that records, for each read in the order they start, how many reads are running (each takes a few
-    milliseconds). Pass 1 finishes before pass 2 starts, so the first N entries are pass 1 and the rest pass 2."""
-
-    def __init__(self, sink) -> None:
-        super().__init__(sink, self._slow)
-        self.now, self.levels = 0, []
-        self._count = threading.Lock()
-
-    def _slow(self, key, n):
-        with self._count:
-            self.now += 1
-            self.levels.append(self.now)
-        time.sleep(0.02)
-        with self._count:
-            self.now -= 1
-
-
 def test_the_number_of_workers_limits_the_reads_of_both_passes(env):
     land = busy_landing()
     objects = len(land.sink.objects)
@@ -1094,7 +1076,7 @@ def test_a_lost_catalog_stops_the_run_before_one_object_is_read_and_says_to_rebu
     spy = Spy(land.sink)
     with pytest.raises(MarkerError) as stop:
         lost.run(spy.reader())
-    assert "rebuild it from the marker" in str(stop.value) and "merchants" in str(stop.value)
+    assert "--rebuild-catalog" in str(stop.value) and "merchants" in str(stop.value)
     assert spy.listings == 0 and spy.reads == []
     assert lost.files() == files and lost.store.objects == objects
     assert lost.catalog.list_namespaces() == []

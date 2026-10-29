@@ -4,6 +4,7 @@ oracle that reads what was landed without using bronze, and a source that counts
 Nothing here is a test and nothing here touches a bucket."""
 import hashlib
 import threading
+import time
 
 from pyiceberg.catalog.sql import SqlCatalog
 from pyiceberg.table import Table
@@ -141,3 +142,21 @@ def spread_landing(objects=7) -> Landing:
         land.transaction(("merchant_transactions", "c"), ("merchant_transactions", "c"), date=DATES[i % 3])
         land.flush()
     return land
+
+
+class Concurrency(Spy):
+    """A Spy that records, for each read in the order they start, how many reads are running (each takes a few
+    milliseconds). Pass 1 finishes before pass 2 starts, so the first N entries are pass 1 and the rest pass 2."""
+
+    def __init__(self, sink) -> None:
+        super().__init__(sink, self._slow)
+        self.now, self.levels = 0, []
+        self._count = threading.Lock()
+
+    def _slow(self, key, n):
+        with self._count:
+            self.now += 1
+            self.levels.append(self.now)
+        time.sleep(0.02)
+        with self._count:
+            self.now -= 1

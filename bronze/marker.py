@@ -174,10 +174,11 @@ def check_against_marker(marker: Marker, existing: Mapping[str, Table]) -> None:
         if table is None:
             raise MarkerError(
                 f"the newest marker ({marker.run_id}) says table {name} exists, but the catalog does not have it. "
-                "The catalog is a cache of the bucket: rebuild it from the marker, do not create the tables again "
-                "beside the old ones. Nothing was written.")
+                "The catalog is a cache of the bucket: move the catalog file aside and run python -m bronze.main "
+                "--rebuild-catalog, do not create the tables again beside the old ones. Nothing was written.")
         if mark.snapshot_id is not None and table.snapshot_by_id(mark.snapshot_id) is None:
             raise MarkerError(
                 f"the newest marker ({marker.run_id}) says table {name} had snapshot {mark.snapshot_id}, but the "
                 "catalog's table has no such snapshot: the catalog is from another warehouse or an older state than "
-                "the marker. Rebuild it from the marker. Nothing was written.")
+                "the marker. Move the catalog file aside and run python -m bronze.main --rebuild-catalog. "
+                "Nothing was written.")

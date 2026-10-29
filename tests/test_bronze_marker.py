@@ -302,7 +302,8 @@ def test_a_catalog_that_lacks_a_table_the_marker_names_stops_and_says_to_rebuild
     with pytest.raises(MarkerError) as stop:
         check_against_marker(marker, tables)
     assert name in str(stop.value) and marker.run_id in str(stop.value)
-    assert "rebuild it from the marker" in str(stop.value) and "Nothing was written" in str(stop.value)
+    assert "--rebuild-catalog" in str(stop.value) and "move the catalog file aside" in str(stop.value)
+    assert "Nothing was written" in str(stop.value)
 
 
 def test_a_catalog_with_no_tables_at_all_stops_on_the_first(written):

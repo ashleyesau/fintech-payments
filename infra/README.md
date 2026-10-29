@@ -62,7 +62,15 @@ and a second plan said "No changes". The import blocks were then deleted. The st
 members' bucket as `b/cdc_landing` and `b/fintech_bronze`; the plan does not treat that as a difference. If a
 later plan ever says one of those members "must be replaced", stop and do not apply it.
 
+## What CI checks
+
+The `terraform` job in `.github/workflows/ci.yml` runs on every push, with Terraform 1.17.1 and no credentials:
+`fmt -check -recursive -diff`, `init -backend=false -lockfile=readonly` and `validate`. The read only lock file
+makes init fail if `.terraform.lock.hcl` lacks a hash for the runner, so it must hold `linux_amd64` as well as
+`darwin_amd64` (made with `terraform providers lock -platform=darwin_amd64 -platform=linux_amd64`). CI never plans
+or applies: a plan needs the state bucket and an apply needs a go-ahead, so both are run by hand on the Air.
+
 ## Not here yet
 
-Running the CDC consumer as `cdc-consumer` (the account exists but the consumer still uses the administrator's own
-login) and the CI check are later stages of the plan.
+Running the CDC consumer as `cdc-consumer` (the account exists, but the consumer still uses the administrator's own
+login) is a later stage of the plan.

@@ -278,6 +278,28 @@ Read again with the mapping in pass 1 (2026-10-28, the Air, as `bronze-writer`, 
 
 The Bronze tests are `tests/test_bronze_*.py`. `test_bronze_schema.py` compares the generated schemas with a hand-typed copy of the Bronze contract's column lists (`tests/bronze_contract.py`) and does a real local `create_table`; `test_bronze_mapping.py` holds the round trips and about 700 wrong-shape cases; `test_bronze_drift.py` runs each kind of drift (an extra, missing, renamed or retyped column, a wrong version) through the whole of pass 1 and the command. The width test needs Postgres (it skips locally when Postgres is down and fails under CI). Most tests run on synthetic landings (`tests/bronze_synth.py`), including a generated one of 1.2M events in 1,200 objects, larger than the real run, that the memory test reads in its own process under a 400 MB ceiling (slow: about 100 to 160 s). `tests/test_bronze_dependencies.py` checks that the exact PyIceberg, PyIceberg-core and PyArrow pins in `requirements.txt` are installed and work (they are the set verified on the Air, Python 3.13 and macOS 12) and never skips.
 
+## Infrastructure (Terraform)
+
+The Google Cloud the pipeline stands on is code in `infra/`: the two data buckets (`cdc_landing`, `fintech_bronze`),
+the `bronze-writer` and `cdc-consumer` service accounts and their bindings. The buckets and `bronze-writer` were made
+by hand and imported without a change; `cdc-consumer` was created from the code. State is in
+`gs://payments-512910-tfstate`. How to run it, what each resource is and the rules (never replace a data bucket, apply
+only a saved plan after a go-ahead) are in [infra/README.md](infra/README.md); the reasoning is in
+[docs/decisions/0001-terraform-for-the-gcp-infrastructure.md](docs/decisions/0001-terraform-for-the-gcp-infrastructure.md).
+
+| Principal | `cdc_landing` | `fintech_bronze` |
+|---|---|---|
+| `cdc-consumer` | create and read back (`objectCreator`, `objectViewer`); no update, no delete | none |
+| `bronze-writer` | read (`objectViewer`) | read, write and delete (`objectUser`) |
+
+Access is by impersonation, with no key files. The table is what the code grants. Today the CDC consumer still runs on
+the administrator's own login, which is unrestricted; `cdc-consumer` exists but is not in use yet, and the Bronze commands
+use `bronze-writer` through `GOOGLE_APPLICATION_CREDENTIALS`.
+
+CI has a `terraform` job: `fmt -check`, `init -backend=false` against the committed lock file, and `validate`. It has no
+credentials and runs no plan, so it shows the code is well formed, not that the real infrastructure matches it. That
+is a plan run by hand with the administrator's login.
+
 ## Validating a run
 
 `validate.sql` holds the reconciliation queries. Each one reads the five tables and returns a value next to the band from the Simulation Validation Targets, with the number of rows the value rests on.
@@ -319,6 +341,8 @@ scripts/            capture_pgoutput_fixtures.py, measure_decode_speed.py and me
 validate.sql        Reconciliation queries against the Validation Targets bands (run by simulator/validation.py)
 tests/              Schema, calendar, generator, lending, repayment, risk, config, onboarding, checkpoint, runner, streaming, reconciliation, DB, CDC foundation, decoder, envelope, landing, reader, consumer, GCS writer, command line, round trip, kill point, failure, lost slot, lag report and reconciler tests, and the Bronze tests (landing reader, event checks, index, command, schemas, mapping, drift, memory ceiling, dependencies; tests/bronze_synth.py builds the synthetic landings) (tests/fakes.py holds the in-memory sink, the scripted reader and the fake storage client; tests/pgcluster.py starts the throwaway small-cap cluster)
 migrations/         Postgres DDL (001 schema, 002 repayments foreign key, 003 replica identity)
+infra/              Terraform for the two buckets and the two service accounts (see Infrastructure above)
+docs/decisions/     Decision records
 docker-compose.yml  Local Postgres stack
-.github/workflows/  CI: Postgres 16 started with logical decoding, migrations 001 to 003, full test suite (the lost-slot tests use the runner's own Postgres binaries and print their version)
+.github/workflows/  CI: Postgres 16 started with logical decoding, migrations 001 to 003, full test suite (the lost-slot tests use the runner's own Postgres binaries and print their version); a separate `terraform` job (fmt, init without the backend, validate)
 ```

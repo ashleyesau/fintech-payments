@@ -60,3 +60,33 @@ jobs:
       # The full suite, slow tests included. Locally -m "not slow" skips them.
       - name: Run tests
         run: python -m pytest tests/ -q
+
+  # Checks the Terraform in infra/ without touching Google Cloud: formatting, a provider install from the
+  # committed lock file (which must already hold hashes for this runner, or init fails), and validate.
+  # No credentials, no backend and no plan: a plan needs the state bucket, and an apply never runs in CI.
+  terraform:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: infra
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.1
+          terraform_wrapper: false
+
+      - name: Show the Terraform version
+        run: terraform version
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive -diff
+
+      - name: Initialise without the backend
+        run: terraform init -backend=false -input=false -lockfile=readonly
+
+      - name: Validate
+        run: terraform validate

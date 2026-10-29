@@ -24,7 +24,9 @@ already exists without changing it, and add the `cdc-consumer` account as new co
 - **Import, then verify.** The existing resources were imported from a saved plan that had to read exactly
   "6 to import, 0 to add, 0 to change, 0 to destroy", and a second plan had to say "No changes". Only then
   were the import blocks deleted.
-- **Both data buckets have `prevent_destroy`** and `force_destroy = false`. A plan that would destroy or
+- **Both data buckets have `prevent_destroy`, `deletion_policy = "PREVENT"`** and `force_destroy = false`. The first is
+  code, so removing it or the block drops it; the second is kept in the state and still refuses a delete; the third
+  protects only a bucket that holds objects. A plan that would destroy or
   replace either is never accepted.
 - **IAM only through `_member` resources**, never `_binding` or `_policy`, so Terraform cannot remove a
   binding it was not told about (both buckets keep the default legacy project bindings).
@@ -63,6 +65,7 @@ already exists without changing it, and add the `cdc-consumer` account as new co
   customer-supplied keys are refused for new objects, set two minutes after the bucket was created. Their
   cause is unknown. The code states them as found, because the alternative is changing the landing bucket to
   quieten a plan.
-- `deletion_policy = "PREVENT"` is not set on the buckets. It is a possible later change.
+- `deletion_policy = "PREVENT"` was added to the buckets after the import was clean, so the import plan stayed
+  free of changes. `gcloud` and the console can still delete a bucket.
 - The CDC consumer still runs on the administrator's own login. The `cdc-consumer` account exists but is not
   in use until the consumer is switched to it by impersonation, which is a separate piece of work.

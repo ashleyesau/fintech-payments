@@ -18,8 +18,8 @@ the GCS Plan (V2). The decisions are in DECISION_LOG.
 | `google_storage_bucket_iam_member` x2 | cdc-consumer: `objectCreator` and `objectViewer` on `cdc_landing` only. It can create a landed object and read one back after an "already exists" answer; it can never update or delete one. No project role, nothing on `fintech_bronze` |
 | `google_service_account_iam_member` | The administrator may impersonate cdc-consumer (`serviceAccountTokenCreator`) |
 
-Both buckets carry `lifecycle { prevent_destroy = true }` and `force_destroy = false`. **Never replace or destroy
-either bucket.** `prevent_destroy` stops Terraform, not `gcloud` or the console. Terraform manages no objects:
+Both buckets carry `lifecycle { prevent_destroy = true }`, `deletion_policy = "PREVENT"` and `force_destroy = false`. **Never replace or destroy
+either bucket.** `prevent_destroy` is code and goes if the block or the line is removed; `deletion_policy` is kept in the state and still makes a delete fail. Neither stops `gcloud` or the console. Terraform manages no objects:
 the landed objects in `gs://cdc_landing/cdc/cdc_r01/` are the deliverable and are never written to or deleted.
 
 IAM is added only through `_member` resources, never `_binding` or `_policy`, so Terraform cannot remove a

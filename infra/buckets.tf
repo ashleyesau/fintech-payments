@@ -1,6 +1,8 @@
 # Both buckets exist already and were imported into the state, not created. The attributes below are what the
 # read-only inventory of 2026-10-29 showed; soft delete is set to 0 explicitly because the provider's
-# default is 7 days. prevent_destroy is on both: they hold the landed objects and the Bronze tables.
+# default is 7 days. They hold the landed objects and the Bronze tables, so both carry prevent_destroy and
+# deletion_policy PREVENT. prevent_destroy is code, so deleting it or the block drops it; deletion_policy is
+# kept in the state and still refuses a delete.
 # The three encryption enforcement settings on cdc_landing are stated as the inventory printed them
 # (customer-supplied keys refused for new objects). Never change them to make a plan quiet.
 
@@ -12,6 +14,7 @@ resource "google_storage_bucket" "cdc_landing" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
   force_destroy               = false
+  deletion_policy             = "PREVENT"
 
   soft_delete_policy {
     retention_duration_seconds = 0
@@ -44,6 +47,7 @@ resource "google_storage_bucket" "fintech_bronze" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
   force_destroy               = false
+  deletion_policy             = "PREVENT"
 
   soft_delete_policy {
     retention_duration_seconds = 0

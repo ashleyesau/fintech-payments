@@ -68,6 +68,12 @@ class MappingError(ContractError):
         return self._text()
 
 
+class RoundTripError(ContractError):
+    """A landed event did not come back equal from the pass 2 conversion (events_to_arrow, then to_pylist, then
+    row_to_event): Bronze would not hold what landed. The message names the object, the event number, the table
+    and the first field that differs, with what was expected and found."""
+
+
 class TableDriftError(ContractError):
     """An existing Bronze table differs from what the contract generates: a column, a field id, a type or a
     required flag, the partition spec, one of the four table properties, or the location (bronze/tables.py).

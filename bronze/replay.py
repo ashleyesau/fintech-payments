@@ -12,6 +12,11 @@ Three questions, answered in this order by `check`:
      list is seen as a difference and not undone by a matching reverse conversion in the test.
   3. Do the updates found in Bronze touch exactly the loans the source shows as disbursed?
 
+`roundtrip` is a fourth, asked of the landing alone before anything is written (P5): every landed event is converted
+exactly as pass 2 will convert it (events_to_arrow with the table's real Arrow schema), read back out of Arrow and
+mapped back with row_to_event, and must equal the original event, field by field. It writes nothing and needs no
+catalog, warehouse or database.
+
 It holds one slice of a table at a time (SLICE rows, dict rows cost about 5.8 KB each) and, for question 1, one
 landed object at a time plus the keys seen so far, so the real run fits the Air. It reads the landing through the
 read-only LandingReader and writes nothing to Bronze or to the landing. There is no command yet: G4 decides it.
@@ -27,14 +32,35 @@ from typing import Callable, Iterator, Optional
 import psycopg
 from pyiceberg.catalog import Catalog
 
+from bronze.batches import arrow_schema_of, events_to_arrow
+from bronze.errors import MappingError, RoundTripError
 from bronze.landing import LandingReader
 from bronze.mapping import row_to_event
-from bronze.run import NAMESPACE
+from bronze.run import NAMESPACE, _read_ahead
+from bronze.schema import build_schema
 from cdc.dedup import events_in, key
 from cdc.landing import CLOCK_FIELDS
 from cdc.reconcile import TABLE_ORDER, blank_database, explain_difference, insert_rows, table_digest, update_row
 
 SLICE = 10_000   # rows turned into events at a time
+
+
+def event_hash(event: dict) -> int:
+    """60 bits of the md5 of the event without the consumer's clock, in a fixed key order. The clock differs
+    between replays of the same change, so it is not part of what must be equal."""
+    kept = {name: value for name, value in event.items() if name not in CLOCK_FIELDS}
+    text = json.dumps(kept, sort_keys=True, separators=(",", ":"))
+    return int(hashlib.md5(text.encode()).hexdigest()[:15], 16)
+
+
+def payload_hash(event: dict) -> int:
+    """60 bits of the md5 of what an event says about the row and not about where or when it was read: the table, the
+    operation, the event date and time, the flags and the before and after images. The commit and change LSNs, the
+    commit time, the transaction id and the consumer's clock are left out, because they differ between two clusters
+    that hold the same rows, so equal payload digests mean the same rows were landed."""
+    kept = {"table": event["source"]["table"], **{name: event[name] for name in
+                                                  ("op", "event_date", "event_ts", "flags", "before", "after")}}
+    return int(hashlib.md5(json.dumps(kept, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:15], 16)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,16 +70,8 @@ class Digest:
     rows: int = 0
     total: int = 0
 
-    def add(self, event: dict) -> "Digest":
-        return Digest(self.rows + 1, self.total + event_hash(event))
-
-
-def event_hash(event: dict) -> int:
-    """60 bits of the md5 of the event without the consumer's clock, in a fixed key order. The clock differs
-    between replays of the same change, so it is not part of what must be equal."""
-    kept = {name: value for name, value in event.items() if name not in CLOCK_FIELDS}
-    text = json.dumps(kept, sort_keys=True, separators=(",", ":"))
-    return int(hashlib.md5(text.encode()).hexdigest()[:15], 16)
+    def add(self, event: dict, hasher: Callable[[dict], int] = event_hash) -> "Digest":
+        return Digest(self.rows + 1, self.total + hasher(event))
 
 
 def landed_digests(reader: LandingReader, say: Callable[[str], None] = lambda message: None) -> dict[str, Digest]:
@@ -184,3 +202,72 @@ def check(catalog: Catalog, reader: LandingReader, source_dsn: Optional[str], *,
             report.problems.append(f"Bronze holds updates for {len(updated):,} loans, the source shows {len(disbursed):,} "
                                    f"disbursed ({len(updated ^ disbursed):,} differ)")
     return report
+
+
+# ---------------------------------------------------------------------------
+# P5: the real events through the pass 2 conversion and back, before anything is written
+# ---------------------------------------------------------------------------
+
+def first_difference(expected, found, path: str = "") -> Optional[str]:
+    """Where two events (or parts of them) first differ, as `path: expected ..., got ...`, or None if they are equal.
+    Types count: 1 and True and 1.0 are different, and so are a tuple and a list."""
+    if type(expected) is not type(found):
+        return f"{path or 'event'}: expected {expected!r}, got {found!r}"
+    if isinstance(expected, dict):
+        for name in expected:
+            if name not in found:
+                return f"{path + '.' if path else ''}{name}: missing"
+        for name in found:
+            if name not in expected:
+                return f"{path + '.' if path else ''}{name}: unexpected"
+        for name in expected:
+            difference = first_difference(expected[name], found[name], f"{path + '.' if path else ''}{name}")
+            if difference:
+                return difference
+        return None
+    if isinstance(expected, list):
+        if len(expected) != len(found):
+            return f"{path}: expected {len(expected)} elements, got {len(found)}"
+        for number, (a, b) in enumerate(zip(expected, found)):
+            difference = first_difference(a, b, f"{path}[{number}]")
+            if difference:
+                return difference
+        return None
+    return None if expected == found else f"{path or 'event'}: expected {expected!r}, got {found!r}"
+
+
+@dataclass
+class RoundTrip:
+    """What `roundtrip` found: how many events and objects, and a payload digest per table."""
+    events: int = 0
+    objects: int = 0
+    digests: dict[str, Digest] = field(default_factory=lambda: {table: Digest() for table in TABLE_ORDER})
+
+
+def roundtrip(reader: LandingReader, *, source_db: str, workers: int = 8,
+              say: Callable[[str], None] = lambda message: None) -> RoundTrip:
+    """Convert every landed event as pass 2 will, read it back, map it back and compare with the original. Raises
+    RoundTripError at the first event that does not come back equal, and a MappingError (naming the object and event)
+    if the conversion or its inverse refuses a value. One object is held at a time, plus a short read-ahead of bytes."""
+    result = RoundTrip()
+    schemas = {table: arrow_schema_of(build_schema(table)) for table in TABLE_ORDER}
+    objects = reader.list_keys()
+    for number, (obj, data) in enumerate(_read_ahead(reader, objects, workers), 1):
+        events = events_in(data)
+        rows = events_to_arrow(events, schemas[obj.table], source_db=source_db, label=obj.key).to_pylist()
+        for position, (event, row) in enumerate(zip(events, rows), 1):
+            try:
+                back = row_to_event(obj.table, row, source_db=source_db)
+            except MappingError as error:
+                error.where = f"{obj.key}, event {position}: "
+                raise
+            difference = first_difference(event, back)
+            if difference:
+                raise RoundTripError(f"{obj.key}, event {position}: {obj.table} did not come back equal from the pass 2 "
+                                     f"conversion: {difference}")
+            result.digests[obj.table] = result.digests[obj.table].add(event, payload_hash)
+        result.events += len(events)
+        result.objects += 1
+        if number % 100 == 0:
+            say(f"round trip: {number:,} of {len(objects):,} objects")
+    return result

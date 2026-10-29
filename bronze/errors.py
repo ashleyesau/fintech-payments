@@ -85,3 +85,11 @@ class UnknownBronzeKeys(ContractError):
     """A Bronze table holds a key that the landing does not hold for that table (bronze/present.py): an object
     was deleted from the landing, or the warehouse was built from another landing prefix, or the table was
     written by something else. The message names the table, how many rows and the first key."""
+
+
+class LandingChanged(ContractError):
+    """What pass 2 read is not what pass 1 indexed (bronze/run.py): an object that parsed in pass 1 no longer
+    does, holds an event the index does not know, or gives a different number of rows than the index said it
+    should. The landing is immutable and the Bronze account cannot write to it, so this means the objects
+    changed under the run or the index is wrong. The message names the table or object and how many batches
+    were already committed; a re-run starts from what Bronze then holds."""

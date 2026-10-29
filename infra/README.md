@@ -51,7 +51,14 @@ gcloud storage buckets update gs://payments-512910-tfstate --project=payments-51
 The backend is in `versions.tf`. The state is small and can be rebuilt by importing the resources again. A crashed
 run can leave a lock object under `terraform/state/`; `terraform force-unlock` with the lock id releases it.
 
+## How it was imported
+
+The six resources above were imported into the state on 2026-10-29 with `import` blocks, from a saved plan whose
+summary was exactly "6 to import, 0 to add, 0 to change, 0 to destroy". The apply changed no real infrastructure,
+and a second plan said "No changes". The import blocks were then deleted. The state holds the imported IAM
+members' bucket as `b/cdc_landing` and `b/fintech_bronze`; the plan does not treat that as a difference. If a
+later plan ever says one of those members "must be replaced", stop and do not apply it.
+
 ## Not here yet
 
 The `cdc-consumer` account and running the CDC consumer as it, and the CI check, are later stages of the plan.
-`imports.tf` is deleted once the import has been applied.

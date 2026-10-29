@@ -4,6 +4,9 @@ A seeded backfill with loans is written into a database that already has a slot,
 real reader and consumer into the in-memory sink. The landed events are replayed into a blank database
 (tests/roundtrip.py: Postgres rebuilds each row from the event's `after` image) and compared with the
 source tables; the counts and the order are checked on the landed objects. Slow: about a minute.
+
+The last section is P4 of the GCS phase on the same run: Bronze is written from the landed objects twice on a local
+warehouse, read back through the inverse mapping, and replayed into a blank database to the source's digests.
 """
 import copy
 import gzip
@@ -13,6 +16,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import psycopg
+import pyarrow as pa
 import pytest
 
 from cdc.consumer import Consumer
@@ -27,6 +31,10 @@ from simulator import db, lending, repayments
 from simulator.db import STREAMS
 from simulator.runner import RunSettings, run_backfill
 from tests.conftest import new_cdc_slot
+from bronze.landing import LandingReader
+from bronze.mapping import row_to_event
+from bronze.replay import check as check_bronze
+from tests.bronze_env import Env, sort_events, without_clock
 from tests.fakes import MemorySink
 from tests.helpers import LONG_RUN, START, table_contents
 from tests.roundtrip import apply_events, blank_database, in_commit_order, landed_events, partition_order_problems
@@ -401,3 +409,130 @@ def test_a_bucket_failure_exits_three_and_a_dropped_connection_exits_one(run):
                              objects_factory=lambda s: MemoryObjects({}), out=out, err=err)
     assert code == 1 and "s3cret-pa55word" not in out.getvalue() + err.getvalue()
 
+
+
+# ---------------------------------------------------------------------------
+# P4: Bronze written from this run, read back, and replayed into the source (bronze/replay.py)
+# ---------------------------------------------------------------------------
+
+LANDING = "cdc/cdc_r01/"
+
+
+def bronze_from(objects, directory, rerun=False):
+    """Bronze written on a local warehouse from a copy of the landed objects. Returns the Env and the reports of
+    the first run (and, with rerun, of a second run with the state of the warehouse in between)."""
+    sink = MemorySink()
+    sink.objects = dict(objects)
+    reader = LandingReader(sink, LANDING)
+    env = Env(directory)
+    first = env.run(reader)
+    if not rerun:
+        return env, reader, first
+    before = {"files": env.files(), "snapshots": env.snapshots(), "catalog": env.catalog_digest(), "store": dict(env.store.objects)}
+    second = env.run(reader)
+    after = {"files": env.files(), "snapshots": env.snapshots(), "catalog": env.catalog_digest(), "store": dict(env.store.objects)}
+    return env, reader, first, second, before, after
+
+
+@pytest.fixture(scope="module")
+def bronze(run, tmp_path_factory):
+    env, reader, first, second, before, after = bronze_from(run["sink"].objects, tmp_path_factory.mktemp("bronze"), rerun=True)
+    return {"env": env, "reader": reader, "first": first, "second": second, "before": before, "after": after}
+
+
+def test_bronze_written_from_the_run_holds_what_landed_and_replays_to_the_source(run, bronze):
+    report = check_bronze(bronze["env"].catalog, bronze["reader"], run["dsn"], source_db="fintech_cdc")
+    assert report.ok, report.problems
+    assert report.landed == report.bronze
+    assert report.source == report.replayed and all(count > 0 for count, _ in report.source.values())
+    assert report.updates > 0
+    for table in STREAMS:
+        assert report.bronze[table].rows == len(run["source"][table]) + (report.updates if table == "loan_applications" else 0)
+
+
+def test_every_bronze_row_maps_back_to_exactly_the_landed_event(run, bronze):
+    landed = {}
+    for event in dedup(landed_events(run["sink"])):
+        landed.setdefault(event["source"]["table"], []).append(without_clock(event))
+    for table in STREAMS:
+        held = [without_clock(row_to_event(table, row, source_db="fintech_cdc")) for row in bronze["env"].rows(table)]
+        assert sort_events(held) == sort_events(landed[table]), table
+
+
+def test_a_second_run_over_the_same_run_creates_no_snapshot_and_changes_no_file_or_marker(bronze):
+    first, second = bronze["first"], bronze["second"]
+    assert first.marker.written and first.marker.catalog_copied
+    assert all(t.rows_appended == t.landed > 0 for t in first.tables.values())
+    assert not second.marker.written and not second.marker.catalog_copied
+    assert all(t.rows_appended == 0 and t.batches == 0 for t in second.tables.values())
+    assert bronze["after"] == bronze["before"]
+    assert all(ids and len(ids) == t.batches for (name, ids), t in zip(bronze["after"]["snapshots"].items(), first.tables.values()) if ids)
+
+
+def test_the_awkward_values_are_stored_in_bronze_as_they_landed(bronze):
+    env = bronze["env"]
+    application = next(r for r in env.rows("loan_applications") if r["application_id"] == "app-awkward")
+    assert application["decline_reasons"] == AWKWARD_REASONS               # the NULL element and the string 'NULL' kept apart
+    assert application["business_registration"] == AWKWARD_TEXT
+    assert application["requested_amount"] == 9007199254740991
+    assert application["total_cost_percent"] == "0.0700"
+    assert application["submission_ts"] == datetime(2025, 3, 1, 2, 45, 0, 123456, tzinfo=timezone.utc)
+    assert str(application["event_date"]) == "2025-03-01" and application["before_decline_reasons"] is None
+    payment = next(r for r in env.rows("merchant_transactions") if r["transaction_id"] == "txn-awkward")
+    assert payment["amount_minor"] == 9007199254740991 and str(payment["event_date"]) == "2025-03-02"
+    assert payment["created_at"] == datetime(2025, 3, 1, 23, 59, 59, 999999, tzinfo=timezone.utc)
+    assert payment["auth_code"] == 'é\\"' and payment["device_id"] == "日本語" and payment["is_test"] is True
+    assert any(r["merchant_id"] == "m-ünï-😀" for r in env.rows("merchants"))
+
+
+def test_an_unpaid_repayment_is_stored_with_a_null_payment_time_and_its_fallback_flag(bronze):
+    unpaid = [r for r in bronze["env"].rows("loan_repayments") if r["payment_ts"] is None]
+    assert unpaid and all(r["flags"] == ["event_time_fallback"] and str(r["event_date"]) == str(r["due_date"]) for r in unpaid)
+
+
+def test_one_wrong_value_in_a_landed_object_is_found_by_the_replay_against_the_source(run, tmp_path):
+    objects = dict(run["sink"].objects)
+    name = pick(run, "merchant_transactions")
+    objects[name] = rewrite(objects[name], lambda events: events[3]["after"].update(amount_minor=events[3]["after"]["amount_minor"] + 1))
+    env, reader, _ = bronze_from(objects, tmp_path)
+    problems = check_bronze(env.catalog, reader, run["dsn"], source_db="fintech_cdc").problems
+    assert len(problems) == 1 and problems[0].startswith("merchant_transactions: the table replayed from Bronze differs from the source")
+    assert "1 with different values" in problems[0]
+
+
+def test_an_object_that_never_reached_bronze_is_found_on_both_sides(run, tmp_path):
+    env, _, _ = bronze_from(run["sink"].objects, tmp_path)
+    objects = dict(run["sink"].objects)
+    del objects[pick(run, "risk_events")]
+    problems = check_bronze(env.catalog, LandingReader(_sink_of(objects), LANDING), run["dsn"], source_db="fintech_cdc").problems
+    assert any(p.startswith("risk_events: ") and "changes landed, Bronze holds" in p for p in problems)
+    assert len(problems) == 1                # Bronze equals the source; it is the landing copy that is short
+
+
+def test_a_disbursement_update_missing_from_bronze_is_found(run, tmp_path):
+    # Not a landing with the update removed: its transaction would be incomplete and Bronze would refuse to write.
+    env, reader, _ = bronze_from(run["sink"].objects, tmp_path)
+    env.table("loan_applications").delete("op = 'u'")
+    problems = check_bronze(env.catalog, reader, run["dsn"], source_db="fintech_cdc").problems
+    assert any(p.startswith("loan_applications: ") and "changes landed, Bronze holds" in p for p in problems)
+    assert any(p.startswith("Bronze holds updates for 0 loans") for p in problems)
+    assert any(p.startswith("loan_applications: the table replayed from Bronze differs from the source") for p in problems)
+
+
+def test_an_update_for_a_loan_that_does_not_exist_is_reported_and_the_check_goes_on(run, tmp_path):
+    env, reader, _ = bronze_from(run["sink"].objects, tmp_path)
+    table = env.table("loan_applications")
+    row = next(r for r in table.scan().to_arrow().to_pylist() if r["op"] == "u")
+    row.update(commit_lsn=row["commit_lsn"] + 1, application_id="app-ghost", before_application_id="app-ghost")
+    table.append(pa.Table.from_pylist([row], schema=table.schema().as_arrow()))
+    problems = check_bronze(env.catalog, reader, run["dsn"], source_db="fintech_cdc").problems
+    assert any(p.startswith("update at (") and "found 0 rows to replace" in p for p in problems), problems
+    assert any(p.startswith("Bronze holds updates for ") and p.endswith(" disbursed (1 differ)") for p in problems)
+    assert any(p.startswith("loan_applications: ") and p.endswith(" changes landed, Bronze holds " + str(
+        len(run["source"]["loan_applications"]) + len([r for r in landed_events(run["sink"]) if r["op"] == "u"]) + 1)) for p in problems)
+
+
+def _sink_of(objects):
+    sink = MemorySink()
+    sink.objects = dict(objects)
+    return sink

@@ -361,7 +361,7 @@ def execute(settings: CdcSettings, *, directory: Optional[str] = None, workers: 
             objects = DirectoryObjects(directory, settings.gcs_prefix)
         else:
             from cdc.gcs import GcsSink          # only the bucket needs Google's libraries
-            objects = BucketObjects(GcsSink.connect(settings.gcs_bucket), settings.gcs_prefix)
+            objects = BucketObjects(GcsSink.connect(settings.gcs_bucket, project=settings.project), settings.gcs_prefix)
         where = f"directory {directory}" if directory else f"gs://{settings.gcs_bucket}/{settings.gcs_prefix}"
         say(f"reconciling {where} with {settings.db}")
         result = reconcile(objects, settings.dsn, workers=workers, say=say)

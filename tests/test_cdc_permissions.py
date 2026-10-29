@@ -47,7 +47,8 @@ def go(granted=GOOD, identity=ACCOUNT, wanted=None):
 
 def test_the_account_and_project_are_the_real_ones():
     assert ACCOUNT == "cdc-consumer@payments-512910.iam.gserviceaccount.com"
-    assert perm.PROJECT == "payments-512910"
+    from cdc.config import settings
+    assert settings.project == "payments-512910"
     assert (EXIT_OK, EXIT_DIFFERS, EXIT_REFUSED) == (0, 1, 2)
 
 

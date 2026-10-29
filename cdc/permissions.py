@@ -27,7 +27,6 @@ import click
 from cdc.config import settings
 
 ACCOUNT = "cdc-consumer@payments-512910.iam.gserviceaccount.com"
-PROJECT = "payments-512910"
 SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 BRONZE_BUCKET = "fintech_bronze"
 
@@ -129,7 +128,7 @@ def make_client(project: str):
 @click.command()
 @click.option("--landing-bucket", default=settings.gcs_bucket, show_default=True)
 @click.option("--bronze-bucket", default=BRONZE_BUCKET, show_default=True)
-@click.option("--project", default=PROJECT, show_default=True)
+@click.option("--project", default=settings.project, show_default=True)
 def main(landing_bucket: str, bronze_bucket: str, project: str) -> None:
     try:
         identity = resolve_identity()

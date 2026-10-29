@@ -10,7 +10,15 @@ with POSTGRES_DB, so a CDC run needs both set (see the README).
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+from typing import Mapping, Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from cdc.errors import SinkError
+
+CREDENTIALS_VARIABLE = "GOOGLE_APPLICATION_CREDENTIALS"
 
 
 class CdcSettings(BaseSettings):
@@ -28,6 +36,11 @@ class CdcSettings(BaseSettings):
 
     # GCS sink. Authentication is application-default credentials; nothing goes in the repo.
     gcs_bucket: str = "cdc_landing"
+
+    # The Google project the storage client is made for. The consumer runs as the cdc-consumer service account
+    # through an impersonated credentials file, and that file carries no project: without one the client cannot
+    # be made (the first real Bronze run failed exactly so). It is always passed, so there is one code path.
+    project: str = "payments-512910"
 
     # Fixed in M4 from the measured decode speed and per-object upload latency (DECISION_LOG,
     # "M4 design decisions"). batch_size is a floor of changes: a batch is whole transactions.
@@ -53,3 +66,25 @@ class CdcSettings(BaseSettings):
 
 
 settings = CdcSettings()
+
+
+def require_credentials(environ: Optional[Mapping[str, str]] = None) -> Path:
+    """Refuse to go on unless GOOGLE_APPLICATION_CREDENTIALS names a file; return its path.
+
+    The consumer runs as the cdc-consumer service account (create and read back, never update or delete).
+    Without the variable Google falls back to whatever login the machine has, which on the development Mac is
+    the owner's own and can overwrite or delete a landed object. The account's permissions are the real
+    control (python -m cdc.permissions shows them); this guard only makes sure a credentials file was named.
+    It never reads the file, and it cannot tell whose file it is. It is a SinkError, exit code 3: the
+    credentials are missing.
+    """
+    env = os.environ if environ is None else environ
+    value = env.get(CREDENTIALS_VARIABLE, "").strip()
+    if not value:
+        raise SinkError(f"{CREDENTIALS_VARIABLE} is not set. Point it at the cdc-consumer credentials file before "
+                        "running the consumer: without it Google falls back to your own login, which can overwrite "
+                        "or delete landed objects.")
+    path = Path(value).expanduser()
+    if not path.is_file():
+        raise SinkError(f"{CREDENTIALS_VARIABLE} names a file that does not exist: {path}")
+    return path

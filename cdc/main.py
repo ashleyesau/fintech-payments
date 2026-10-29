@@ -11,7 +11,8 @@ Everything else comes from the CDC_ settings (cdc/config.py, .env). Exit codes:
          usage error, a bug
     2    a contract stop: a delete or truncate, schema drift, an undecodable message, or an
          existing object whose events differ from this batch
-    3    the sink failed: an upload or read gave up after its retries, or the credentials are missing
+    3    the sink failed: an upload or read gave up after its retries, or GOOGLE_APPLICATION_CREDENTIALS is
+         not set or names no file (the consumer runs as the cdc-consumer service account)
     4    the slot is lost (Postgres removed the WAL it held; it cannot be repaired)
     130  a second Ctrl-C: stopped at once, nothing more confirmed
 
@@ -31,7 +32,7 @@ from typing import Callable, Optional, TextIO
 import click
 import psycopg
 
-from cdc.config import CdcSettings
+from cdc.config import CdcSettings, require_credentials
 from cdc.consumer import Consumer, RunSummary
 from cdc.errors import CdcError, SinkError, SlotLost, SlotMissing
 from cdc.gcs import GcsSink
@@ -74,7 +75,8 @@ def _connect_reader(settings: CdcSettings) -> Reader:
 
 
 def _connect_sink(settings: CdcSettings) -> Sink:
-    return GcsSink.connect(settings.gcs_bucket)
+    require_credentials()          # only the real bucket needs the cdc-consumer file; test sinks never get here
+    return GcsSink.connect(settings.gcs_bucket, project=settings.project)
 
 
 def execute(settings: CdcSettings, follow: bool, *,

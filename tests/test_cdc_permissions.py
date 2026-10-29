@@ -59,12 +59,42 @@ def test_the_consumer_may_create_get_and_list_and_nothing_else_on_the_landing_bu
 
 
 @pytest.mark.parametrize("permission", [
-    "storage.objects.update", "storage.objects.delete", "storage.objects.setIamPolicy", "storage.buckets.get",
+    "storage.objects.update", "storage.objects.delete", "storage.buckets.get",
     "storage.buckets.update", "storage.buckets.delete", "storage.buckets.setIamPolicy"])
 def test_these_are_never_granted(permission):
     assert permission in NEVER
     assert permission in expectations(LANDING, BRONZE)[0].denied
     assert permission in expectations(LANDING, BRONZE)[1].denied
+
+
+@pytest.mark.parametrize("permission", ["storage.objects.getIamPolicy", "storage.objects.setIamPolicy"])
+def test_object_level_iam_permissions_are_never_asked_because_google_rejects_them_on_uniform_access_buckets(permission):
+    # The first real run got 400 "Cannot test storage.objects.getIamPolicy or storage.objects.setIamPolicy on buckets
+    # with uniform bucket-level access enabled" for the whole call. A fake accepts any name, so this pins the rule.
+    assert permission in perm.NOT_TESTABLE
+    assert permission not in NEVER and permission not in LANDING_GRANTED
+    for expectation in expectations(LANDING, BRONZE):
+        assert permission not in expectation.granted and permission not in expectation.denied
+    _, _, client = go()
+    for _, asked in client.calls:
+        assert permission not in asked
+
+
+def test_a_fake_that_behaves_like_google_on_uniform_access_buckets_accepts_every_call_made():
+    class Rejecting(StrictBucket):
+        def test_iam_permissions(self, permissions):
+            bad = [p for p in permissions if p in perm.NOT_TESTABLE]
+            if bad:
+                raise ValueError(f"400 Cannot test {bad[0]} on buckets with uniform bucket-level access enabled")
+            return super().test_iam_permissions(permissions)
+
+    class RejectingClient(StrictClient):
+        def bucket(self, name):
+            return Rejecting(name, self._granted.get(name, set()), self.calls)
+
+    lines: list[str] = []
+    code = run(RejectingClient({k: set(v) for k, v in GOOD.items()}), ACCOUNT, expectations(LANDING, BRONZE), out=lines.append)
+    assert code == EXIT_OK, lines
 
 
 def test_the_consumer_has_nothing_at_all_on_the_bronze_bucket():
@@ -97,7 +127,7 @@ def test_only_the_permission_test_is_ever_called():
 
 
 @pytest.mark.parametrize("extra", ["storage.objects.update", "storage.objects.delete", "storage.buckets.get",
-                                   "storage.buckets.setIamPolicy", "storage.objects.setIamPolicy"])
+                                   "storage.buckets.setIamPolicy"])
 def test_a_grant_that_should_not_be_there_on_the_landing_bucket_fails_and_names_it(extra):
     code, text, _ = go({LANDING: set(LANDING_GRANTED) | {extra}, BRONZE: set()})
     assert code == EXIT_DIFFERS

@@ -11,7 +11,7 @@ bucket, nothing written, no Class A or Class B operation. The answer must match 
 table (Infrastructure plan, section 8):
 
     cdc_landing     granted: create, get and list objects (what the consumer's three calls need)
-                    denied:  update and delete objects, anything on the bucket itself, any IAM change
+                    denied:  update and delete objects, anything on the bucket itself, any bucket IAM change
     fintech_bronze  denied:  everything above (the consumer has no role there)
 
 Exit codes: 0 every permission is as expected; 1 at least one differs (a grant that should not be there,
@@ -37,12 +37,15 @@ EXIT_OK, EXIT_DIFFERS, EXIT_REFUSED = 0, 1, 2
 # and list_blobs (list). Nothing else.
 LANDING_GRANTED = ("storage.objects.create", "storage.objects.get", "storage.objects.list")
 
+# Google refuses to test these on a bucket with uniform bucket-level access (both buckets have it; there is no
+# object-level IAM there) and answers 400 for the whole call, so they are never asked. Found by the first real run.
+NOT_TESTABLE = ("storage.objects.getIamPolicy", "storage.objects.setIamPolicy")
+
 # Never granted to the consumer on either bucket. Update and delete are the point: a landed object can
 # never be overwritten or removed through this account.
 NEVER = (
     "storage.objects.update",
     "storage.objects.delete",
-    "storage.objects.setIamPolicy",
     "storage.buckets.get",
     "storage.buckets.update",
     "storage.buckets.delete",

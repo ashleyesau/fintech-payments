@@ -14,6 +14,9 @@ the GCS Plan (V2). The decisions are in DECISION_LOG.
 | `google_service_account.bronze_writer` | The account the Bronze job runs as, by impersonation (no key file) |
 | `google_storage_bucket_iam_member` x2 | bronze-writer: `objectViewer` on `cdc_landing`, `objectUser` on `fintech_bronze` |
 | `google_service_account_iam_member` | The administrator may impersonate bronze-writer (`serviceAccountTokenCreator`) |
+| `google_service_account.cdc_consumer` | The account the CDC consumer will run as, by impersonation. Not in use until the consumer is switched to it |
+| `google_storage_bucket_iam_member` x2 | cdc-consumer: `objectCreator` and `objectViewer` on `cdc_landing` only. It can create a landed object and read one back after an "already exists" answer; it can never update or delete one. No project role, nothing on `fintech_bronze` |
+| `google_service_account_iam_member` | The administrator may impersonate cdc-consumer (`serviceAccountTokenCreator`) |
 
 Both buckets carry `lifecycle { prevent_destroy = true }` and `force_destroy = false`. **Never replace or destroy
 either bucket.** `prevent_destroy` stops Terraform, not `gcloud` or the console. Terraform manages no objects:
@@ -61,4 +64,5 @@ later plan ever says one of those members "must be replaced", stop and do not ap
 
 ## Not here yet
 
-The `cdc-consumer` account and running the CDC consumer as it, and the CI check, are later stages of the plan.
+Running the CDC consumer as `cdc-consumer` (the account exists but the consumer still uses the administrator's own
+login) and the CI check are later stages of the plan.

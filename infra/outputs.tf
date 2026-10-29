@@ -11,3 +11,8 @@ output "bronze_writer_email" {
   description = "The service account the Bronze job runs as, by impersonation."
   value       = google_service_account.bronze_writer.email
 }
+
+output "cdc_consumer_email" {
+  description = "The service account the CDC consumer will run as, by impersonation (stage 6)."
+  value       = google_service_account.cdc_consumer.email
+}

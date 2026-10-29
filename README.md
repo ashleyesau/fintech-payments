@@ -121,13 +121,14 @@ The lost-slot tests (`tests/test_cdc_lost_slot.py`) need a Postgres they can los
 The consumer reads the slot and lands the changes in a GCS bucket as gzipped NDJSON, one object per table and event date, confirming the slot only after the objects have landed.
 
 ```bash
-python -m cdc.main --once
-python -m cdc.main --follow
+GOOGLE_APPLICATION_CREDENTIALS=/Users/you/.config/gcloud_cdc/application_default_credentials.json python -m cdc.main --once
+GOOGLE_APPLICATION_CREDENTIALS=/Users/you/.config/gcloud_cdc/application_default_credentials.json python -m cdc.main --follow
 ```
 
 `--once` drains what is waiting and exits. `--follow` drains, then looks again every `CDC_POLL_INTERVAL_SECONDS` (60) until Ctrl-C. Exactly one of the two is required. Run it alongside a backfill (a second terminal), with the generator pointed at the same database and the consumer's `CDC_DB` and `CDC_SLOT_NAME` matching it.
 
-- **Credentials.** The consumer runs as the `cdc-consumer` service account (it may create a landed object and read one back, never update or delete one) through an impersonated credentials file, selected for one command with `GOOGLE_APPLICATION_CREDENTIALS`. It refuses to start (exit 3) unless that variable names a file, so it cannot fall back to your own unrestricted login. The guard checks that a file is named, not whose it is: `python -m cdc.permissions` asks Google what the account may do. Never a key file; nothing is read from the repo. The file carries no Google project, so the project comes from `CDC_PROJECT` (`payments-512910`). The bucket is `CDC_GCS_BUCKET` (`cdc_landing`).
+- **Credentials.** The consumer runs as the `cdc-consumer` service account (it may create a landed object and read one back, never update or delete one) through an impersonated credentials file, selected for one command with `GOOGLE_APPLICATION_CREDENTIALS`. It refuses to start (exit 3) unless that variable names a file, so it cannot fall back to your own unrestricted login. The guard checks that a file is named, not whose it is: `python -m cdc.permissions` signs in as the file's account, refuses to go on unless it is `cdc-consumer`, and asks Google (a metadata call, nothing written, no operation cost) what that account may do on the two buckets; it must exit 0. The file is made once, in its own gcloud configuration directory so your own login is untouched: `CLOUDSDK_CONFIG=$HOME/.config/gcloud_cdc gcloud auth application-default login --impersonate-service-account=cdc-consumer@payments-512910.iam.gserviceaccount.com --project=payments-512910` (a browser sign-in; the file holds a refresh token for your login, never a key, and stays outside the repo, mode 600). Nothing is read from the repo. The file carries no Google project, so the project comes from `CDC_PROJECT` (`payments-512910`). The bucket is `CDC_GCS_BUCKET` (`cdc_landing`).
+- **Who runs what.** The consumer and `python -m cdc.permissions` run as `cdc-consumer`. `python -m cdc.reconcile` and `python -m bronze.check` only list and read, so they run as you or as `bronze-writer` (`bronze.check` refuses to start without `GOOGLE_APPLICATION_CREDENTIALS`). `python -m cdc.lag` asks Postgres alone and needs no Google login. Two things need your own login because `cdc-consumer` can neither delete nor overwrite: `scripts/measure_upload_latency.py` (it deletes the objects it uploads) and removing a throwaway prefix or a finished run's objects.
 - **What it does.** A batch is whole transactions, at least `CDC_BATCH_SIZE` messages (10,000; Postgres counts begin, commit and relation messages too). Each batch becomes one object per table and event date (the row's own event time, as a South African date), named `cdc/<slot>/<table>/event_date=YYYY-MM-DD/lsn_<first>_<last>.ndjson.gz`, with the lowest and highest commit LSN as 16 hex digits. The objects upload `CDC_UPLOAD_WORKERS` (8) at a time, each created only if the name is free. Only when every object has landed does it confirm the slot, to the `end_lsn` of the last transaction. A crash or a failed upload before that leaves the slot where it was, and the next run replays the batch.
 - **Replays.** A replay builds the same names with the same events, but `ts_ms` and `ingested_at` are the consumer's clock, so the bytes differ. When a name is taken the consumer reads the existing object and compares the events without those two fields: the same events mean it already landed, anything else stops the run (exit 2) and nothing is overwritten. Downstream, dedup on `(source.commit_lsn, transaction.position)`; `cdc/dedup.py` has the helper.
 - **Retries.** An upload or read that fails transiently (a timeout, a dropped connection, HTTP 408, 429 or 5xx) is retried up to 5 attempts, waiting 1, 2, 4 and 8 seconds, each attempt with a 60 second timeout. A permission or login error fails at once.
@@ -209,7 +210,7 @@ Duplicates (the same change landed twice, as at-least-once delivery allows) are 
 The definition of done for the CDC work is one 100-merchant year taken through the whole path: generated into `fintech_cdc`, consumed into the bucket while it is generated, and reconciled. It needs the database and the slot from "CDC setup", an empty `fintech_cdc` (check with `docker exec fintech_pg psql -U sim -d fintech_cdc -c "SELECT count(1) FROM merchants"`) and no `checkpoint_cdc.json`, then `python -m cdc.lag` on the slot as the pre-flight. Three terminals:
 
 ```bash
-CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.main --follow
+GOOGLE_APPLICATION_CREDENTIALS=/Users/you/.config/gcloud_cdc/application_default_credentials.json CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.main --follow
 ```
 
 ```bash
@@ -223,7 +224,7 @@ CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.lag --watch 10
 Start the consumer first, so nothing waits in the slot. When the generator finishes, wait until `behind` in the lag report is close to zero, press Ctrl-C once in the consumer terminal (it finishes the batch in hand and exits 0), then:
 
 ```bash
-CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.main --once
+GOOGLE_APPLICATION_CREDENTIALS=/Users/you/.config/gcloud_cdc/application_default_credentials.json CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.main --once
 CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.reconcile
 ```
 
@@ -238,6 +239,8 @@ Measured on a 2017 MacBook Air against the real bucket (slot `cdc_r01`, seed 42,
 | Landed | 908 objects, 91.9 MB gzipped, one upload each (908 Class A operations of the month's 5,000) |
 | `--once` afterwards | "nothing was waiting in the slot" |
 | Reconcile against the bucket | `RECONCILED` in 3 min 43 s: 908 objects, 1,017,902 events, 0 duplicates, 1,017,884 inserts and 18 updates, and the replay equals the source in all five tables |
+
+That run was made on the owner's own login, before the consumer ran as `cdc-consumer`. The 45-day smoke test of the same seed was then repeated as `cdc-consumer` against the real bucket: it created the same 83 objects (9,959 and 617 changes from 44 transactions, as in the first smoke test), and a replay from a restored slot found all 83 already there and wrote nothing, which also shows the account can read back what it wrote.
 
 The consumer was not restarted during this run; restarts, kills and a lost slot are covered by the tests (`tests/test_cdc_killpoints.py`, `tests/test_cdc_lost_slot.py`).
 
@@ -292,9 +295,11 @@ only a saved plan after a go-ahead) are in [infra/README.md](infra/README.md); t
 | `cdc-consumer` | create and read back (`objectCreator`, `objectViewer`); no update, no delete | none |
 | `bronze-writer` | read (`objectViewer`) | read, write and delete (`objectUser`) |
 
-Access is by impersonation, with no key files. The table is what the code grants. Today the CDC consumer still runs on
-the administrator's own login, which is unrestricted; `cdc-consumer` exists but is not in use yet, and the Bronze commands
-use `bronze-writer` through `GOOGLE_APPLICATION_CREDENTIALS`.
+Access is by impersonation, with no key files. The table is what the code grants, and it is in force for the two jobs:
+the CDC consumer runs as `cdc-consumer` and the Bronze commands run as `bronze-writer`, each through its own credentials
+file selected with `GOOGLE_APPLICATION_CREDENTIALS`, and both refuse to start without it. The administrator's own login is
+still unrestricted: a command that has no guard (`cdc.reconcile`, `cdc.lag`, the scripts) uses it when the variable is
+unset. `python -m cdc.permissions` shows what `cdc-consumer` may do against Google itself, not against the Terraform state.
 
 CI has a `terraform` job: `fmt -check`, `init -backend=false` against the committed lock file, and `validate`. It has no
 credentials and runs no plan, so it shows the code is well formed, not that the real infrastructure matches it. That
@@ -334,7 +339,7 @@ Two limits on what the checks can say. At the default application rate a 15-mont
 
 ```
 simulator/          Core simulation modules
-cdc/                The CDC consumer: settings, the pgoutput decoder and type map, transactions, the change-event envelope, the column drift check, LSN helpers, errors; the slot reader, object naming and the replay compare (landing.py), the sink interface and its GCS writer, the loop (consumer.py), the dedup helper and the command line (main.py); the lag report (lag.py) and the reconciler (reconcile.py), each its own command
+cdc/                The CDC consumer: settings, the pgoutput decoder and type map, transactions, the change-event envelope, the column drift check, LSN helpers, errors; the slot reader, object naming and the replay compare (landing.py), the sink interface and its GCS writer, the loop (consumer.py), the dedup helper and the command line (main.py); the lag report (lag.py), the reconciler (reconcile.py) and the permissions check for the cdc-consumer account (permissions.py), each its own command
 bronze/             Bronze: settings and the credentials guard, the read-only landing reader, the per-object checks and the content hash (events.py), the streaming index (index.py), the command (check.py), the table schemas (schema.py) and the event-to-row mapping (mapping.py); read only, nothing is written yet
 config/             YAML calibration, archetypes, fees and causal rules
 scripts/            capture_pgoutput_fixtures.py, measure_decode_speed.py and measure_upload_latency.py (CDC decoder fixtures, decode speed, upload latency to the bucket); portfolio_check.py: end-to-end run that prints portfolio quality (minutes, not a test); boosted_backfill.py: a backfill with more loans, for the lending checks

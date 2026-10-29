@@ -67,5 +67,10 @@ already exists without changing it, and add the `cdc-consumer` account as new co
   quieten a plan.
 - `deletion_policy = "PREVENT"` was added to the buckets after the import was clean, so the import plan stayed
   free of changes. `gcloud` and the console can still delete a bucket.
-- The CDC consumer still runs on the administrator's own login. The `cdc-consumer` account exists but is not
-  in use until the consumer is switched to it by impersonation, which is a separate piece of work.
+- The CDC consumer runs as `cdc-consumer` by impersonation (since 2026-10-29): it needs a credentials file in its own
+  gcloud directory, a `CDC_PROJECT` setting (the file carries no project) and a guard that refuses to start without
+  `GOOGLE_APPLICATION_CREDENTIALS`. The guard proves a file is named, not whose it is, and `python -m cdc.permissions`
+  asks Google what the account may do. The administrator's own login stays unrestricted for any command without a guard.
+- A real smoke run as the account (83 objects created, then a replay that found all 83 already there) is what showed
+  `objectCreator` and `objectViewer` are enough. A first run of the smoke test on code without the guard silently used
+  the administrator's login and landed the objects as that, which is why the guard exists.

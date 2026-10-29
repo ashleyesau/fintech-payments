@@ -70,7 +70,26 @@ makes init fail if `.terraform.lock.hcl` lacks a hash for the runner, so it must
 `darwin_amd64` (made with `terraform providers lock -platform=darwin_amd64 -platform=linux_amd64`). CI never plans
 or applies: a plan needs the state bucket and an apply needs a go-ahead, so both are run by hand on the Air.
 
+## Running the CDC consumer as cdc-consumer
+
+The consumer runs as `cdc-consumer` through an impersonated credentials file made once in its own gcloud configuration
+directory (so the administrator's own login is untouched), and `cdc.main` refuses to start unless
+`GOOGLE_APPLICATION_CREDENTIALS` names a file:
+
+```
+CLOUDSDK_CONFIG=$HOME/.config/gcloud_cdc gcloud auth application-default login --impersonate-service-account=cdc-consumer@payments-512910.iam.gserviceaccount.com --project=payments-512910
+GOOGLE_APPLICATION_CREDENTIALS=$HOME/.config/gcloud_cdc/application_default_credentials.json python -m cdc.permissions
+GOOGLE_APPLICATION_CREDENTIALS=$HOME/.config/gcloud_cdc/application_default_credentials.json python -m cdc.main --once
+```
+
+The file holds a refresh token for the administrator's login and no key; it stays outside the repo, mode 600. It carries
+no Google project, so `CDC_PROJECT` supplies one. `python -m cdc.permissions` must exit 0: `cdc-consumer` may create, get
+and list objects in `cdc_landing` and nothing else, and has nothing on `fintech_bronze`. The account cannot delete or
+overwrite, so a throwaway prefix (for example a smoke test's) is removed with the administrator's own login, after
+checking the object count, and never `cdc_r01`. Proof on the real bucket (2026-10-29): the 45-day smoke test landed 83
+objects as `cdc-consumer`, and a replay from a restored slot found all 83 already there.
+
 ## Not here yet
 
-Running the CDC consumer as `cdc-consumer` (the account exists, but the consumer still uses the administrator's own
-login) is a later stage of the plan.
+Nothing of the plan's stages is left. Not done: a scheduled plan to catch drift (a plan is run by hand), and the cause of
+`cdc_landing`'s customer-supplied-key restriction (stated in code as found).

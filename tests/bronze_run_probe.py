@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 from pyiceberg.catalog.sql import SqlCatalog
 
@@ -25,6 +26,7 @@ from bronze.check import peak_memory_bytes
 from bronze.landing import LandingReader
 from bronze.run import NAMESPACE, TABLE_ORDER, run
 from tests.bronze_synth import PREFIX, SOURCE_DB, LazyLanding
+from tests.fakes import MemorySink
 
 
 def main(transactions: int, ceiling_mb: float, batch_rows: int) -> None:
@@ -46,7 +48,8 @@ def main(transactions: int, ceiling_mb: float, batch_rows: int) -> None:
 
         threading.Thread(target=watch, daemon=True).start()
         started = time.monotonic()
-        report = run(reader, catalog, warehouse=warehouse, source_db=SOURCE_DB, write=True, batch_rows=batch_rows)
+        report = run(reader, catalog, MemorySink(), catalog_file=Path(directory) / "catalog.db", warehouse=warehouse,
+                     source_db=SOURCE_DB, write=True, batch_rows=batch_rows)
         seconds = round(time.monotonic() - started, 1)
         peak = peak_memory_bytes()
         done.set()

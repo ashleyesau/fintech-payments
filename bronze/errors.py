@@ -93,3 +93,11 @@ class LandingChanged(ContractError):
     should. The landing is immutable and the Bronze account cannot write to it, so this means the objects
     changed under the run or the index is wrong. The message names the table or object and how many batches
     were already committed; a re-run starts from what Bronze then holds."""
+
+
+class MarkerError(ContractError):
+    """A run marker (bronze/marker.py) cannot be trusted or does not fit what is there: an object under _runs/ that
+    is not a marker or whose content does not follow Bronze contract section 8, a marker name already taken, a
+    marker that names a table or snapshot the catalog does not have (the catalog is behind the marker: rebuild it
+    from the marker, do not create the tables again), or a rebuild whose registered tables do not match the marker.
+    The message names the marker and what is wrong."""

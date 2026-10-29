@@ -153,6 +153,10 @@ class Index:
                 needed.add(self._transactions[lsn].holders[position])
         return [self.objects[number] for number in sorted(needed)]
 
+    def highest_commit_lsn(self) -> Optional[int]:
+        """The highest commit_lsn of any indexed change, or None when nothing is indexed (for the run marker)."""
+        return max(self._transactions) if self._transactions else None
+
     def _keys(self, table: str) -> Iterator[Key]:
         # Only called on a complete index, so every position has a holder.
         tables = [obj.table for obj in self.objects]

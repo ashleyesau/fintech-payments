@@ -17,147 +17,39 @@ commit message):
   - what pass 2 reads must be what pass 1 indexed (LandingChanged);
   - a table that appears while the run is creating it is loaded, checked and not appended to twice.
 """
-import hashlib
+import json
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
-from pyiceberg.catalog.sql import SqlCatalog
 from pyiceberg.exceptions import NoSuchTableError
 from pyiceberg.table import Table
 
 from bronze.batches import arrow_schema_of, events_to_arrow
+from bronze.catalog_copy import catalog_bytes
 from bronze.check import exit_code
 from bronze.errors import (ConfigError, ContractError, DuplicateBronzeKeys, EventError, IncompleteTransactions,
-                           LandingChanged, LandingError, MappingError, TableDriftError, UnknownBronzeKeys)
-from bronze.landing import LandingReader
-from bronze.mapping import row_to_event
+                           LandingChanged, LandingError, MappingError, MarkerError, TableDriftError,
+                           UnknownBronzeKeys)
+from bronze.marker import encode as encode_marker
+from bronze.marker import newest_marker, parse
 from bronze.run import NAMESPACE, TABLE_ORDER, BatchCommitted, run
 from bronze.schema import build_schema, table_properties
+from bronze.store import CATALOG_KEY, RUNS_PREFIX
 from bronze.tables import table_differences
-from cdc.columns import EXPECTED_COLUMNS
-from cdc.dedup import dedup, events_in
+from cdc.dedup import events_in
 from cdc.errors import SinkError
-from cdc.landing import CLOCK_FIELDS
 from tests.bronze_synth import DAY, PREFIX, SOURCE_DB, Landing, encode, event
-from tests.fakes import SimulatedCrash
+from tests.bronze_env import (DATES, TABLES, Env, Spy, bronze_events, busy_landing, landed, spread_landing,
+                              sort_events, without_clock)
+from tests.fakes import MemorySink, SimulatedCrash
 
-TABLES = tuple(EXPECTED_COLUMNS)
-DATES = ["2025-02-27", "2025-03-01", "2025-04-02"]
-
-
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
-class Env:
-    """A local warehouse: a SQLite catalog, a directory, and a run() bound to them."""
-
-    def __init__(self, path) -> None:
-        path.mkdir(parents=True, exist_ok=True)
-        self.dir = path
-        self.uri = f"file://{path / 'warehouse'}"
-        self.catalog = SqlCatalog("bronze", uri=f"sqlite:///{path / 'catalog.db'}", warehouse=self.uri)
-
-    def run(self, reader, **kwargs):
-        kwargs.setdefault("write", True)
-        kwargs.setdefault("warehouse", self.uri)
-        kwargs.setdefault("source_db", SOURCE_DB)
-        return run(reader, self.catalog, **kwargs)
-
-    def table(self, name: str) -> Table:
-        return self.catalog.load_table(f"{NAMESPACE}.{name}")
-
-    def has(self, name: str) -> bool:
-        return self.catalog.table_exists(f"{NAMESPACE}.{name}")
-
-    def snapshots(self) -> dict:
-        """table -> every snapshot id it has, or None where the table does not exist."""
-        return {name: ([s.snapshot_id for s in self.table(name).snapshots()] if self.has(name) else None)
-                for name in TABLE_ORDER}
-
-    def rows(self, name: str) -> list[dict]:
-        return self.table(name).scan().to_arrow().to_pylist()
-
-    def keys(self, name: str) -> list:
-        return sorted((r["commit_lsn"], r["transaction_position"]) for r in self.rows(name))
-
-    def files(self) -> dict:
-        warehouse = self.dir / "warehouse"
-        if not warehouse.exists():
-            return {}
-        return {str(p): (p.stat().st_size, p.stat().st_mtime_ns) for p in sorted(warehouse.rglob("*")) if p.is_file()}
-
-    def catalog_digest(self) -> str:
-        return hashlib.sha256((self.dir / "catalog.db").read_bytes()).hexdigest()
 
 
 @pytest.fixture
 def env(tmp_path):
     return Env(tmp_path)
-
-
-def busy_landing() -> Landing:
-    """Six transactions over three days and two months (each flushed alone, so every table has several objects),
-    then a loan application that is disbursed (a c and a u on loan_applications) with a repayment."""
-    land = Landing()
-    for date in DATES * 2:
-        land.transaction(("merchants", "c"), ("merchant_transactions", "c"), ("merchant_transactions", "c"),
-                         ("risk_events", "c"), date=date)
-        land.flush()
-    land.transaction(("loan_applications", "c"), date="2025-03-01")
-    land.flush()
-    land.transaction(("loan_applications", "u"), ("loan_repayments", "c"), date="2025-03-01")
-    land.flush()
-    return land
-
-
-def landed(land: Landing) -> dict:
-    """table -> the unique landed events (first copy, in listing order): an oracle that does not use bronze."""
-    by_table = {table: [] for table in TABLES}
-    for key in land.sink.list_keys(land.prefix):
-        for e in events_in(land.sink.objects[key]):
-            by_table[e["source"]["table"]].append(e)
-    return {table: dedup(events) for table, events in by_table.items()}
-
-
-def without_clock(e: dict) -> dict:
-    return {k: v for k, v in e.items() if k not in CLOCK_FIELDS}
-
-
-def sort_events(events: list[dict]) -> list[dict]:
-    return sorted(events, key=lambda e: (e["source"]["commit_lsn"], e["transaction"]["position"]))
-
-
-def bronze_events(env: Env, name: str) -> list[dict]:
-    return sort_events([row_to_event(name, row, source_db=SOURCE_DB) for row in env.rows(name)])
-
-
-class Spy:
-    """A source over a Landing's sink that counts and can interfere: on_read(key, n) is called before the n-th
-    read (from 1) of every key, may raise, and may return replacement bytes."""
-
-    def __init__(self, sink, on_read=None) -> None:
-        self.sink, self.on_read = sink, on_read
-        self.listings, self.reads, self._seen = 0, [], {}
-        self._lock = threading.Lock()
-
-    def list_keys(self, prefix):
-        self.listings += 1
-        return self.sink.list_keys(prefix)
-
-    def read(self, key):
-        with self._lock:
-            self.reads.append(key)
-            n = self._seen[key] = self._seen.get(key, 0) + 1
-        data = self.sink.read(key)
-        if self.on_read is not None:
-            replaced = self.on_read(key, n)
-            if replaced is not None:
-                return replaced
-        return data
-
-    def reader(self, prefix=PREFIX) -> LandingReader:
-        return LandingReader(self, prefix)
 
 
 # ---------------------------------------------------------------------------
@@ -376,15 +268,6 @@ def test_the_first_copy_in_the_listing_is_the_one_taken(env):
 # ---------------------------------------------------------------------------
 # batches and commits
 # ---------------------------------------------------------------------------
-def spread_landing(objects=7) -> Landing:
-    """One table, `objects` objects of two rows each, one transaction apiece."""
-    land = Landing()
-    for i in range(objects):
-        land.transaction(("merchant_transactions", "c"), ("merchant_transactions", "c"), date=DATES[i % 3])
-        land.flush()
-    return land
-
-
 def test_one_commit_per_batch_and_a_snapshot_for_each(env):
     land = spread_landing(7)
     batches = []
@@ -564,10 +447,11 @@ def test_an_interrupt_propagates_and_the_rerun_completes(env):
     assert len(env.rows("merchant_transactions")) == 10
 
 
-def test_a_table_dropped_from_the_catalog_is_created_again_and_the_others_are_left_alone(env):
+def test_a_table_dropped_from_the_catalog_before_any_marker_is_created_again_and_the_others_are_left_alone(env):
     land = busy_landing()
     env.run(land.reader())
     snapshots = env.snapshots()
+    env.store.objects.clear()                     # no marker: the first run died before writing one
     env.catalog.drop_table(f"{NAMESPACE}.risk_events")
     report = env.run(land.reader())
     assert report.tables["risk_events"].created and report.tables["risk_events"].rows_appended == 6
@@ -818,7 +702,7 @@ def test_a_table_created_by_someone_else_in_the_meantime_is_checked_and_not_appe
         table.append(events_to_arrow(theirs, arrow_schema_of(table.schema()), source_db=SOURCE_DB))
 
     catalog = RacingCatalog(env.catalog, target, populate)
-    report = run(land.reader(), catalog, warehouse=env.uri, source_db=SOURCE_DB, write=True)
+    report = run(land.reader(), catalog, env.store, catalog_file=env.catalog_file, warehouse=env.uri, source_db=SOURCE_DB, write=True)
     t = report.tables[target]
     assert not t.created and not t.existed
     assert t.rows_before == 6 and t.rows_appended == 0 and t.objects_to_read == 0
@@ -832,7 +716,7 @@ def test_a_table_created_by_someone_else_with_other_properties_is_a_drift_stop(e
     catalog = RacingCatalog(env.catalog, target, lambda table: None,
                             properties=table_properties("cdc/cdc_r02/", SOURCE_DB))
     with pytest.raises(TableDriftError):
-        run(land.reader(), catalog, warehouse=env.uri, source_db=SOURCE_DB, write=True)
+        run(land.reader(), catalog, env.store, catalog_file=env.catalog_file, warehouse=env.uri, source_db=SOURCE_DB, write=True)
     assert env.table(target).current_snapshot() is None
     assert all(env.table(n).current_snapshot() is None for n in TABLE_ORDER if env.has(n))
 
@@ -973,7 +857,7 @@ def test_a_bad_setting_is_refused_before_the_catalog_or_the_landing_is_touched(e
     land = busy_landing()
     spy, catalog = Spy(land.sink), Watching(env.catalog)
     with pytest.raises(ConfigError):
-        run(spy.reader(), catalog, warehouse=env.uri, source_db=SOURCE_DB, write=True, **kwargs)
+        run(spy.reader(), catalog, env.store, catalog_file=env.catalog_file, warehouse=env.uri, source_db=SOURCE_DB, write=True, **kwargs)
     assert catalog.calls == [] and spy.listings == 0
 
 
@@ -982,5 +866,307 @@ def test_a_catalog_error_other_than_no_such_table_stops_the_run(env):
     spy = Spy(land.sink)
     catalog = Watching(env.catalog, fail=("load_table", OSError("the metadata file cannot be read")))
     with pytest.raises(OSError):
-        run(spy.reader(), catalog, warehouse=env.uri, source_db=SOURCE_DB, write=True)
+        run(spy.reader(), catalog, env.store, catalog_file=env.catalog_file, warehouse=env.uri, source_db=SOURCE_DB, write=True)
     assert spy.listings == 0 and env.catalog.list_namespaces() == []
+
+
+# ---------------------------------------------------------------------------
+# the marker and the catalog copy (G3 step 4)
+# ---------------------------------------------------------------------------
+T0 = datetime(2026, 10, 29, 12, 0, 0, 500000, tzinfo=timezone.utc)
+
+
+def ticking(start=T0, step=timedelta(minutes=5)):
+    """A clock that moves on 5 minutes each time it is read."""
+    moments = iter(start + step * n for n in range(1000))
+    return lambda: next(moments)
+
+
+def markers(env) -> list[str]:
+    return sorted(k for k in env.store.objects if k.startswith(RUNS_PREFIX))
+
+
+def highest_lsn(land) -> int:
+    return max(e["source"]["commit_lsn"] for events in landed(land).values() for e in events)
+
+
+def test_a_first_run_writes_one_marker_that_describes_the_tables(env):
+    land = busy_landing()
+    report = env.run(land.reader(), clock=ticking())
+    assert markers(env) == ["_runs/20261029T120000500000Z.json"]
+    marker = newest_marker(env.store)
+    assert report.marker.written == marker.run_id == "20261029T120000500000Z"
+    assert marker.written_at == "2026-10-29T12:00:00.500000Z"
+    assert marker.landed_objects == len(land.sink.objects) == report.summary.objects
+    assert marker.highest_commit_lsn == highest_lsn(land)
+    for name in TABLE_ORDER:
+        table = env.table(name)
+        mark = marker.tables[name]
+        assert mark.snapshot_id == table.current_snapshot().snapshot_id == report.tables[name].snapshot_after
+        assert mark.rows == len(env.rows(name)) == report.tables[name].landed
+        assert mark.metadata_location == table.metadata_location == report.tables[name].metadata_location
+
+
+def test_a_first_run_copies_the_catalog_after_the_marker(env, tmp_path):
+    order = []
+    original_put, original_over = env.store.put_if_absent, env.store.overwrite
+    env.store.put_if_absent = lambda key, data: (order.append("marker"), original_put(key, data))[1]
+    env.store.overwrite = lambda key, data: (order.append("copy"), original_over(key, data))[1]
+    report = env.run(busy_landing().reader())
+    assert order == ["marker", "copy"] and report.marker.catalog_copied is True
+    assert env.store.objects[CATALOG_KEY] == catalog_bytes(env.catalog_file)
+    assert set(env.store.objects) == {CATALOG_KEY, markers(env)[0]}
+
+
+def test_the_marker_object_is_the_encoding_of_the_marker_and_parses(env):
+    env.run(busy_landing().reader(), clock=ticking())
+    (key,) = markers(env)
+    assert parse(key, env.store.objects[key]) == newest_marker(env.store)
+    assert env.store.objects[key] == encode_marker(newest_marker(env.store))
+
+
+def test_a_second_run_writes_no_marker_and_no_copy_and_only_looks_at_the_newest_marker(env):
+    land = busy_landing()
+    env.run(land.reader(), clock=ticking())
+    objects, overwrites, listings, reads = dict(env.store.objects), env.store.overwrites, env.store.listings, env.store.reads
+    report = env.run(land.reader(), clock=ticking(T0 + timedelta(days=1)))
+    assert env.store.objects == objects and env.store.overwrites == overwrites
+    assert env.store.listings == listings + 1 and env.store.reads == reads + 1
+    assert report.marker.current is True and report.marker.written is None and report.marker.catalog_copied is False
+    assert report.marker.newest == "20261029T120000500000Z"
+
+
+def test_a_late_object_gets_a_newer_marker_and_a_new_copy_and_the_old_marker_stays(env, tmp_path):
+    land = busy_landing()
+    env.run(land.reader(), clock=ticking())
+    first_marker = newest_marker(env.store)
+    first_key, first_copy = markers(env)[0], env.store.objects[CATALOG_KEY]
+    land.transaction(("merchants", "c"), ("merchant_transactions", "c"), date="2025-05-05")
+    land.flush()
+    report = env.run(land.reader(), clock=ticking(T0 + timedelta(hours=1)))
+    assert len(markers(env)) == 2 and markers(env)[0] == first_key
+    newest = newest_marker(env.store)
+    assert report.marker.newest == first_marker.run_id and report.marker.current is True
+    assert report.marker.written == newest.run_id > first_marker.run_id
+    assert newest.tables["merchants"].rows == first_marker.tables["merchants"].rows + 1
+    assert newest.tables["risk_events"] == first_marker.tables["risk_events"]          # untouched table, same mark
+    assert newest.tables["merchants"].snapshot_id != first_marker.tables["merchants"].snapshot_id
+    assert newest.landed_objects == len(land.sink.objects) and newest.highest_commit_lsn == highest_lsn(land)
+    assert env.store.objects[CATALOG_KEY] != first_copy and report.marker.catalog_copied is True
+    assert env.store.objects[markers(env)[0]] == encode_marker(first_marker)                    # the old marker is not rewritten
+
+
+def test_a_run_that_dies_after_its_last_commit_writes_no_marker_and_the_next_run_writes_it_without_appending(env):
+    land = busy_landing()
+    last = {}
+
+    def die_at_the_end(batch):
+        last["n"] = last.get("n", 0) + 1
+        if batch.table == "merchant_transactions":
+            raise SimulatedCrash("after the last commit")
+
+    with pytest.raises(SimulatedCrash):
+        env.run(land.reader(), on_batch=die_at_the_end)
+    assert markers(env) == [] and CATALOG_KEY not in env.store.objects
+    report = env.run(land.reader(), clock=ticking())
+    assert all(t.rows_appended == 0 for t in report.tables.values())
+    assert report.marker.newest is None and report.marker.written is not None and report.marker.catalog_copied is True
+    marker = newest_marker(env.store)
+    for name in TABLE_ORDER:
+        assert marker.tables[name].rows == len(env.rows(name)) and len(env.rows(name)) > 0
+    assert len(markers(env)) == 1
+    env.run(land.reader())
+    assert len(markers(env)) == 1
+
+
+def test_a_run_that_dies_between_two_tables_writes_no_marker_until_a_run_finishes(env):
+    land = busy_landing()
+
+    def die(batch):
+        if batch.table == "loan_applications":
+            raise SimulatedCrash("between tables")
+
+    with pytest.raises(SimulatedCrash):
+        env.run(land.reader(), on_batch=die)
+    assert markers(env) == []
+    env.run(land.reader())
+    assert len(markers(env)) == 1
+    for name, events in landed(land).items():
+        assert bronze_events(env, name) == sort_events(events)
+
+
+def test_a_marker_that_cannot_be_written_says_the_data_is_committed_and_the_next_run_writes_it(env):
+    land = busy_landing()
+    env.store.fail_put = lambda attempt, key: True
+    with pytest.raises(SinkError) as stop:
+        env.run(land.reader())
+    assert "data is committed in every table" in str(stop.value) and "Run again" in str(stop.value)
+    assert markers(env) == [] and CATALOG_KEY not in env.store.objects
+    assert all(len(env.rows(n)) > 0 for n in TABLE_ORDER)
+    env.store.fail_put = None
+    report = env.run(land.reader())
+    assert report.marker.written is not None and all(t.rows_appended == 0 for t in report.tables.values())
+    assert len(markers(env)) == 1 and CATALOG_KEY in env.store.objects
+
+
+def test_a_catalog_copy_that_fails_says_the_data_and_the_marker_are_committed(env):
+    land = busy_landing()
+    env.store.fail_overwrite = lambda n, key: True
+    with pytest.raises(SinkError) as stop:
+        env.run(land.reader())
+    assert "data and the run marker are committed" in str(stop.value) and "uses the marker" in str(stop.value)
+    assert len(markers(env)) == 1 and CATALOG_KEY not in env.store.objects
+    assert exit_code(stop.value) == 3
+
+
+def test_a_copy_that_failed_is_not_repeated_by_a_run_that_has_nothing_to_change(env):
+    # Decided order (G3 question 4): the marker, then the copy. The price is this: the copy stays behind until a run
+    # changes something. The repair for a lost or stale catalog is the rebuild from the marker, which does not use it.
+    land = busy_landing()
+    env.store.fail_overwrite = lambda n, key: True
+    with pytest.raises(SinkError):
+        env.run(land.reader())
+    env.store.fail_overwrite = None
+    report = env.run(land.reader())
+    assert report.marker.written is None and report.marker.catalog_copied is False
+    assert CATALOG_KEY not in env.store.objects
+
+
+def test_a_marker_name_that_is_already_taken_is_never_replaced(env):
+    land = busy_landing()
+    env.run(land.reader(), clock=ticking())
+    marker_key = markers(env)[0]
+    before = env.store.objects[marker_key]
+    land.transaction(("merchants", "c"), date="2025-05-05")
+    land.flush()
+    with pytest.raises(MarkerError) as stop:
+        env.run(land.reader(), clock=ticking())            # the same instant again
+    assert "never replaced" in str(stop.value) and env.store.objects[marker_key] == before
+    assert len(env.rows("merchants")) == 7                  # the late row is committed, the marker is what failed
+
+
+def test_an_empty_landing_gets_a_marker_with_no_snapshots_and_a_second_run_writes_nothing(env):
+    land = Landing()
+    report = env.run(land.reader(), clock=ticking())
+    marker = newest_marker(env.store)
+    assert marker.landed_objects == 0 and marker.highest_commit_lsn is None
+    assert all(m.snapshot_id is None and m.rows == 0 for m in marker.tables.values())
+    assert report.marker.written == marker.run_id and report.marker.catalog_copied is True
+    again = env.run(land.reader())
+    assert again.marker.current is True and again.marker.written is None and len(markers(env)) == 1
+
+
+def test_a_plan_reads_the_newest_marker_and_writes_nothing_to_the_store(env):
+    land = busy_landing()
+    env.run(land.reader(), clock=ticking())
+    land.transaction(("merchants", "c"), date="2025-05-05")
+    land.flush()
+    objects, overwrites = dict(env.store.objects), env.store.overwrites
+    report = env.run(land.reader(), write=False, clock=ticking(T0 + timedelta(days=1)))
+    assert env.store.objects == objects and env.store.overwrites == overwrites
+    assert report.marker.newest == "20261029T120000500000Z" and report.marker.current is True
+    assert report.marker.written is None and report.marker.catalog_copied is False
+
+
+def test_a_plan_on_an_empty_bucket_says_there_is_no_marker(env):
+    report = env.run(busy_landing().reader(), write=False)
+    assert report.marker.newest is None and report.marker.current is False and env.store.objects == {}
+
+
+def test_a_plan_says_the_marker_is_not_current_when_the_tables_have_moved_on(env):
+    land = busy_landing()
+    env.run(land.reader(), clock=ticking())
+    marker = newest_marker(env.store)
+    table = env.table("merchants")
+    table.append(events_to_arrow([event("merchants", "c", 0x7FFFFF00, 0, 1)], arrow_schema_of(table.schema()), source_db=SOURCE_DB))
+    land.put("merchants", DAY, [event("merchants", "c", 0x7FFFFF00, 0, 1)])
+    report = env.run(land.reader(), write=False)
+    assert report.marker.newest == marker.run_id and report.marker.current is False
+
+
+# the catalog is a cache of the bucket: when a marker exists the run must find what it names ------------------------
+
+def test_a_lost_catalog_stops_the_run_before_one_object_is_read_and_says_to_rebuild(env):
+    land = busy_landing()
+    env.run(land.reader(), clock=ticking())
+    lost = env.lose_catalog()
+    files, objects = lost.files(), dict(lost.store.objects)
+    spy = Spy(land.sink)
+    with pytest.raises(MarkerError) as stop:
+        lost.run(spy.reader())
+    assert "rebuild it from the marker" in str(stop.value) and "merchants" in str(stop.value)
+    assert spy.listings == 0 and spy.reads == []
+    assert lost.files() == files and lost.store.objects == objects
+    assert lost.catalog.list_namespaces() == []
+
+
+def test_a_plan_with_a_lost_catalog_stops_the_same_way(env):
+    land = busy_landing()
+    env.run(land.reader())
+    lost = env.lose_catalog()
+    with pytest.raises(MarkerError):
+        lost.run(land.reader(), write=False)
+
+
+def test_a_marker_whose_snapshot_the_table_does_not_have_stops_the_run_before_one_object_is_read(env):
+    land = busy_landing()
+    env.run(land.reader(), clock=ticking())
+    (key,) = markers(env)
+    body = json.loads(env.store.objects[key])
+    body["tables"]["risk_events"]["snapshot_id"] = 123456789
+    env.store.objects[key] = json.dumps(body).encode()
+    spy = Spy(land.sink)
+    with pytest.raises(MarkerError) as stop:
+        env.run(spy.reader())
+    assert "risk_events" in str(stop.value) and "no such snapshot" in str(stop.value)
+    assert spy.listings == 0 and spy.reads == []
+
+
+@pytest.mark.parametrize("stray", ["_runs/notes.txt", "_runs/20261029T120000500000Z.json.bak"])
+def test_an_object_under_runs_that_is_not_a_marker_stops_the_run_before_one_object_is_read(env, stray):
+    land = busy_landing()
+    env.store.objects[stray] = b"hello"
+    spy = Spy(land.sink)
+    with pytest.raises(MarkerError):
+        env.run(spy.reader())
+    assert spy.listings == 0 and spy.reads == [] and not (env.dir / "warehouse").exists()
+    assert env.catalog.list_namespaces() == []
+
+
+def test_a_newest_marker_that_cannot_be_read_stops_the_run_before_anything_is_created(env):
+    land = busy_landing()
+    env.store.objects["_runs/20261029T120000500000Z.json"] = b"{broken"
+    spy = Spy(land.sink)
+    with pytest.raises(MarkerError):
+        env.run(spy.reader())
+    assert spy.listings == 0 and env.catalog.list_namespaces() == []
+
+
+def test_a_store_that_cannot_be_listed_stops_the_run_before_anything_is_created(env):
+    land = busy_landing()
+
+    class Broken(MemorySink):
+        def list_keys(self, prefix):
+            raise SinkError("injected: the bucket gave up")
+
+    spy = Spy(land.sink)
+    with pytest.raises(SinkError):
+        env.run(spy.reader(), store=Broken())
+    assert spy.listings == 0 and env.catalog.list_namespaces() == []
+
+
+def test_the_run_writes_to_the_store_only_markers_and_the_catalog_copy(env):
+    land = busy_landing()
+    env.run(land.reader())
+    land.transaction(("merchants", "c"), date="2025-05-05")
+    land.flush()
+    env.run(land.reader())
+    assert set(env.store.objects) == {CATALOG_KEY, *markers(env)} and len(markers(env)) == 2
+    assert env.store.attempts == 2 and env.store.overwrites == 2
+
+
+def test_the_default_clock_is_the_current_utc_time_with_its_zone():
+    from bronze.run import _utc_now
+    now = _utc_now()
+    assert now.tzinfo is not None and now.utcoffset() == timedelta(0)
+    assert abs((datetime.now(timezone.utc) - now).total_seconds()) < 5

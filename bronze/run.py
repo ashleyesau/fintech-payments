@@ -10,6 +10,9 @@ The order of a run (G3 questions 1 to 3, decided 2026-10-29):
 
   1. Every table that already exists is loaded and checked against the contract (bronze.tables.check_table):
      schema, partition spec, the four properties, location. A difference is a TableDriftError, before pass 1.
+     Then the newest run marker is read (one listing of _runs/ and one read) and the catalog is checked against it
+     (bronze.marker.check_against_marker): a catalog that lacks a table the marker names, or its snapshot, stops the
+     run here, before any object is read, because creating the tables again would write them beside the old ones.
   2. Pass 1 (bronze.index.build_index): every landed object is read once, checked and mapped; the index must be
      complete. Anything wrong stops the run here, with no table created and nothing written.
   3. For every existing table, the keys Bronze holds are read (bronze.present) and compared with the index.
@@ -30,14 +33,21 @@ The order of a run (G3 questions 1 to 3, decided 2026-10-29):
      Whole objects gather into a Batch; a full batch is sorted and appended as ONE commit, and is committed
      before the next is built. The last, partial batch is committed at the end of the table.
 
+  7. At the end of a write run (G3 question 4): if the tables are not at the newest marker's snapshots, a new marker is
+     created (bronze.marker; every table holds every key the landing holds by now, which the total check of step 6
+     guarantees); then, if a marker was written, the local catalog file is copied to the bucket
+     (bronze.catalog_copy). A run that created a table or committed a batch has new snapshots, so it writes a marker:
+     this is "the copy follows any run that committed something". A failure of either is a SinkError whose message says what is already
+     committed; a re-run writes the marker. A plan only reads the newest marker.
+
 What a re-run does. A batch is whole objects and a commit is atomic, so after a crash a table holds some whole
 objects' missing events; the next run reads the keys again and finds only the objects still missing. With
 nothing missing a run makes no snapshot, creates no table and writes no file: it only reads. A key is appended
 once because the filter is the key check and because an event repeated inside one object is taken once.
 
-Nothing here writes the marker or copies the catalog; that is step 4. Errors are the bronze.errors classes
-and cdc.errors.SinkError; the command (step 5) turns them into exit codes. A failure while committing leaves the
-batches before it committed, and on_batch has been told about each of them, so the command can say how many.
+Errors are the bronze.errors classes and cdc.errors.SinkError; the command (step 5) turns them into exit codes. A
+failure while committing leaves the batches before it committed, and on_batch has been told about each of them, so the
+command can say how many.
 """
 from __future__ import annotations
 
@@ -45,6 +55,8 @@ import zlib
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable, Iterator, Optional
 
 from pyiceberg.catalog import Catalog
@@ -52,14 +64,18 @@ from pyiceberg.exceptions import NoSuchTableError, TableAlreadyExistsError
 from pyiceberg.table import Table
 
 from bronze.batches import Batch, arrow_schema_of, events_to_arrow
+from bronze.catalog_copy import copy_catalog
 from bronze.errors import ConfigError, LandingChanged
 from bronze.index import Index, IndexSummary, build_index
 from bronze.landing import LandedObject, LandingReader
+from bronze.marker import TableMark, build_marker, check_against_marker, describes, newest_marker, write_marker
 from bronze.present import PresentKeys, read_present_keys
 from bronze.schema import build_partition_spec, build_schema, table_properties
+from bronze.store import Store
 from bronze.tables import check_table
 from cdc.columns import EXPECTED_COLUMNS
 from cdc.dedup import events_in, key
+from cdc.errors import SinkError
 
 NAMESPACE = "bronze"
 # The order tables are written in (G3 question 4): dimension first, the big table last.
@@ -95,10 +111,19 @@ class TableReport:
 
 
 @dataclass(frozen=True, slots=True)
+class MarkerReport:
+    newest: Optional[str]        # run_id of the newest marker when the run started; None if there was none
+    current: bool                # the tables were at that marker's snapshots when the run started
+    written: Optional[str]       # run_id of the marker this run wrote; None if it wrote none
+    catalog_copied: bool         # this run replaced the catalog copy in the bucket
+
+
+@dataclass(frozen=True, slots=True)
 class RunReport:
     write: bool
     summary: IndexSummary
     tables: dict            # table -> TableReport, in TABLE_ORDER
+    marker: MarkerReport
 
 
 @dataclass(slots=True)
@@ -231,14 +256,20 @@ def _append_missing(work: _Work, index: Index, reader: LandingReader, *, source_
     return batches, done
 
 
-def run(reader: LandingReader, catalog: Catalog, *, warehouse: str, source_db: str, write: bool,
-        workers: int = 8, batch_rows: int = 100_000,
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def run(reader: LandingReader, catalog: Catalog, store: Store, *, catalog_file: Path, warehouse: str, source_db: str,
+        write: bool, workers: int = 8, batch_rows: int = 100_000, clock: Callable[[], datetime] = _utc_now,
         progress: Optional[Callable[[int, int], None]] = None,
         on_batch: Optional[Callable[[BatchCommitted], None]] = None) -> RunReport:
     """Bring Bronze up to date with the landing, or, with write=False, say what that would take.
 
     `warehouse` is the root the catalog was made with (gs://fintech_bronze, or a local directory URI): a table's
     location must be <warehouse>/bronze/<table>. `source_db` is the database every landed event must come from.
+    `store` is the Bronze bucket's own objects (the run marker and the catalog copy, bronze.store) and `catalog_file` the
+    local SQLite file behind `catalog`, which is what is copied. `clock` gives the UTC time a marker is named for.
     `progress(done, total)` is called by pass 1 after each object; `on_batch` after each committed batch.
     """
     if workers < 1:
@@ -258,6 +289,9 @@ def run(reader: LandingReader, catalog: Catalog, *, warehouse: str, source_db: s
         if bronze is not None:
             check_table(name, bronze, source_prefix=source_prefix, source_db=source_db, location=location(name))
             existing[name] = bronze
+    marker_before = newest_marker(store)
+    if marker_before is not None:
+        check_against_marker(marker_before, existing)
 
     # 2. pass 1
     index = build_index(reader, workers, progress, source_db=source_db)
@@ -270,6 +304,9 @@ def run(reader: LandingReader, catalog: Catalog, *, warehouse: str, source_db: s
              for name in TABLE_ORDER}
     before = {name: _snapshot_id(work.bronze) for name, work in works.items()}
     appended: dict[str, tuple[int, int]] = {name: (0, 0) for name in TABLE_ORDER}
+    current_before = marker_before is not None and describes(marker_before, before)
+    written: Optional[str] = None
+    copied = False
 
     # 5 and 6. create what is missing, then append what is missing
     if write:
@@ -287,6 +324,28 @@ def run(reader: LandingReader, catalog: Catalog, *, warehouse: str, source_db: s
                 appended[name] = _append_missing(work, index, reader, source_db=source_db, workers=workers,
                                                  batch_rows=batch_rows, on_batch=on_batch)
 
+        # 7. the marker, then the catalog copy
+        after = {name: _snapshot_id(works[name].bronze) for name in TABLE_ORDER}
+        if marker_before is None or not describes(marker_before, after):
+            marker = build_marker(
+                clock(), landed_objects=summary.objects, highest_commit_lsn=index.highest_commit_lsn(),
+                tables={name: TableMark(after[name], len(works[name].present) + appended[name][1],
+                                        works[name].bronze.metadata_location) for name in TABLE_ORDER})
+            try:
+                write_marker(store, marker)
+            except SinkError as error:
+                raise SinkError(f"the data is committed in every table, but the run marker could not be written "
+                                f"({error}). Run again to write it.") from error
+            written = marker.run_id
+        if written:         # a run that created a table or committed a batch has new snapshots, so it wrote a marker
+            try:
+                copy_catalog(catalog_file, store)
+            except SinkError as error:
+                raise SinkError(f"the data and the run marker are committed, but the copy of the catalog could not "
+                                f"be written ({error}). The catalog copy is not needed to rebuild: that uses the "
+                                "marker.") from error
+            copied = True
+
     tables = {}
     for name, work in works.items():
         batches, rows = appended[name]
@@ -296,4 +355,5 @@ def run(reader: LandingReader, catalog: Catalog, *, warehouse: str, source_db: s
             objects_to_read=len(work.objects), batches=batches, rows_appended=rows,
             snapshot_before=before[name], snapshot_after=_snapshot_id(work.bronze),
             metadata_location=work.bronze.metadata_location if work.bronze is not None else None)
-    return RunReport(write=write, summary=summary, tables=tables)
+    return RunReport(write=write, summary=summary, tables=tables,
+                     marker=MarkerReport(marker_before.run_id if marker_before else None, current_before, written, copied))

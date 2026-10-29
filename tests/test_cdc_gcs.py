@@ -343,3 +343,70 @@ def test_the_gcs_module_never_reads_a_key_file_or_a_path_from_the_environment():
     source = (ROOT / "cdc" / "gcs.py").read_text()
     for forbidden in ("service_account", "from_service_account", "GOOGLE_APPLICATION_CREDENTIALS", "credentials_file", "open("):
         assert forbidden not in source, forbidden
+
+
+# ---------------------------------------------------------------------------
+# overwrite and the content type (the Bronze job's catalog copy and run markers)
+# ---------------------------------------------------------------------------
+
+CATALOG = "_catalog/catalog.db"
+SQLITE = "application/vnd.sqlite3"
+
+
+def test_an_overwrite_sends_no_precondition_the_given_type_the_timeout_and_the_libraries_retry_off():
+    sink, bucket, sleeps = make()
+    assert sink.overwrite(CATALOG, DATA, SQLITE) is None
+    [call] = bucket.calls
+    assert call["op"] == "upload" and call["name"] == CATALOG and call["data"] == DATA and call["args"] == ()
+    assert call["kwargs"] == {"content_type": SQLITE, "timeout": 60, "retry": None}
+    assert "if_generation_match" not in call["kwargs"]
+    assert bucket.content_types == {CATALOG: SQLITE} and sleeps == []
+    assert all(blob.content_encoding is None for blob in bucket.blobs)
+
+
+def test_an_overwrite_replaces_the_object_and_a_create_still_refuses_to():
+    sink, bucket, _ = make()
+    sink.overwrite(CATALOG, b"first", SQLITE)
+    sink.overwrite(CATALOG, b"second", SQLITE)
+    assert bucket.objects == {CATALOG: b"second"}
+    assert sink.put_if_absent(CATALOG, b"third") is False and bucket.objects == {CATALOG: b"second"}
+
+
+def test_a_create_can_name_its_content_type_and_the_default_is_unchanged():
+    sink, bucket, _ = make()
+    sink.put_if_absent("_runs/a.json", b"{}", content_type="application/json")
+    sink.put_if_absent(KEY, DATA)
+    assert bucket.calls[0]["kwargs"]["content_type"] == "application/json"
+    assert bucket.calls[0]["kwargs"]["if_generation_match"] == 0
+    assert bucket.calls[1]["kwargs"]["content_type"] == "application/gzip"
+
+
+@pytest.mark.parametrize("failures", [1, 2, 3, 4])
+def test_an_overwrite_is_retried_on_the_same_schedule_as_a_write(failures):
+    sink, bucket, sleeps = make(script=[api_errors.ServiceUnavailable("try later")] * failures)
+    sink.overwrite(CATALOG, DATA, SQLITE)
+    assert sleeps == list(RETRY_WAITS[:failures]) and len(bucket.calls) == failures + 1
+    assert bucket.objects == {CATALOG: DATA}
+
+
+def test_an_overwrite_gives_up_after_five_attempts_and_says_what_it_was_doing():
+    sink, bucket, sleeps = make(script=[api_errors.ServiceUnavailable("try later")] * 6)
+    with pytest.raises(SinkError) as raised:
+        sink.overwrite(CATALOG, DATA, SQLITE)
+    assert len(bucket.calls) == 5 and sleeps == [1, 2, 4, 8]
+    assert "could not overwrite _catalog/catalog.db" in str(raised.value) and "gave up after 5 attempts" in str(raised.value)
+    assert bucket.objects == {}
+
+
+def test_an_overwrite_that_is_refused_fails_at_once_and_says_to_check_the_login():
+    sink, bucket, sleeps = make(script=[api_errors.Forbidden("no")])
+    with pytest.raises(SinkError) as raised:
+        sink.overwrite(CATALOG, DATA, SQLITE)
+    assert len(bucket.calls) == 1 and sleeps == []
+    assert "Retrying will not help" in str(raised.value) and "application-default login" in str(raised.value)
+
+
+def test_after_a_lost_reply_an_overwrite_writes_the_same_bytes_again():
+    sink, bucket, sleeps = make(script=[Lost(requests.exceptions.ConnectionError("reply lost"))])
+    sink.overwrite(CATALOG, DATA, SQLITE)
+    assert len(bucket.calls) == 2 and sleeps == [1] and bucket.objects == {CATALOG: DATA}

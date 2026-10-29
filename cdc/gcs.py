@@ -7,7 +7,9 @@ It follows the Sink rules (cdc/sink.py) and the decisions M4-Q4b and M4-Q5:
   - An object is created with the precondition if_generation_match=0, so an existing object is
     never overwritten; "already exists" (HTTP 412) is not a failure, it returns False and the
     caller compares the two (landing.land_object).
-  - Content type application/gzip, and no Content-Encoding (the contract: with it GCS would
+  - The Bronze job also uses overwrite(), for the one object that is meant to be replaced (the catalog copy,
+    bronze/store.py); the consumer never does, and its account could not.
+  - Content type application/gzip by default, and no Content-Encoding (the contract: with it GCS would
     transcode on download and some clients would hand back decompressed bytes).
   - Retries are this module's own: up to 5 attempts, waiting 1, 2, 4 and 8 seconds between them,
     each attempt with a 60 second timeout. The library's own retry is switched off (retry=None) so
@@ -83,15 +85,22 @@ class GcsSink:
                             "(then: gcloud auth application-default set-quota-project <project>)") from error
         return cls(client.bucket(bucket_name), sleep)
 
-    def put_if_absent(self, key: str, data: bytes) -> bool:
+    def put_if_absent(self, key: str, data: bytes, content_type: str = CONTENT_TYPE) -> bool:
         def attempt() -> bool:
             try:
                 self._bucket.blob(key).upload_from_string(
-                    data, content_type=CONTENT_TYPE, if_generation_match=0, timeout=TIMEOUT_SECONDS, retry=None)
+                    data, content_type=content_type, if_generation_match=0, timeout=TIMEOUT_SECONDS, retry=None)
             except api_errors.PreconditionFailed:
                 return False
             return True
         return self._retrying(f"write {key}", attempt)
+
+    def overwrite(self, key: str, data: bytes, content_type: str) -> None:
+        """Write the object, replacing any object of that name. Nothing in the CDC consumer calls this (its account
+        may not overwrite); the Bronze job uses it for the one object that is meant to be replaced, the catalog copy.
+        Same retries as a write. A retry after a lost reply just writes the same bytes again, so no compare is needed."""
+        self._retrying(f"overwrite {key}", lambda: self._bucket.blob(key).upload_from_string(
+            data, content_type=content_type, timeout=TIMEOUT_SECONDS, retry=None))
 
     def read(self, key: str) -> bytes:
         return self._retrying(

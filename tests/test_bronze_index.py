@@ -465,3 +465,27 @@ def test_the_index_is_small_per_event():
     (transaction,) = index._transactions.values()
     assert transaction.hashes.itemsize == 8 and transaction.holders.itemsize == 4
     assert len(transaction.hashes) == len(transaction.holders) == 1000
+
+
+# ---------------------------------------------------------------------------
+# the highest commit LSN (for the run marker)
+# ---------------------------------------------------------------------------
+
+def test_the_highest_commit_lsn_is_the_largest_indexed_and_none_for_an_empty_landing():
+    assert build(Landing()).highest_commit_lsn() is None
+    land = Landing()
+    first = land.transaction(("merchants", "c"))
+    last = land.transaction(("risk_events", "c"), ("merchants", "c"))
+    land.flush([last])
+    land.flush([first])
+    assert last.commit_lsn > first.commit_lsn
+    assert build(land).highest_commit_lsn() == last.commit_lsn
+
+
+def test_a_replayed_transaction_does_not_change_the_highest_commit_lsn():
+    land = Landing()
+    land.transaction(("merchants", "c"))
+    tx = land.transaction(("merchants", "c"))
+    land.flush()
+    land.flush([tx], clock=7)
+    assert build(land).highest_commit_lsn() == tx.commit_lsn

@@ -21,6 +21,8 @@ class MemorySink:
         self.listings = 0
         self.fail_put: Optional[Callable[[int, str], bool]] = None   # (attempt number from 1, key)
         self.fail_read: Optional[Callable[[str], bool]] = None
+        self.overwrites = 0   # overwrite calls (the Bronze catalog copy), counting the ones that failed
+        self.fail_overwrite: Optional[Callable[[int, str], bool]] = None   # (call number from 1, key)
         self._lock = threading.Lock()
 
     def put_if_absent(self, key: str, data: bytes) -> bool:
@@ -32,6 +34,13 @@ class MemorySink:
                 return False
             self.objects[key] = data
             return True
+
+    def overwrite(self, key: str, data: bytes) -> None:
+        with self._lock:
+            self.overwrites += 1
+            if self.fail_overwrite is not None and self.fail_overwrite(self.overwrites, key):
+                raise SinkError(f"injected failure overwriting {key}")
+            self.objects[key] = data
 
     def list_keys(self, prefix: str) -> list[str]:
         with self._lock:

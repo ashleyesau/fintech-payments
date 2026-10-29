@@ -2,8 +2,8 @@
 config.py: Bronze settings and the credentials guard.
 
 Every field reads from an environment variable with the BRONZE_ prefix, or from .env. The
-landing bucket and the slot name are not repeated here: they come from CdcSettings (CDC_GCS_BUCKET
-and CDC_SLOT_NAME), so the reader and the consumer can never disagree about where the objects are.
+landing bucket, the slot name and the source database are not repeated here: they come from CdcSettings
+(CDC_GCS_BUCKET, CDC_SLOT_NAME and CDC_DB), so the reader and the consumer can never disagree about where the objects are.
 
 Authentication is application-default credentials and nothing else. The Bronze job runs as the
 bronze-writer service account (GCS Plan (V2) section 13): read on cdc_landing, read and write on
@@ -53,6 +53,12 @@ class BronzeSettings(BaseSettings):
     @property
     def slot_name(self) -> str:
         return CdcSettings().slot_name
+
+    @property
+    def source_db(self) -> str:
+        """The database the landed events came from (source.db of every event): the mapping refuses an event
+        from any other, so one warehouse is built from one source database (G2 Q1)."""
+        return CdcSettings().db
 
     @property
     def landing_prefix(self) -> str:

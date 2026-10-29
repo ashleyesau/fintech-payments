@@ -14,14 +14,14 @@ from bronze.config import BronzeSettings
 from bronze.errors import ConfigError, ContractError, DisagreementError, EventError, IncompleteTransactions
 from bronze.index import REPORTED, Index, build_index
 from cdc.errors import SinkError
-from tests.bronze_synth import DAY, Landing, encode, event, name
+from tests.bronze_synth import DAY, SOURCE_DB, Landing, encode, event, name
 from tests.fakes import MemorySink
 
 M, T, A, R, K = "merchants", "merchant_transactions", "loan_applications", "loan_repayments", "risk_events"
 
 
 def build(land, workers=8):
-    return build_index(land.reader(), workers)
+    return build_index(land.reader(), workers, source_db=SOURCE_DB)
 
 
 def real_shape():
@@ -379,7 +379,7 @@ def test_the_first_copy_is_the_one_listed_first_even_when_it_is_read_last():
     gated = Gated()
     gated.objects = land.sink.objects
     from bronze.landing import LandingReader
-    index = build_index(LandingReader(gated, land.prefix), workers=2)
+    index = build_index(LandingReader(gated, land.prefix), workers=2, source_db=SOURCE_DB)
     assert index.object_of((t1.commit_lsn, 0)).key == narrow
 
 
@@ -428,7 +428,7 @@ def test_at_most_twice_the_workers_objects_are_in_flight_while_the_oldest_is_slo
     slow = Slow()
     slow.objects = land.sink.objects
     from bronze.landing import LandingReader
-    runner = threading.Thread(target=lambda: build_index(LandingReader(slow, land.prefix), workers=2))
+    runner = threading.Thread(target=lambda: build_index(LandingReader(slow, land.prefix), workers=2, source_db=SOURCE_DB))
     runner.start()
     try:
         with seen:

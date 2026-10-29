@@ -10,6 +10,7 @@ What is held here, each with a mutation that fails it (see the commit message):
   - the inverse is as strict as the forward direction.
 """
 import json
+import random
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 
@@ -17,7 +18,7 @@ import pytest
 
 from bronze.check import exit_code
 from bronze.errors import ContractError, MappingError
-from bronze.mapping import DROPPED_FIELDS, ENVELOPE_FIELDS, event_to_row, row_to_event
+from bronze.mapping import DROPPED_FIELDS, ENVELOPE_FIELDS, event_to_row, row_to_event, sort_rows
 from bronze.schema import INTEGER_WIDTHS, build_schema
 from cdc.columns import EXPECTED_COLUMNS
 from cdc.envelope import Envelope
@@ -867,3 +868,89 @@ def test_every_line_of_the_lazy_landing_maps():
             to_row(e)
             seen += 1
     assert seen == 90
+
+
+# ---------------------------------------------------------------------------
+# sort_rows: a courtesy order, not a promise (G2 Q9)
+# ---------------------------------------------------------------------------
+
+def keyed(commit_lsn, position):
+    return {"commit_lsn": commit_lsn, "transaction_position": position, "tag": f"{commit_lsn}:{position}"}
+
+
+def keys_of(rows):
+    return [(r["commit_lsn"], r["transaction_position"]) for r in rows]
+
+
+def test_sort_rows_orders_by_commit_lsn_then_position():
+    rows = [keyed(30, 1), keyed(10, 2), keyed(30, 0), keyed(20, 0), keyed(10, 0), keyed(10, 1)]
+    assert keys_of(sort_rows(rows)) == [(10, 0), (10, 1), (10, 2), (20, 0), (30, 0), (30, 1)]
+
+
+def test_sort_rows_is_ascending_in_both_parts():
+    rows = [keyed(2, 5), keyed(1, 9)]
+    assert keys_of(sort_rows(rows)) == [(1, 9), (2, 5)]
+    rows = [keyed(1, 9), keyed(1, 2)]
+    assert keys_of(sort_rows(rows)) == [(1, 2), (1, 9)]
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_sort_rows_gives_the_same_order_for_any_arrival_order(seed):
+    rows = [keyed(lsn, position) for lsn in range(1, 25) for position in range(lsn % 4 + 1)]
+    expected = sort_rows(rows)
+    shuffled = rows[:]
+    random.Random(seed).shuffle(shuffled)
+    assert sort_rows(shuffled) == expected
+    assert keys_of(expected) == sorted(keys_of(rows))
+
+
+def test_sort_rows_returns_a_new_list_and_leaves_its_input_alone():
+    rows = [keyed(3, 0), keyed(1, 0), keyed(2, 0)]
+    before = deepcopy(rows)
+    result = sort_rows(rows)
+    assert rows == before and result is not rows and keys_of(result) == [(1, 0), (2, 0), (3, 0)]
+
+
+def test_sort_rows_of_nothing_and_of_one_row():
+    assert sort_rows([]) == []
+    assert sort_rows([keyed(1, 0)]) == [keyed(1, 0)]
+
+
+def test_sort_rows_orders_real_rows_by_their_key_not_by_event_time_or_by_listing_order():
+    """Objects list by event date first, so a table's objects are not in LSN order; the rows still come out so."""
+    from cdc.dedup import events_in
+    from tests.bronze_synth import Landing
+
+    land = Landing()
+    for i in range(6):
+        land.transaction(("merchant_transactions", "c"), ("merchant_transactions", "c"),
+                         date="2025-03-02" if i % 2 == 0 else "2025-03-01")
+    land.flush()
+    reader = land.reader()
+    rows = [to_row(e) for obj in reader.list_keys() for e in events_in(reader.read(obj.key))]
+    assert keys_of(rows) != sorted(keys_of(rows))                # the listing order is not the key order
+    assert keys_of(sort_rows(rows)) == sorted(keys_of(rows)) and len(rows) == 12
+
+
+def clock_free(row):
+    return {k: v for k, v in row.items() if k not in ("ts_ms", "ingested_at")}
+
+
+def test_a_rerun_from_the_same_input_gives_the_same_ordered_content():
+    """Two consumers cut the same transactions into objects at different times: the sorted rows are the same
+    in the same order, apart from the consumer's own clock. Compared as content, not as file bytes."""
+    from cdc.dedup import events_in
+    from tests.bronze_synth import Landing
+
+    def sorted_rows(cuts):
+        land = Landing()
+        txs = [land.transaction(("merchants", "c"), ("merchants", "c")) for _ in range(5)]
+        for clock, members in cuts:
+            land.flush([txs[i] for i in members], clock=clock)
+        reader = land.reader()
+        rows = [to_row(e) for obj in reader.list_keys() for e in events_in(reader.read(obj.key))]
+        return [clock_free(r) for r in sort_rows(rows)]
+
+    one_cut = sorted_rows([(0, [0, 1, 2, 3, 4])])
+    assert one_cut == sorted_rows([(5, [0, 1]), (9, [2, 3, 4])]) == sorted_rows([(1, [0]), (2, [1, 2]), (3, [3]), (4, [4])])
+    assert len(one_cut) == 10

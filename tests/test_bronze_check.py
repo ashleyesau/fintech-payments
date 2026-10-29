@@ -22,7 +22,7 @@ from bronze.config import CREDENTIALS_VARIABLE, BronzeSettings
 from bronze.errors import ConfigError, DisagreementError, EventError, IncompleteTransactions, LandingError
 from bronze.index import IndexSummary, build_index
 from cdc.errors import ObjectMismatch, SinkError
-from tests.bronze_synth import DAY, Landing, event
+from tests.bronze_synth import DAY, SOURCE_DB, Landing, event
 from tests.fakes import MemorySink
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -71,13 +71,14 @@ def test_a_good_run_prints_the_counts_and_exits_zero(creds):
     assert code == EXIT_OK and err.strip().endswith("read 4 of 4 objects")
     lines = out.splitlines()
     assert lines[0] == f"reading gs://cdc_landing/cdc/cdc_r01/ with 8 reads at a time (credentials file {file})"
+    assert lines[1] == "mapping every event to its Bronze row, source database fintech_cdc"
     assert "objects        4" in lines
     assert "events         7  (7 unique, 0 duplicates)" in lines
     assert "transactions   4  (0 incomplete)" in lines
     table = {line.split()[0]: line.split()[1:] for line in lines if line.split() and line.split()[0] in
              (M, T, A, R, K, "total")}
     assert table == {M: ["2", "0"], T: ["2", "0"], A: ["1", "1"], R: ["0", "0"], K: ["1", "0"], "total": ["6", "1"]}
-    assert lines[-1] == "OK: every object is valid and every transaction is complete"
+    assert lines[-1] == "OK: every object is valid, every event maps to a Bronze row and every transaction is complete"
     assert "SECRET" not in out + err
 
 
@@ -104,7 +105,7 @@ def test_the_workers_setting_is_what_the_index_is_built_with(creds, monkeypatch)
     monkeypatch.setenv("BRONZE_READ_WORKERS", "3")
     seen = []
     real = check.build_index
-    monkeypatch.setattr(check, "build_index", lambda reader, workers, progress: seen.append(workers) or real(reader, workers, progress))
+    monkeypatch.setattr(check, "build_index", lambda reader, workers, progress, source_db: seen.append(workers) or real(reader, workers, progress, source_db=source_db))
     run(small_run(), creds[0])
     assert seen == [3]
 
@@ -291,7 +292,7 @@ def test_machine_memory_is_a_size_or_unknown(monkeypatch):
 def test_progress_is_reported_for_every_object_in_order():
     land = small_run()
     seen = []
-    build_index(land.reader(), 2, lambda done, total: seen.append((done, total)))
+    build_index(land.reader(), 2, lambda done, total: seen.append((done, total)), source_db=SOURCE_DB)
     assert seen == [(n, 4) for n in range(1, 5)]
 
 

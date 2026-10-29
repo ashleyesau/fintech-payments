@@ -347,6 +347,17 @@ def event_to_row(event: dict, *, source_db: str) -> dict:
     return row
 
 
+def sort_rows(rows: list[dict]) -> list[dict]:
+    """A new list of `rows` ordered by (commit_lsn, transaction_position), the key of a change.
+
+    A courtesy and not a promise (G2 Q9, decision D-d): the writer sorts each batch it appends so that a
+    re-run writes rows in the same order and files are tidy, but no reader may rely on any order in a Bronze
+    table; Silver orders explicitly. Within one table a key is unique, so the order is total and does not
+    depend on the order the rows arrived in. The input is not changed.
+    """
+    return sorted(rows, key=lambda row: (row["commit_lsn"], row["transaction_position"]))
+
+
 def row_to_event(table: str, row: dict, *, source_db: str) -> dict:
     """The event a Bronze row came from, with the contract's field order and every field of the landed object.
     Strict in the same way: a value of the wrong Python type, a missing or extra column, or a before_ column

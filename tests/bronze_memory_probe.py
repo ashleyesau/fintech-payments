@@ -18,7 +18,7 @@ import time
 from bronze.check import peak_memory_bytes
 from bronze.index import build_index
 from bronze.landing import LandingReader
-from tests.bronze_synth import PREFIX, LazyLanding
+from tests.bronze_synth import PREFIX, SOURCE_DB, LazyLanding
 
 
 def main(transactions: int, ceiling_mb: float) -> None:
@@ -36,7 +36,7 @@ def main(transactions: int, ceiling_mb: float) -> None:
 
     threading.Thread(target=watch, daemon=True).start()
     started = time.monotonic()
-    index = build_index(reader)
+    index = build_index(reader, source_db=SOURCE_DB)
     done.set()
     summary = index.summary()
     print(json.dumps({"objects": summary.objects, "events": summary.events_read, "unique": summary.unique_events,

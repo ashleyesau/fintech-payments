@@ -13,7 +13,7 @@ first in the listing, always.
 
 What stops the run, with nothing committed:
   - while building: an object that is not valid, an event that fails a structural check
-    (bronze.events), two copies of one change that disagree (DisagreementError), a failed read
+    (bronze.events) or whose values do not map to a Bronze row (bronze.mapping, MappingError), two copies of one change that disagree (DisagreementError), a failed read
     (cdc.errors.SinkError, after the sink's own retries);
   - on the finished index: incomplete transactions (Index.require_complete, IncompleteTransactions).
 Completeness cannot be decided until every object is read, so it is a question put to the finished
@@ -171,17 +171,18 @@ class Index:
 
 
 def build_index(reader: LandingReader, workers: int = 8,
-                progress: Optional[Callable[[int, int], None]] = None) -> Index:
+                progress: Optional[Callable[[int, int], None]] = None, *, source_db: str) -> Index:
     """List the landing prefix once and read every object once. Raises on the first object that fails;
     objects still being read are left to finish and their results dropped. `progress(done, total)` is
-    called after each object is folded in."""
+    called after each object is folded in. `source_db` is the database the events must come from; every
+    event is mapped to a Bronze row on the way (bronze.mapping), so value drift stops here."""
     if workers < 1:
         raise ConfigError(f"workers must be at least 1, not {workers}")
     objects = reader.list_keys()
     index = Index(objects)
 
     def read_and_summarise(obj: LandedObject) -> ObjectSummary:
-        return summarise_object(obj, reader.read(obj.key))
+        return summarise_object(obj, reader.read(obj.key), source_db=source_db)
 
     window = 2 * workers
     pending: deque[Future] = deque()

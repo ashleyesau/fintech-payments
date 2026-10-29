@@ -9,7 +9,7 @@ import pytest
 
 from bronze.index import build_index
 from bronze.landing import LandingReader
-from tests.bronze_synth import PREFIX, Landing, LazyLanding, line_template
+from tests.bronze_synth import PREFIX, SOURCE_DB, Landing, LazyLanding, line_template
 
 T, M = "merchant_transactions", "merchants"
 
@@ -45,7 +45,7 @@ def test_two_transactions_share_a_day_and_the_days_run_on_from_the_first_of_janu
 
 def test_the_index_over_a_lazy_landing_has_the_counts_it_was_built_with():
     lazy = LazyLanding(6, tx_size=100, merchants=5)
-    summary = build_index(LandingReader(lazy, PREFIX)).summary()
+    summary = build_index(LandingReader(lazy, PREFIX), source_db=SOURCE_DB).summary()
     assert (summary.objects, summary.events_read, summary.unique_events, summary.transactions) == (12, 600, 600, 6)
     assert summary.by_table[T]["c"] == 570 and summary.by_table[M]["c"] == 30
     assert summary.duplicates == 0 and summary.incomplete == 0 and lazy.events == 600

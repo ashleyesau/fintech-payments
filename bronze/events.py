@@ -19,7 +19,9 @@ event named, on:
   - a transaction position outside its size, or a commit LSN that is not an integer below 2^63;
   - an event that does not belong to the object that holds it: its table or event date differs from
     the object's name, or its commit LSN lies outside the LSN range in the name.
-Value shapes (timestamps, types, NUMERIC text) are checked by the G2 mapping, not here.
+Value shapes (timestamps, types, NUMERIC text) are checked by the mapping (bronze.mapping), which
+summarise_object runs on every event after these checks and discards the row: a value of the wrong shape stops
+pass 1, before any commit (G2 Q7).
 
 Two copies of one change must agree on everything except ts_ms and ingested_at. event_hash is what
 the index compares: an 8 byte blake2b digest of the event without those two fields, keys sorted, so
@@ -34,8 +36,9 @@ import json
 import zlib
 from dataclasses import dataclass
 
-from bronze.errors import EventError
+from bronze.errors import EventError, MappingError
 from bronze.landing import LandedObject
+from bronze.mapping import event_to_row
 from cdc.columns import EXPECTED_COLUMNS
 from cdc.dedup import events_in
 from cdc.envelope import Envelope, Source, TransactionRef
@@ -158,8 +161,10 @@ def event_hash(event: dict) -> int:
     return int.from_bytes(hashlib.blake2b(text.encode("ascii"), digest_size=8).digest(), "big")
 
 
-def summarise_object(obj: LandedObject, data: bytes) -> ObjectSummary:
-    """Parse and check every event of one landed object and reduce it to index rows."""
+def summarise_object(obj: LandedObject, data: bytes, *, source_db: str) -> ObjectSummary:
+    """Parse and check every event of one landed object and reduce it to index rows. Each event is also
+    mapped to its Bronze row (bronze.mapping) and the row thrown away, so a value of the wrong shape, or an
+    event from another source database, raises a MappingError that names this object and event."""
     try:
         events = events_in(data)
     except (OSError, EOFError, zlib.error, ValueError) as error:
@@ -170,5 +175,10 @@ def summarise_object(obj: LandedObject, data: bytes) -> ObjectSummary:
             commit_lsn, position, size, op = check_event(event, obj)
         except _Violation as violation:
             raise EventError(f"{obj.key}, event {number}: {violation}") from None
+        try:
+            event_to_row(event, source_db=source_db)
+        except MappingError as error:
+            error.where = f"{obj.key}, event {number}: "
+            raise
         rows.append((commit_lsn, position, size, op, event_hash(event)))
     return ObjectSummary(obj, rows)

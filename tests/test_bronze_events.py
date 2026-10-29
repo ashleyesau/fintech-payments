@@ -15,7 +15,7 @@ from bronze.events import LSN_LIMIT, MAX_TRANSACTION_SIZE, check_event, event_ha
 from bronze.landing import LandedObject
 from cdc.columns import EXPECTED_COLUMNS
 from cdc.envelope import Envelope, to_line
-from tests.bronze_synth import DAY, FIRST_LSN, LSN_STEP, PREFIX, encode, event, name
+from tests.bronze_synth import DAY, FIRST_LSN, LSN_STEP, PREFIX, SOURCE_DB, encode, event, name
 
 TABLES = tuple(EXPECTED_COLUMNS)
 LAST_LSN = FIRST_LSN + 5 * LSN_STEP
@@ -158,7 +158,7 @@ def test_each_break_stops_the_object_naming_where_and_what(label):
     edit(broken)
     landed = obj(table)
     with pytest.raises(EventError) as caught:
-        summarise_object(landed, encode([other, broken]))
+        summarise_object(landed, encode([other, broken]), source_db=SOURCE_DB)
     message = str(caught.value)
     assert landed.key in message and "event 2" in message, message
     assert text in message, message
@@ -170,14 +170,14 @@ def test_an_event_error_is_a_contract_error(label):
     broken = valid(table, op)
     edit(broken)
     with pytest.raises(ContractError):
-        summarise_object(obj(table), encode([broken]))
+        summarise_object(obj(table), encode([broken]), source_db=SOURCE_DB)
 
 
 def test_the_extra_column_message_says_what_to_do_about_a_schema_change():
     broken = valid()
     add_column("after")(broken)
     with pytest.raises(EventError, match="new migration, a CDC update and a new Bronze contract version"):
-        summarise_object(obj(), encode([broken]))
+        summarise_object(obj(), encode([broken]), source_db=SOURCE_DB)
 
 
 def test_the_order_of_the_envelope_fields_does_not_matter_but_the_order_of_columns_does():
@@ -187,7 +187,7 @@ def test_the_order_of_the_envelope_fields_does_not_matter_but_the_order_of_colum
 
 def test_a_non_object_event_is_refused():
     with pytest.raises(EventError, match="the event is not an object"):
-        summarise_object(obj(), gzip.compress(b"[1]\n"))
+        summarise_object(obj(), gzip.compress(b"[1]\n"), source_db=SOURCE_DB)
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ NOT_NDJSON = {
 def test_an_object_that_is_not_gzipped_ndjson_of_events_stops_the_run(label):
     landed = obj()
     with pytest.raises(EventError) as caught:
-        summarise_object(landed, NOT_NDJSON[label])
+        summarise_object(landed, NOT_NDJSON[label], source_db=SOURCE_DB)
     assert landed.key in str(caught.value) and "not valid gzipped NDJSON" in str(caught.value)
 
 
@@ -219,7 +219,7 @@ def test_an_object_that_is_not_gzipped_ndjson_of_events_stops_the_run(label):
 def test_a_summary_keeps_key_size_op_and_hash_of_each_event_in_order():
     events = [event("merchants", "c", FIRST_LSN, 0, 2), event("merchants", "c", FIRST_LSN, 1, 2, serial=1),
               event("merchants", "c", FIRST_LSN + LSN_STEP, 0, 1, serial=2)]
-    summary = summarise_object(obj(), encode(events))
+    summary = summarise_object(obj(), encode(events), source_db=SOURCE_DB)
     assert summary.obj == obj()
     assert summary.rows == [(FIRST_LSN, 0, 2, "c", event_hash(events[0])),
                             (FIRST_LSN, 1, 2, "c", event_hash(events[1])),
@@ -230,7 +230,7 @@ def test_a_summary_keeps_key_size_op_and_hash_of_each_event_in_order():
 def test_text_with_non_ascii_characters_is_fine():
     e = valid()
     e["after"]["archetype"] = "caf\u00e9 \u2028"
-    assert summarise_object(obj(), encode([e])).rows[0][:4] == (FIRST_LSN + LSN_STEP, 0, 1, "c")
+    assert summarise_object(obj(), encode([e]), source_db=SOURCE_DB).rows[0][:4] == (FIRST_LSN + LSN_STEP, 0, 1, "c")
 
 
 # ---------------------------------------------------------------------------

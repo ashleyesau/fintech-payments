@@ -130,3 +130,11 @@ def test_the_guard_reads_the_process_environment_by_default(monkeypatch, tmp_pat
 
 def test_a_config_error_is_a_bronze_error():
     assert issubclass(ConfigError, BronzeError)
+
+
+def test_the_source_database_comes_from_the_cdc_settings(monkeypatch):
+    monkeypatch.delenv("CDC_DB", raising=False)
+    assert BronzeSettings(_env_file=None).source_db == "fintech_cdc"
+    monkeypatch.setenv("CDC_DB", "fintech_cdc_r02")
+    assert BronzeSettings(_env_file=None).source_db == "fintech_cdc_r02"
+    assert not hasattr(BronzeSettings(_env_file=None), "db")

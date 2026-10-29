@@ -12,7 +12,7 @@ Run it with GOOGLE_APPLICATION_CREDENTIALS pointing at the bronze-writer credent
 to start without it (bronze.config.require_credentials). Settings are the BRONZE_ ones and, for the
 landing bucket and slot, the CDC_ ones (bronze/config.py, .env). Exit codes:
 
-    0    every object is valid and every transaction is complete
+    0    every object is valid, every event maps to a Bronze row and every transaction is complete
     1    anything else that is not a contract stop: missing credentials, a usage error, a bug
     2    a contract stop: a name or an event the contract does not allow, two copies of one change that
          disagree, an incomplete transaction (the summary is still printed for the last one)
@@ -120,12 +120,13 @@ def execute(settings: BronzeSettings, *,
         reader = reader_factory(settings) if reader_factory else open_landing(settings, environ)
         say(f"reading gs://{settings.landing_bucket}/{reader.prefix} with {settings.read_workers} reads at a time "
             f"(credentials file {credentials})")
+        say(f"mapping every event to its Bronze row, source database {settings.source_db}")
 
         def progress(done: int, total: int) -> None:
             if done % PROGRESS_EVERY == 0 or done == total:
                 complain(f"  read {done:,} of {total:,} objects")
 
-        index = build_index(reader, settings.read_workers, progress)
+        index = build_index(reader, settings.read_workers, progress, source_db=settings.source_db)
         summary = index.summary()
         say(render(summary))
         index.require_complete()
@@ -142,7 +143,7 @@ def execute(settings: BronzeSettings, *,
     say("")
     say(f"time {int(seconds // 60)} min {int(seconds % 60)} s, peak memory {_megabytes(peak_memory_bytes())} "
         f"of {_megabytes(machine_memory_bytes())} on this machine")
-    say("OK: every object is valid and every transaction is complete")
+    say("OK: every object is valid, every event maps to a Bronze row and every transaction is complete")
     return EXIT_OK
 
 

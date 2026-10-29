@@ -30,6 +30,7 @@ from tests.bronze_contract import TABLES as CONTRACT_COLUMNS
 from tests.fakes import MemorySink
 
 PREFIX = "cdc/cdc_r01/"
+SOURCE_DB = "fintech_cdc"   # source.db of every synthetic event, and CdcSettings().db
 DAY = "2025-03-01"
 FIRST_LSN = 0x2B32560
 LSN_STEP = 0x100

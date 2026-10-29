@@ -16,3 +16,8 @@ checkpoint.json
 checkpoint_*.json
 checkpoints/
 catalog.db
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+*.tfvars

@@ -66,3 +66,22 @@ class MappingError(ContractError):
 
     def __str__(self) -> str:
         return self._text()
+
+
+class TableDriftError(ContractError):
+    """An existing Bronze table differs from what the contract generates: a column, a field id, a type or a
+    required flag, the partition spec, one of the four table properties, or the location (bronze/tables.py).
+    Raised at the start of a run, before pass 1 and before any write, so a table nobody should have changed
+    is never appended to. The message names the table and every difference (the first ten are shown)."""
+
+
+class DuplicateBronzeKeys(ContractError):
+    """A Bronze table holds the same key (commit_lsn, transaction_position) in more than one row, though the
+    contract allows one row per key (bronze/present.py). Appending on top of it would make it worse, so the run
+    stops. The message names the table, how many rows repeat an earlier row's key and the first such key."""
+
+
+class UnknownBronzeKeys(ContractError):
+    """A Bronze table holds a key that the landing does not hold for that table (bronze/present.py): an object
+    was deleted from the landing, or the warehouse was built from another landing prefix, or the table was
+    written by something else. The message names the table, how many rows and the first key."""

@@ -1,4 +1,4 @@
-# Both buckets exist already and are imported (imports.tf), not created. The attributes below are what the
+# Both buckets exist already and were imported into the state, not created. The attributes below are what the
 # read-only inventory of 2026-10-29 showed; soft delete is set to 0 explicitly because the provider's
 # default is 7 days. prevent_destroy is on both: they hold the landed objects and the Bronze tables.
 # The three encryption enforcement settings on cdc_landing are stated as the inventory printed them

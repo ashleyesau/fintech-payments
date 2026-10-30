@@ -395,3 +395,17 @@ def test_a_click_argument_is_a_problem_too(tmp_path):
         "scripts/plain.py: a flag at line 3 is not a literal string, so the README table cannot be checked against it"]
     (root / "scripts/plain.py").write_text('from click import argument\n\n@argument("name")\ndef f(name):\n    pass\n\nif __name__ == "__main__":\n    f()\n', encoding="utf-8")
     assert len(problems_between(root, readme(*GOOD_ROWS))) == 1
+
+
+# ---------------------------------------------------------------------------
+# exit codes
+# ---------------------------------------------------------------------------
+
+def test_the_bronze_exit_codes_are_the_documented_values():
+    """The README documents 0 / 1 / 2 / 3 / 130 for every Bronze command. Pin them so a change is visible."""
+    from bronze.check import EXIT_OK, EXIT_ERROR, EXIT_CONTRACT, EXIT_BUCKET, EXIT_INTERRUPTED
+    assert EXIT_OK == 0
+    assert EXIT_ERROR == 1
+    assert EXIT_CONTRACT == 2
+    assert EXIT_BUCKET == 3
+    assert EXIT_INTERRUPTED == 130

@@ -369,6 +369,61 @@ An Iceberg commit writes data files, then a manifest and a manifest list, then a
 - **Cost on the real bucket.** One listing of the bucket (Class A), and reads (Class B) of the newest marker, the catalog copy and each table's metadata files, manifest lists and manifests. Deletes cost nothing. Run `scripts/storage_request_counts.py` before and after to record it.
 - **Exit codes.** 0 nothing is wrong (orphans, if any, are listed). 1 configuration or usage (no credentials, a negative `--min-age-hours`) or a bug. 2 something is wrong. 3 the bucket failed (a delete that fails part way says how many files it had deleted; run it again to continue). 130 Ctrl-C.
 
+### When a check fails
+
+Every command exits 0 on success or prints one `error:` line to stderr and exits non-zero. Exit 2 also prints one `PROBLEM:` line per issue found. Read the error line first.
+
+**`python -m bronze.verify`**
+
+- Exit 2, "NOT PROVEN": the source changed while the check ran. Stop the generator and consumer, run `python -m cdc.lag` to confirm the slot is intact, then run verify again.
+- Exit 2, "NOT VERIFIED": a digest mismatch. Read the `PROBLEM:` lines. Do not write to either bucket; do not delete anything; investigate.
+- Exit 3 (source): check Docker is running (`docker ps -a`, `docker start fintech_pg` if needed), confirm `CDC_DB` is `fintech_cdc`, run `python -m cdc.lag` to confirm the slot is reserved and not lost.
+- Exit 3 (bucket): check `GOOGLE_APPLICATION_CREDENTIALS`; retry.
+- Exit 1: missing credentials, the local catalog missing a table, or a bug. Run `python -m bronze.main --rebuild-catalog` if the catalog file was lost; otherwise fix the configuration.
+
+**`python -m bronze.orphans`**
+
+- Exit 2, "catalog BEHIND the marker": run `python -m bronze.main --rebuild-catalog` (must exit 0), then run orphans again.
+- Exit 2, "files a table uses are not in the bucket (data loss)": stop all writes; do not delete anything; investigate.
+- Exit 2, "unexpected object": read the list; never run with `--delete` until a run without it exits 0.
+- Exit 3 with `--delete` in progress (says how many files it deleted): run it again; the rest of the orphans are still there.
+
+**`python -m bronze.check`**
+
+- Exit 2: an event in the landing breaks the change-event contract. The error names the object, the event, the table and the field. Check the CDC consumer logs for errors and confirm migration 003 is applied to `fintech_cdc`.
+
+**`python -m bronze.main`**
+
+- Exit 2, "table drifted": the table in the bucket differs from what the code generates. There is no ALTER TABLE path; this needs a new contract version and a rebuilt warehouse. Do not write until the upgrade path is designed.
+- Exit 2, "catalog behind marker": run `--rebuild-catalog`.
+- Exit 2, "pass 2 did not match pass 1": the landing changed while the run was reading. Run again when nothing is landing.
+- Exit 3 (bucket failed during a write): the error says how many batches committed successfully. Run again; it continues from there and commits nothing twice.
+- Exit 130 (Ctrl-C during a write): same; run again.
+
+### Limits and alternatives
+
+The free-tier limits for project `payments-512910` are 5,000 Class A (listings, object writes) and 50,000 Class B (object reads) per billing month, verified against Google's own page (2026-10-30). Usage pools across buckets in the project. A refused create is not billed. `python -m cdc.lag` asks Postgres only and costs nothing.
+
+Approximate cost per run on the real bucket:
+
+| Command | Class A | Class B |
+|---|---|---|
+| `bronze.verify` | ~1 | ~908 + ~290 (landing and Bronze table reads) |
+| `bronze.verify --landing-only` | ~1 | ~908 (Bronze reads skipped; **NOT full proof**) |
+| `bronze.check` | ~1 | ~908 |
+| `bronze.check --roundtrip` | ~2 | ~1,816 |
+| `bronze.orphans` | ~1 | ~20 to 50 |
+| `bronze.main` (plan or no-op write) | ~3 | ~908 |
+| `bronze.main --write` (first write, one-time) | 110-130 | ~908 |
+| `bronze.main --write` (repeat, no-op) | ~3 | ~908 |
+| `bronze.main --rebuild-catalog` | ~1 | ~300 |
+
+**How to check the month's standing.** Run `env -u GOOGLE_APPLICATION_CREDENTIALS PYTHONPATH=. python scripts/storage_request_counts.py` on the Air with your own login. The second window total is the budget figure. Before any cloud step, state the expected cost; confirm that the Class A total after that step stays under 4,500 (leaving 500 headroom); stop if the actual difference exceeds the expected amount.
+
+**When Class A headroom is low.** Use `python -m bronze.check` (no `--roundtrip`) to check the landed events without reading Bronze (~1 Class A, ~908 Class B). Defer `python -m bronze.verify` to the next billing month.
+
+**When Class B headroom is low.** `python -m cdc.reconcile --directory DIR` checks the landing from a local copy of the objects (no bucket reads once copied). `scripts/rehearse_bronze.py` runs against a local warehouse and costs nothing.
+
 ### The write at 11M events (measured, not run on the real bucket)
 
 A 1,000-merchant year is about 11M events, which the free tier cannot take through the real bucket, so `scripts/measure_bronze_scale.py` measures the same code over a generated landing of 11M events in 11,000 objects on a local warehouse (`PYTHONPATH=. python -u scripts/measure_bronze_scale.py --work DIR`; it deletes nothing). It checks that every count is right, that a second run changes nothing, and that the landed-against-Bronze check finds no problem, and it reports, with a flag and no failure, whether commits slow down, whether memory grows with the table, the peak memory and the number of files the write creates (each a Class A operation on GCS). The result is in DECISION_LOG ("P6 done"): on the sandbox the write took 31 minutes and stayed under the 1,000 MB design figure above its start; commits and pass 2 memory were flat; the write creates about 620 files; the replay check (`bronze/replay.py`) is the one thing that does not scale, because PyIceberg's batch reader holds the table in memory (about 13 GB at 11M events). The rows are generated and repetitive, so file sizes are not representative; the Air's times are an estimate.

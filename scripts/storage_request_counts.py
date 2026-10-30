@@ -38,7 +38,6 @@ from typing import Callable, Optional
 PROJECT = "payments-512910"
 METRIC = "storage.googleapis.com/api/request_count"
 API = "https://monitoring.googleapis.com/v3/projects/{project}/timeSeries"
-MONTH_START = "2026-10-01T07:00:00Z"
 FIRST_P2_END = "2026-10-29T11:03:00Z"
 FIRST_P2_TOTALS = {"cdc_landing": 6_367, "fintech_bronze": 254, "payments-512910-tfstate": 88}   # 6,709 in all
 CLASS_A = ("WriteObject", "ListObjects", "SetIamPolicy", "UpdateBucketMetadata")
@@ -47,7 +46,9 @@ CLASS_B = ("ReadObject", "GetObjectMetadata", "GetBucketMetadata", "GetIamPolicy
 FREE = ("DeleteObject",)
 REFUSED = ("WriteObject", "FAILED_PRECONDITION")      # a create the bucket refused because the name was taken
 LIMIT_A, LIMIT_B = 5_000, 50_000
-FIRST_WRITE_A = (110, 125)                            # GCS Plan (V2) section 12, plus the marker, the catalog copy and listings
+# Google's billing rule: only successful reads, writes and listings (verified against the 1-to-28-October report).
+GOOGLE_A_METHODS = frozenset(("WriteObject", "ListObjects"))
+GOOGLE_B_METHODS = frozenset(("ReadObject", "GetObjectMetadata", "GetBucketMetadata"))
 
 Counts = dict   # (bucket, method, response_code) -> requests
 
@@ -111,6 +112,25 @@ def gcloud_token() -> str:
 
 
 # ---------------------------------------------------------------------------
+# month start and Google's billing rule
+# ---------------------------------------------------------------------------
+
+def default_month_start(now: datetime) -> str:
+    """The first of the billing month containing `now`, at 07:00 UTC. An assumption: Google's billing month
+    starts at 07:00 UTC while Pacific daylight saving is in effect (UTC-7) and at 08:00 UTC otherwise; using
+    07:00 year-round is off by one hour in winter but the billing month boundary is already an assumption."""
+    return now.astimezone(timezone.utc).replace(day=1, hour=7, minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def google_estimate(counts: Counts) -> tuple[int, int]:
+    """(Class A, Class B) by Google's billing rule: successful reads, writes and listings only. Verified against
+    the 1-to-28-October report in DECISION_LOG (Class B matched exactly; Class A matched within 8 requests)."""
+    a = sum(n for (_, method, code), n in counts.items() if method in GOOGLE_A_METHODS and code == "OK")
+    b = sum(n for (_, method, code), n in counts.items() if method in GOOGLE_B_METHODS and code == "OK")
+    return a, b
+
+
+# ---------------------------------------------------------------------------
 # what the counts mean
 # ---------------------------------------------------------------------------
 
@@ -170,7 +190,7 @@ def table(counts: Counts, title: str) -> list[str]:
     return lines
 
 
-def render(first: Counts, now: Counts, first_end: str, end: str, start: str, check: str) -> str:
+def render(first: Counts, now: Counts, first_end: str, end: str, start: str, check: str, *, planned_a: int = 0) -> str:
     lines = [f"window 1: {start} to {first_end}", f"window 2: {start} to {end}", "", check, ""]
     lines += table(first, f"window 1 ({first_end})") + [""] + table(now, f"window 2 ({end})") + [""]
     moved = difference(now, first)
@@ -182,13 +202,17 @@ def render(first: Counts, now: Counts, first_end: str, end: str, start: str, che
         lines.append(f"  {scope:<26} Class A {a:>16}   Class B {c['b']:>7,}   deletes (free) {c['free']:>6,}")
         for method, n in c["unmapped"].items():
             lines.append(f"    NOT MAPPED: {method} {n:,} (not counted in A or B)")
+    ga, gb = google_estimate(now)
+    lines += ["", f"Google's billed estimate (successful reads, writes and listings only): Class A {ga:,}   Class B {gb:,}"]
     total = classes["all"]
     lines += ["", f"against the second-hand free-tier limits: Class A {total['a_low'] / LIMIT_A:.1%} to {total['a_high'] / LIMIT_A:.1%} of {LIMIT_A:,}; "
                   f"Class B {total['b'] / LIMIT_B:.1%} of {LIMIT_B:,}"]
-    low, high = FIRST_WRITE_A
     room = LIMIT_A - total["a_high"]
-    lines.append(f"headroom for the first write (about {low} to {high} Class A, plus one marker, one catalog copy and a few listings): "
-                 f"{room:,} Class A left at the high count" + ("" if room >= high + 10 else "  (NOT ENOUGH)"))
+    headroom = f"headroom: {room:,} Class A left at the high count"
+    if planned_a:
+        remaining = room - planned_a
+        headroom += f"; with {planned_a:,} planned: {remaining:,} remaining" + ("" if remaining >= 0 else " (NOT ENOUGH)")
+    lines.append(headroom)
     return "\n".join(lines)
 
 
@@ -198,20 +222,30 @@ def main(argv: Optional[list[str]] = None, *, token_source: Callable[[], str] = 
     out, err = out or sys.stdout, err or sys.stderr
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--project", default=PROJECT)
-    parser.add_argument("--start", default=MONTH_START, help="the start of the billing month, UTC (an assumption: 07:00 UTC)")
+    parser.add_argument("--start", default=None,
+                        help="the start of the billing month, UTC (default: first of the current month at 07:00 UTC)")
     parser.add_argument("--first-end", default=FIRST_P2_END, help="the end of the first window: when the first P2 was read")
     parser.add_argument("--end", default=None, help="the end of the second window (default: now)")
+    parser.add_argument("--planned-a", default=0, type=int, metavar="N",
+                        help="Class A operations about to be run; shown alongside the headroom")
     args = parser.parse_args(argv)
+    start = args.start or default_month_start(clock())
     end = args.end or clock().astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:00Z")
     try:
         token = token_source()
-        first = counts_between(args.project, args.start, args.first_end, token, get)
-        now = counts_between(args.project, args.start, end, token, get)
+        if args.first_end <= start:
+            first = {}
+            matched = True
+            check = (f"first-window check skipped: --first-end {args.first_end} is at or before --start {start}; "
+                     "pass --first-end to set a calibration point in the current month")
+        else:
+            first = counts_between(args.project, start, args.first_end, token, get)
+            matched, check = reproduces_first_p2(first)
+        now = counts_between(args.project, start, end, token, get)
     except RuntimeError as error:
         print(f"error: {error}", file=err)
         return 1
-    matched, check = reproduces_first_p2(first)
-    print(render(first, now, args.first_end, end, args.start, check), file=out)
+    print(render(first, now, args.first_end, end, start, check, planned_a=args.planned_a), file=out)
     return 0 if matched else 2
 
 

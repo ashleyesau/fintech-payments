@@ -150,7 +150,7 @@ def test_the_scanner_sees_the_real_flags():
     assert problems == []
     assert commands["python -m bronze.main"] == {"--write", "--rebuild-catalog"}
     assert commands["python -m cdc.main"] == {"--once", "--follow"}
-    assert commands["scripts/storage_request_counts.py"] == {"--project", "--start", "--first-end", "--end"}
+    assert commands["scripts/storage_request_counts.py"] == {"--project", "--start", "--first-end", "--end", "--planned-a"}
     assert commands["scripts/capture_pgoutput_fixtures.py"] == set()
     assert "--mode" in commands["python -m simulator.main"]
     assert len(commands) >= 16

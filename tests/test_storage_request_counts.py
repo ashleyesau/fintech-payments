@@ -285,7 +285,8 @@ def test_the_report_names_the_windows_the_check_the_tables_the_delta_the_classes
     assert "NOT MAPPED: ComposeObject 3 (not counted in A or B)" in text
     assert "Class A   1,002 to 1,102   Class B   4,816" in text
     assert "Class A 20.0% to 22.0% of 5,000; Class B 9.6% of 50,000" in text
-    assert "headroom for the first write (about 110 to 125 Class A, plus one marker, one catalog copy and a few listings): 3,898 Class A left" in text
+    assert "headroom: 3,898 Class A left at the high count" in text
+    assert "Google's billed estimate (successful reads, writes and listings only): Class A 1,002   Class B 4,816" in text
     assert "NOT ENOUGH" not in text
 
 
@@ -297,11 +298,14 @@ def test_a_window_with_no_change_says_so_and_a_single_class_a_figure_has_no_rang
     assert "  all                        Class A               10   Class B       0" in classes and " to " not in classes
 
 
-def test_the_headroom_warns_only_when_the_room_is_under_the_write_and_ten():
-    def headroom(a):
-        return src.render({}, {(L, "WriteObject", "OK"): a}, "A", "B", "S", "c").splitlines()[-1]
-    assert headroom(5_000 - 135).endswith("135 Class A left at the high count")
-    assert headroom(5_000 - 134).endswith("(NOT ENOUGH)")
+def test_the_headroom_line_shows_room_and_planned_a_when_given():
+    def headroom(a, planned=0):
+        return src.render({}, {(L, "WriteObject", "OK"): a}, "A", "B", "S", "c", planned_a=planned).splitlines()[-1]
+    assert headroom(5_000 - 135) == "headroom: 135 Class A left at the high count"
+    assert headroom(5_000 - 135, planned=100) == "headroom: 135 Class A left at the high count; with 100 planned: 35 remaining"
+    assert headroom(5_000 - 135, planned=135) == "headroom: 135 Class A left at the high count; with 135 planned: 0 remaining"
+    assert "(NOT ENOUGH)" in headroom(5_000 - 135, planned=136)
+    assert "NOT ENOUGH" not in headroom(5_000 - 135)    # no planned: no NOT ENOUGH however low the room
 
 
 # ---------------------------------------------------------------------------
@@ -323,9 +327,10 @@ def test_the_command_exits_zero_when_the_first_window_reproduces_the_first_p2():
     assert code == 0 and err == "" and "the first window reproduces the first P2 (6,709 requests" in out
     assert "since window 1" in out and "1,816" in out
     ends = [query(u)["interval.endTime"][0] for u in api.calls]
-    assert ends == [END1, END2] and {query(u)["interval.startTime"][0] for u in api.calls} == {src.MONTH_START}
+    expected_start = src.default_month_start(datetime(2026, 10, 30, 19, 30, 45, tzinfo=timezone.utc))
+    assert ends == [END1, END2] and {query(u)["interval.startTime"][0] for u in api.calls} == {expected_start}
     assert api.tokens == ["TOKEN", "TOKEN"] and f"/projects/{src.PROJECT}/" in api.calls[0]
-    assert f"window 2: {src.MONTH_START} to {END2}" in out                  # now, to the minute
+    assert f"window 2: {expected_start} to {END2}" in out                   # now, to the minute
 
 
 def test_the_command_still_prints_everything_but_exits_two_when_the_check_fails():
@@ -343,10 +348,10 @@ def test_the_options_reach_the_requests():
 
 
 def test_the_default_end_is_now_to_the_minute_in_utc():
-    zone = timezone.utc
-    code, out, err, api = run_main({END1: [GOOD_FIRST], "2026-12-31T23:59:00Z": [GOOD_FIRST]},
-                                   clock=lambda: datetime(2026, 12, 31, 23, 59, 59, tzinfo=zone))
-    assert code == 0 and query(api.calls[1])["interval.endTime"] == ["2026-12-31T23:59:00Z"]
+    # Use an October clock so FIRST_P2_END (Oct 29) is not skipped; the test checks --end defaulting to now.
+    code, out, err, api = run_main({END1: [GOOD_FIRST], "2026-10-31T23:59:00Z": [GOOD_FIRST]},
+                                   clock=lambda: datetime(2026, 10, 31, 23, 59, 59, tzinfo=timezone.utc))
+    assert code == 0 and query(api.calls[1])["interval.endTime"] == ["2026-10-31T23:59:00Z"]
 
 
 def test_a_token_failure_exits_one_with_one_error_line_and_nothing_on_stdout():
@@ -369,3 +374,166 @@ def test_an_api_failure_exits_one_and_prints_nothing_of_the_figures():
 def test_the_token_is_never_printed():
     code, out, err, _ = run_main({END1: [GOOD_FIRST], END2: [GOOD_FIRST]}, token=lambda: "SUPER-SECRET-TOKEN")
     assert "SUPER-SECRET" not in out + err
+
+
+# ---------------------------------------------------------------------------
+# default_month_start (step 6)
+# ---------------------------------------------------------------------------
+
+def test_default_month_start_returns_the_first_of_the_month_at_07_utc():
+    assert src.default_month_start(datetime(2026, 10, 30, 19, 0, 0, tzinfo=timezone.utc)) == "2026-10-01T07:00:00Z"
+    assert src.default_month_start(datetime(2026, 11, 15, 12, 0, 0, tzinfo=timezone.utc)) == "2026-11-01T07:00:00Z"
+    assert src.default_month_start(datetime(2026, 1, 1, 7, 0, 0, tzinfo=timezone.utc)) == "2026-01-01T07:00:00Z"
+
+
+def test_default_month_start_uses_utc_not_local_time(monkeypatch):
+    # A datetime that is Oct 31 in UTC+2 but still Oct 30 in UTC should give November (UTC month)
+    import datetime as dt_mod
+    late_oct = datetime(2026, 10, 31, 0, 30, 0, tzinfo=timezone.utc)      # Oct 31 UTC
+    assert src.default_month_start(late_oct).startswith("2026-10-01")
+
+
+# mutation 1: change day=1 to day=2
+def test_default_month_start_day_must_be_1():
+    result = src.default_month_start(datetime(2026, 10, 15, 9, 0, 0, tzinfo=timezone.utc))
+    assert result[8:10] == "01"
+
+
+# mutation 2: change hour=7 to hour=8
+def test_default_month_start_hour_must_be_07():
+    result = src.default_month_start(datetime(2026, 10, 15, 9, 0, 0, tzinfo=timezone.utc))
+    assert result[11:13] == "07"
+
+
+# ---------------------------------------------------------------------------
+# google_estimate (step 6)
+# ---------------------------------------------------------------------------
+
+def test_google_estimate_counts_only_ok_for_the_billed_methods():
+    counts = {
+        (L, "WriteObject", "OK"): 100,
+        (L, "WriteObject", "FAILED_PRECONDITION"): 20,      # not billed
+        (L, "ListObjects", "OK"): 5,
+        (L, "ListObjects", "NOT_FOUND"): 3,                 # not billed
+        (L, "ReadObject", "OK"): 900,
+        (L, "ReadObject", "CANCELLED"): 10,                 # not billed
+        (L, "GetObjectMetadata", "OK"): 50,
+        (L, "GetObjectMetadata", "NOT_FOUND"): 8,           # not billed
+        (L, "GetBucketMetadata", "OK"): 4,
+        (L, "GetBucketMetadata", "PERMISSION_DENIED"): 7,   # not billed
+        (L, "SetIamPolicy", "OK"): 3,                       # not in Google's rule
+        (L, "GetIamPolicy", "OK"): 6,                       # not in Google's rule
+        (L, "DeleteObject", "OK"): 15,                      # not billed
+    }
+    ga, gb = src.google_estimate(counts)
+    assert ga == 100 + 5                      # WriteObject OK + ListObjects OK only
+    assert gb == 900 + 50 + 4                 # ReadObject OK + GetObjectMetadata OK + GetBucketMetadata OK only
+
+
+# mutation 3: google_estimate must exclude non-OK responses
+def test_google_estimate_excluding_permission_denied_is_not_optional():
+    counts = {(L, "GetBucketMetadata", "PERMISSION_DENIED"): 7, (L, "GetBucketMetadata", "OK"): 3}
+    _, gb = src.google_estimate(counts)
+    assert gb == 3                            # only OK
+
+
+# mutation 4: google_estimate methods are specific
+def test_google_estimate_does_not_count_set_iam_or_get_iam():
+    counts = {(L, "SetIamPolicy", "OK"): 5, (L, "GetIamPolicy", "OK"): 3}
+    ga, gb = src.google_estimate(counts)
+    assert ga == 0 and gb == 0
+
+
+def test_google_estimate_on_the_first_p2_fixture():
+    counts = src.counts_between("p", "s", "e", "t", FakeApi({"e": [FIRST]}))
+    ga, gb = src.google_estimate(counts)
+    # WriteObject OK: L=1341, B=35, T=15 = 1391; ListObjects OK: L=511, B=18, T=4 = 533; total = 1924
+    assert ga == (1_000 + 341) + 35 + 15 + 511 + 18 + 4
+    # ReadObject OK: L=3822, B=47, T=29 = 3898; GetObjectMetadata OK: L=1, B=80, T=27 = 108;
+    # GetBucketMetadata OK: L=19, B=20, T=1 = 40; total = 4046
+    assert gb == (3_822 + 47 + 29) + (1 + 80 + 27) + (19 + 20 + 1)
+
+
+# ---------------------------------------------------------------------------
+# render with planned_a (step 6) - mutation tests covered by headroom test above
+# ---------------------------------------------------------------------------
+
+def test_the_google_estimate_line_is_in_the_report():
+    text = src.render({}, {(L, "WriteObject", "OK"): 10, (L, "ReadObject", "OK"): 20}, "A", "B", "S", "c")
+    assert "Google's billed estimate (successful reads, writes and listings only): Class A 10   Class B 20" in text
+
+
+# mutation 5: google estimate line must be present
+def test_the_report_contains_google_billed_estimate_not_just_the_safe_count():
+    text = src.render({}, {}, "A", "B", "S", "c")
+    assert "Google's billed estimate" in text
+
+
+# ---------------------------------------------------------------------------
+# dynamic --start default and --planned-a flag (step 6)
+# ---------------------------------------------------------------------------
+
+def test_the_default_start_comes_from_the_clock():
+    nov_clock = lambda: datetime(2026, 11, 15, 10, 0, 0, tzinfo=timezone.utc)
+    nov_start = src.default_month_start(datetime(2026, 11, 15, 10, 0, 0, tzinfo=timezone.utc))
+    nov_end = "2026-11-15T10:00:00Z"
+    # With a November clock and first-end still in October, the first window is skipped.
+    code, out, err, api = run_main({nov_end: [GOOD_FIRST]}, clock=nov_clock)
+    assert code == 0 and "first-window check skipped" in out
+    assert {query(u)["interval.startTime"][0] for u in api.calls} == {nov_start}
+    assert f"window 2: {nov_start}" in out
+
+
+# mutation 6: dynamic start must be used (not None or a hardcoded value)
+def test_an_explicit_start_overrides_the_clock():
+    explicit_start = "2026-09-01T07:00:00Z"
+    explicit_end = "2026-09-30T10:00:00Z"
+    code, out, _, api = run_main({END1: [GOOD_FIRST], explicit_end: [GOOD_FIRST]},
+                                 ["--start", explicit_start, "--first-end", END1, "--end", explicit_end])
+    assert code == 0
+    assert {query(u)["interval.startTime"][0] for u in api.calls} == {explicit_start}
+
+
+def test_planned_a_flag_reaches_render_and_shows_remaining():
+    windows = {END1: [GOOD_FIRST], END2: [GOOD_FIRST]}
+    code, out, err, _ = run_main(windows, ["--planned-a", "5"])
+    assert code == 0 and "with 5 planned" in out
+
+
+def test_planned_a_zero_shows_no_planned_line():
+    windows = {END1: [GOOD_FIRST], END2: [GOOD_FIRST]}
+    code, out, err, _ = run_main(windows)
+    assert "planned" not in out
+
+
+# ---------------------------------------------------------------------------
+# first-window skip when first-end is at or before start (step 6)
+# ---------------------------------------------------------------------------
+
+def test_first_window_is_skipped_when_first_end_is_at_or_before_start():
+    nov_start = "2026-11-01T07:00:00Z"
+    nov_end = "2026-11-10T12:00:00Z"
+    # FIRST_P2_END (Oct 29) < nov_start (Nov 1): first window should be skipped
+    code, out, err, api = run_main({nov_end: [GOOD_FIRST]},
+                                   ["--start", nov_start, "--end", nov_end])
+    assert code == 0
+    assert "first-window check skipped" in out
+    assert len(api.calls) == 1                          # only one request, not two
+    assert query(api.calls[0])["interval.endTime"][0] == nov_end
+
+
+def test_first_window_is_also_skipped_when_first_end_equals_start():
+    equal = "2026-11-01T07:00:00Z"
+    nov_end = "2026-11-10T12:00:00Z"
+    code, out, err, api = run_main({nov_end: [GOOD_FIRST]},
+                                   ["--start", equal, "--first-end", equal, "--end", nov_end])
+    assert code == 0 and "first-window check skipped" in out and len(api.calls) == 1
+
+
+# mutation 7: the skip condition must use <= not <
+def test_first_window_runs_when_first_end_is_strictly_after_start():
+    before_end = "2026-10-28T11:03:00Z"        # strictly before FIRST_P2_END
+    code, out, err, api = run_main({before_end: [GOOD_FIRST], END2: [GOOD_FIRST]},
+                                   ["--first-end", before_end])
+    assert len(api.calls) == 2                  # both windows queried, not skipped
+    assert "first-window check skipped" not in out

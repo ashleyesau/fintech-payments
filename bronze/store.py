@@ -10,7 +10,11 @@ keeps in gs://fintech_bronze, and nothing else:
 Store is what the run needs: list, read, create-if-absent and overwrite. BronzeStore is the real one, over
 cdc.gcs.GcsSink (the only module that imports Google's libraries). It is a guard as much as an adapter: a create
 must be a marker name and an overwrite must be the catalog copy, so a bug elsewhere cannot write into
-bronze/<table>/ and damage a table. It never touches the landing bucket: it is connected to the Bronze bucket only.
+bronze/<table>/ and damage a table. It also lists with sizes and creation times and deletes (G4: python -m
+bronze.orphans), and a delete is guarded the same way: only a file under bronze/<table>/data/ or
+bronze/<table>/metadata/ of one of the five tables, never a run marker, the catalog copy or a name that climbs out of
+those folders. Whether the file is unreferenced and old enough is for the caller to decide; this guard only makes
+sure that no bug can name anything else. It never touches the landing bucket: it is connected to the Bronze bucket only.
 Like the landing reader, it refuses to connect unless the Bronze credentials are selected
 (bronze.config.require_credentials).
 """
@@ -21,7 +25,8 @@ from typing import Callable, Mapping, Optional, Protocol
 
 from bronze.config import BronzeSettings, require_credentials
 from bronze.errors import ConfigError
-from cdc.gcs import GcsSink
+from cdc.columns import EXPECTED_COLUMNS
+from cdc.gcs import GcsSink, ObjectInfo
 
 RUNS_PREFIX = "_runs/"
 CATALOG_KEY = "_catalog/catalog.db"
@@ -29,6 +34,19 @@ CATALOG_KEY = "_catalog/catalog.db"
 MARKER_KEY = re.compile(r"_runs/(?P<run_id>[0-9]{8}T[0-9]{12}Z)\.json")
 MARKER_TYPE = "application/json"
 CATALOG_TYPE = "application/vnd.sqlite3"
+
+
+TABLE_FOLDERS = ("data", "metadata")
+
+
+def is_table_file(key: str) -> bool:
+    """True for a name that is a file of a Bronze table: bronze/<one of the five tables>/data/... or
+    bronze/<table>/metadata/..., at least one name below the folder, no empty, '.' or '..' part, no backslash or
+    control character, no space at either end. The only names the store will delete."""
+    parts = key.split("/")
+    return (len(parts) >= 4 and parts[0] == "bronze" and parts[1] in EXPECTED_COLUMNS and parts[2] in TABLE_FOLDERS
+            and all(part not in ("", ".", "..") for part in parts)
+            and "\\" not in key and key == key.strip() and not any(ord(char) < 32 or ord(char) == 127 for char in key))
 
 
 class Store(Protocol):
@@ -63,6 +81,19 @@ class BronzeStore:
         if key != CATALOG_KEY:
             raise ConfigError(f"the store only overwrites the catalog copy ({CATALOG_KEY}), not {key!r}")
         self._sink.overwrite(key, data, content_type=CATALOG_TYPE)
+
+    def list_objects(self, prefix: str) -> list[ObjectInfo]:
+        """One listing: the objects under `prefix` with size and creation time, sorted by name (the same Class A
+        operation as list_keys: for each 1,000 names)."""
+        return self._sink.list_objects(prefix)
+
+    def delete(self, key: str) -> bool:
+        """Delete one file of a Bronze table (see is_table_file). True if it was deleted, False if it was not there.
+        Any other key is refused before it reaches the bucket: never a run marker, the catalog copy or the landing."""
+        if not is_table_file(key):
+            raise ConfigError(f"the store only deletes files under bronze/<table>/data/ and bronze/<table>/metadata/, "
+                              f"not {key!r}")
+        return self._sink.delete(key)
 
 
 def open_store(settings: Optional[BronzeSettings] = None, environ: Optional[Mapping[str, str]] = None,

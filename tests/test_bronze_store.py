@@ -6,14 +6,15 @@ What is held here, each with a mutation that fails it (see the commit message):
   - what is sent: the precondition on a marker, the type of each object, nothing else;
   - open_store refuses without the Bronze credentials before any client is made, connects to the Bronze bucket (not the
     landing bucket), passes the project, and works with an impersonated credentials file that has no project;
-  - the store offers exactly four calls.
+  - the store offers exactly six calls (G4 added the listing with sizes and times and the delete), and a delete is
+    refused for anything but a file under bronze/<table>/data/ or bronze/<table>/metadata/ of one of the five tables.
 No network: the sink is the real GcsSink over a fake bucket (tests/fakes.py).
 """
 import pytest
 
 from bronze.config import CREDENTIALS_VARIABLE, BronzeSettings
 from bronze.errors import ConfigError
-from bronze.store import CATALOG_KEY, MARKER_KEY, RUNS_PREFIX, BronzeStore, open_store
+from bronze.store import CATALOG_KEY, MARKER_KEY, RUNS_PREFIX, BronzeStore, is_table_file, open_store
 from cdc.gcs import GcsSink
 from tests.fakes import FakeGcsBucket, FakeStorageClient
 from tests.test_bronze_landing import IMPERSONATED_FILE
@@ -92,10 +93,81 @@ def test_a_listing_and_a_read_pass_through_one_listing_and_one_read():
     assert bucket.calls[0]["kwargs"]["prefix"] == "_runs/"
 
 
-def test_the_store_offers_four_calls_and_holds_no_other_reach_into_the_bucket():
+def test_the_store_offers_six_calls_and_holds_no_other_reach_into_the_bucket():
     store, _ = make()
-    assert {name for name in dir(store) if not name.startswith("_")} == {"list_keys", "read", "put_if_absent", "overwrite"}
+    assert {name for name in dir(store) if not name.startswith("_")} == {
+        "list_keys", "read", "put_if_absent", "overwrite", "list_objects", "delete"}
     assert not hasattr(store, "__dict__")
+
+
+# ---------------------------------------------------------------------------
+# G4: the listing with sizes and the guarded delete (python -m bronze.orphans)
+# ---------------------------------------------------------------------------
+
+TABLE_FILES = ["bronze/merchants/data/event_month=2025-03/00000-0-x.parquet", "bronze/merchants/data/x.parquet",
+               "bronze/merchants/data/a b.parquet", "bronze/merchants/data/~x!#$%&'()+,;=@[]{}.parquet",
+               "bronze/merchant_transactions/metadata/00001-x.metadata.json", "bronze/loan_applications/metadata/snap-1-2.avro",
+               "bronze/loan_repayments/data/a/b/c/d.parquet", "bronze/risk_events/metadata/x-m0.avro"]
+
+
+@pytest.mark.parametrize("key", TABLE_FILES)
+def test_a_file_of_a_table_may_be_deleted_and_the_delete_reaches_the_bucket(key):
+    store, bucket = make()
+    bucket.objects[key] = b"x"
+    bucket.objects["bronze/merchants/data/keep.parquet"] = b"y"
+    assert is_table_file(key) is True and store.delete(key) is True
+    assert key not in bucket.objects and "bronze/merchants/data/keep.parquet" in bucket.objects
+    [call] = bucket.calls
+    assert call["op"] == "delete" and call["name"] == key and call["kwargs"] == {"timeout": 60, "retry": None}
+
+
+@pytest.mark.parametrize("key", [
+    MARKER, "_runs/", CATALOG_KEY, "_catalog/", "", "/", "bronze/", "bronze/merchants/", "bronze/merchants/data", "bronze/merchants/data/",
+    "bronze/merchants/metadata/", "bronze/merchants/notes.txt", "bronze/merchants/other/x.parquet", "bronze/other_table/data/x.parquet",
+    "bronze/Merchants/data/x.parquet", "Bronze/merchants/data/x.parquet", "bronze//merchants/data/x.parquet",
+    "bronze/merchants//data/x.parquet", "bronze/merchants/data//x.parquet", "bronze/merchants/data/../../_runs/" + RUN_ID + ".json",
+    "bronze/merchants/data/../metadata/x.json", "bronze/merchants/data/./x.parquet", "bronze/merchants/data/..", "bronze/merchants/..",
+    "/bronze/merchants/data/x.parquet", " bronze/merchants/data/x.parquet", "bronze/merchants/data/x.parquet ",
+    "bronze/merchants/data/x.parquet\n", "bronze/merchants/data/x\x00.parquet", "bronze/merchants/data/x\t.parquet",
+    "bronze/merchants/data/x\x1f.parquet", "bronze/merchants/data/x\x7f.parquet", "bronze/merchants/data/x\r.parquet", "bronze\\merchants\\data\\x.parquet",
+    "bronze/merchants/data/x\\..\\y", "cdc/cdc_r01/merchants/event_date=2025-03-01/lsn_00_00.ndjson.gz", "x/bronze/merchants/data/y",
+    "bronze/merchants", "bronze/merchants/data/x/",
+])
+def test_a_delete_of_anything_but_a_table_file_is_refused_before_it_reaches_the_bucket(key):
+    store, bucket = make()
+    bucket.objects.update({MARKER: b"m", CATALOG_KEY: b"c", "bronze/merchants/data/x.parquet": b"d"})
+    with pytest.raises(ConfigError) as refused:
+        store.delete(key)
+    assert "bronze/<table>/data/" in str(refused.value) and bucket.calls == [] and len(bucket.objects) == 3
+
+
+def test_every_one_of_the_five_tables_is_deletable_and_no_other_name_is():
+    from cdc.columns import EXPECTED_COLUMNS
+    assert sorted(EXPECTED_COLUMNS) == ["loan_applications", "loan_repayments", "merchant_transactions", "merchants", "risk_events"]
+    assert all(is_table_file(f"bronze/{t}/{folder}/x") for t in EXPECTED_COLUMNS for folder in ("data", "metadata"))
+    assert not any(is_table_file(f"bronze/{t}/{folder}/x") for t in ("merchant", "risk_event", "") for folder in ("data", "metadata"))
+    assert not any(is_table_file(f"bronze/merchants/{folder}/x") for folder in ("Data", "metadata2", "_data", "", "logs"))
+
+
+def test_deleting_a_file_that_is_not_there_is_false_and_the_other_files_stay():
+    store, bucket = make()
+    bucket.objects["bronze/merchants/data/keep.parquet"] = b"y"
+    assert store.delete("bronze/merchants/data/gone.parquet") is False and "bronze/merchants/data/keep.parquet" in bucket.objects
+
+
+def test_list_objects_lists_only_under_the_prefix_it_was_given():
+    store, bucket = make()
+    bucket.objects.update({"bronze/merchants/data/b": b"12", "_runs/x": b"1", CATALOG_KEY: b"123"})
+    assert [i.key for i in store.list_objects("bronze/")] == ["bronze/merchants/data/b"]
+    assert [i.key for i in store.list_objects("_runs/")] == ["_runs/x"] and bucket.calls[-1]["kwargs"]["prefix"] == "_runs/"
+
+
+def test_list_objects_passes_through_one_listing_with_sizes_and_times():
+    store, bucket = make()
+    bucket.objects.update({"bronze/merchants/data/b": b"12", "_runs/x": b"1", CATALOG_KEY: b"123"})
+    found = store.list_objects("")
+    assert [(i.key, i.size) for i in found] == [("_catalog/catalog.db", 3), ("_runs/x", 1), ("bronze/merchants/data/b", 2)]
+    assert [c["op"] for c in bucket.calls] == ["list"] and bucket.calls[0]["kwargs"]["prefix"] == ""
 
 
 def test_the_marker_pattern_is_a_fixed_width_timestamp_so_name_order_is_time_order():

@@ -6,11 +6,14 @@ delivery tests need "the 4th upload fails" and "the process dies before the conf
 real bucket cannot do that on request, costs free-tier operations, and adds network noise.
 """
 import threading
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from cdc.errors import SinkError, SlotLost
 from cdc.lsn import format_lsn
 from cdc.reader import SlotStatus
+
+EPOCH = datetime(2026, 10, 1, tzinfo=timezone.utc)      # the creation time a fake bucket gives an object nobody dated
 
 
 class MemorySink:
@@ -161,6 +164,9 @@ class FakeBlob:
     def download_as_bytes(self, *args, **kwargs):
         return self.bucket.handle("download", self.name, None, args, kwargs)
 
+    def delete(self, *args, **kwargs):
+        return self.bucket.handle("delete", self.name, None, args, kwargs)
+
 
 class FakeGcsBucket:
     """The part of google.cloud.storage.Bucket the GCS writer uses, with GCS's rules: an upload with
@@ -173,6 +179,7 @@ class FakeGcsBucket:
         self.name = name
         self.objects: dict[str, bytes] = {}
         self.content_types: dict[str, str] = {}
+        self.created: dict[str, datetime] = {}      # name -> creation time, set by a test; EPOCH when it did not say
         self.calls: list[dict] = []
         self.script = list(script or [])
         self._lock = threading.Lock()
@@ -195,12 +202,21 @@ class FakeGcsBucket:
             if isinstance(outcome, BaseException):
                 raise outcome
             if operation == "list":
-                result = [type("Blob", (), {"name": n})() for n in sorted(self.objects) if n.startswith(kwargs.get("prefix") or "")]
+                result = [type("Blob", (), {"name": n, "size": len(self.objects[n]),
+                                            "time_created": self.created.get(n, EPOCH)})()
+                          for n in sorted(self.objects) if n.startswith(kwargs.get("prefix") or "")]
             elif operation == "upload":
                 if kwargs.get("if_generation_match") == 0 and name in self.objects:
                     raise api_errors.PreconditionFailed(f"{name} already exists")
                 self.objects[name] = data
                 self.content_types[name] = kwargs.get("content_type", "text/plain")
+                self.created[name] = self.created.get(name, EPOCH)
+                result = None
+            elif operation == "delete":
+                if name not in self.objects:
+                    raise api_errors.NotFound(f"{name} not found")
+                del self.objects[name]
+                self.created.pop(name, None)
                 result = None
             else:
                 if name not in self.objects:

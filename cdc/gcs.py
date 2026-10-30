@@ -8,7 +8,9 @@ It follows the Sink rules (cdc/sink.py) and the decisions M4-Q4b and M4-Q5:
     never overwritten; "already exists" (HTTP 412) is not a failure, it returns False and the
     caller compares the two (landing.land_object).
   - The Bronze job also uses overwrite(), for the one object that is meant to be replaced (the catalog copy,
-    bronze/store.py); the consumer never does, and its account could not.
+    bronze/store.py), list_objects() (names with sizes and creation times, for the orphan listing) and delete() (only
+    ever called through the guard in bronze/store.py); the consumer never calls any of the three, and its account could
+    not overwrite or delete.
   - Content type application/gzip by default, and no Content-Encoding (the contract: with it GCS would
     transcode on download and some clients would hand back decompressed bytes).
   - Retries are this module's own: up to 5 attempts, waiting 1, 2, 4 and 8 seconds between them,
@@ -26,6 +28,8 @@ latency runs); a Blob is made fresh for each call, so no state is shared between
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable, Optional, TypeVar
 
 import requests
@@ -58,6 +62,14 @@ def is_transient(error: BaseException) -> bool:
 
 def _describe(error: BaseException) -> str:
     return f"{type(error).__name__}: {error}"
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectInfo:
+    """What a listing says about one object: its name, its size in bytes and when it was created (UTC)."""
+    key: str
+    size: int
+    created: datetime
 
 
 class GcsSink:
@@ -112,6 +124,27 @@ class GcsSink:
         return self._retrying(
             f"list {prefix}",
             lambda: sorted(blob.name for blob in self._bucket.list_blobs(prefix=prefix, timeout=TIMEOUT_SECONDS, retry=None)))
+
+    def list_objects(self, prefix: str) -> list[ObjectInfo]:
+        """The objects under `prefix` with their size and creation time, sorted by name. The same one listing as
+        list_keys (a Class A operation for each page of 1,000 names): the sizes and times come in the same reply."""
+        return self._retrying(
+            f"list {prefix}",
+            lambda: sorted((ObjectInfo(blob.name, int(blob.size or 0), blob.time_created)
+                            for blob in self._bucket.list_blobs(prefix=prefix, timeout=TIMEOUT_SECONDS, retry=None)),
+                           key=lambda info: info.key))
+
+    def delete(self, key: str) -> bool:
+        """Delete the object. True if it was deleted, False if there was none (a retry after a lost reply finds it
+        already gone, which is the outcome that was wanted). Deletes cost no Class A or Class B operation. Same retries
+        as a write. Only bronze/store.py calls this, through its guard."""
+        def attempt() -> bool:
+            try:
+                self._bucket.blob(key).delete(timeout=TIMEOUT_SECONDS, retry=None)
+            except api_errors.NotFound:
+                return False
+            return True
+        return self._retrying(f"delete {key}", attempt)
 
     def _retrying(self, what: str, attempt: Callable[[], T]) -> T:
         for number in range(1, ATTEMPTS + 1):

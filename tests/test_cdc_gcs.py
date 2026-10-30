@@ -17,9 +17,9 @@ from google.auth import exceptions as auth_errors
 
 from cdc.consumer import flush
 from cdc.errors import ObjectMismatch, SinkError
-from cdc.gcs import ATTEMPTS, CONTENT_TYPE, RETRY_WAITS, TIMEOUT_SECONDS, GcsSink, is_transient
+from cdc.gcs import ATTEMPTS, CONTENT_TYPE, RETRY_WAITS, TIMEOUT_SECONDS, GcsSink, ObjectInfo, is_transient
 from cdc.landing import build_batch, land_object
-from tests.fakes import FakeGcsBucket, FakeStorageClient, Lost
+from tests.fakes import EPOCH, FakeGcsBucket, FakeStorageClient, Lost
 from tests.test_cdc_envelope import NOW, assemble
 
 LATER = datetime(2026, 10, 27, 9, 52, 30, 123000, tzinfo=timezone.utc)
@@ -220,6 +220,82 @@ def test_a_listing_that_is_refused_fails_at_once():
     sink, bucket, sleeps = make(script=[api_errors.Forbidden("no access")])
     with pytest.raises(SinkError, match="application-default login"):
         sink.list_keys("p/")
+    assert len(bucket.calls) == 1 and sleeps == []
+
+
+# ---------------------------------------------------------------------------
+# the Bronze job's listing with sizes and times, and its delete (G4, bronze/store.py guards the delete)
+# ---------------------------------------------------------------------------
+
+def test_list_objects_gives_name_size_and_creation_time_in_one_listing_sorted_by_name():
+    sink, bucket, sleeps = make()
+    for name, data in (("bronze/b", b"12345"), ("bronze/a", b"1"), ("elsewhere/z", b"x")):
+        bucket.objects[name] = data
+    bucket.created["bronze/a"] = LATER
+    found = sink.list_objects("bronze/")
+    assert found == [ObjectInfo("bronze/a", 1, LATER), ObjectInfo("bronze/b", 5, EPOCH)]
+    [call] = bucket.calls
+    assert call["op"] == "list" and call["kwargs"] == {"prefix": "bronze/", "timeout": 60, "retry": None} and sleeps == []
+
+
+def test_list_objects_of_the_whole_bucket_uses_an_empty_prefix_and_a_missing_size_is_zero():
+    sink, bucket, _ = make()
+    bucket.objects["a"] = b"x"
+    assert [i.key for i in sink.list_objects("")] == ["a"] and bucket.calls[0]["kwargs"]["prefix"] == ""
+    bucket.list_blobs = lambda **kw: [type("Blob", (), {"name": "n", "size": None, "time_created": LATER})()]
+    assert sink.list_objects("") == [ObjectInfo("n", 0, LATER)]
+
+
+def test_list_objects_is_retried_like_a_listing_and_gives_up_after_five_attempts():
+    sink, bucket, sleeps = make(script=[api_errors.ServiceUnavailable("try later")] * 2)
+    bucket.objects["p/a"] = b"x"
+    assert [i.key for i in sink.list_objects("p/")] == ["p/a"] and sleeps == [1, 2]
+    sink, bucket, sleeps = make(script=[api_errors.ServiceUnavailable("try later")] * 6)
+    with pytest.raises(SinkError, match="could not list p/ .* gave up after 5 attempts"):
+        sink.list_objects("p/")
+    assert sleeps == [1, 2, 4, 8]
+
+
+def test_list_objects_that_is_refused_fails_at_once():
+    sink, bucket, sleeps = make(script=[api_errors.Forbidden("no access")])
+    with pytest.raises(SinkError, match="application-default login"):
+        sink.list_objects("p/")
+    assert len(bucket.calls) == 1 and sleeps == []
+
+
+def test_a_delete_removes_the_object_with_a_timeout_and_the_librarys_retry_off():
+    sink, bucket, sleeps = make()
+    bucket.objects["bronze/a"] = b"x"
+    bucket.objects["bronze/b"] = b"y"
+    assert sink.delete("bronze/a") is True
+    assert bucket.objects == {"bronze/b": b"y"}
+    [call] = bucket.calls
+    assert call["op"] == "delete" and call["name"] == "bronze/a" and call["kwargs"] == {"timeout": 60, "retry": None} and sleeps == []
+
+
+def test_deleting_an_object_that_is_not_there_is_false_not_an_error():
+    sink, bucket, sleeps = make()
+    assert sink.delete("bronze/missing") is False and len(bucket.calls) == 1 and sleeps == []
+
+
+def test_a_delete_is_retried_and_a_retry_after_a_lost_reply_finding_it_gone_is_false():
+    sink, bucket, sleeps = make(script=[api_errors.ServiceUnavailable("try later")] * 2)
+    bucket.objects["p/a"] = b"x"
+    assert sink.delete("p/a") is True and sleeps == [1, 2] and bucket.objects == {}
+    sink, bucket, sleeps = make(script=[Lost(api_errors.ServiceUnavailable("reply lost"))])
+    bucket.objects["p/a"] = b"x"
+    assert sink.delete("p/a") is False and bucket.objects == {} and sleeps == [1]      # it was deleted; the retry found it gone
+
+
+def test_a_delete_gives_up_after_five_attempts_and_a_refused_one_fails_at_once():
+    sink, bucket, sleeps = make(script=[api_errors.ServiceUnavailable("try later")] * 6)
+    bucket.objects["p/a"] = b"x"
+    with pytest.raises(SinkError, match="could not delete p/a .* gave up after 5 attempts"):
+        sink.delete("p/a")
+    assert sleeps == [1, 2, 4, 8] and bucket.objects == {"p/a": b"x"}
+    sink, bucket, sleeps = make(script=[api_errors.Forbidden("no access")])
+    with pytest.raises(SinkError, match="application-default login"):
+        sink.delete("p/a")
     assert len(bucket.calls) == 1 and sleeps == []
 
 

@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from itertools import groupby
 from typing import Callable, Iterator, Optional
@@ -47,6 +49,39 @@ from cdc.landing import CLOCK_FIELDS
 from cdc.reconcile import TABLE_ORDER, blank_database, explain_difference, insert_rows, table_digest, update_row
 
 SLICE = 10_000   # rows turned into events at a time
+
+# Where the time of a check goes, in the order it is shown: (key, what it is). `landed_wait` is the time the main thread
+# spent idle waiting for the next landed object to arrive; `landed_work` is the time it spent on the object once it had
+# it. If waiting is large the reads are the bottleneck (the read-ahead is not keeping the digest fed); if it is small the
+# digest itself is.
+STAGES = (
+    ("source_before", "source digests, before the check"),
+    ("landed_wait", "landed side: waiting for objects to arrive"),
+    ("landed_work", "landed side: parsing and digesting"),
+    ("bronze_read", "Bronze side: reading the tables"),
+    ("bronze_convert", "Bronze side: converting rows to events"),
+    ("bronze_digest", "Bronze side: digesting"),
+    ("replay_insert", "replay: inserting into the scratch database"),
+    ("replay_updates", "replay: applying the updates"),
+    ("source_compare", "source and replay digests, and the disbursed loans"),
+)
+
+
+class Stopwatch:
+    """Adds up the seconds spent in named stages. A stage may be entered many times; the seconds add. The clock is
+    injected so a test can drive it."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self.clock = clock
+        self.seconds: dict[str, float] = {}
+
+    @contextmanager
+    def stage(self, name: str):
+        started = self.clock()
+        try:
+            yield
+        finally:
+            self.seconds[name] = self.seconds.get(name, 0.0) + (self.clock() - started)
 
 
 def event_hash(event: dict) -> int:
@@ -79,43 +114,64 @@ class Digest:
 
 
 def landed_digests(reader: LandingReader, say: Callable[[str], None] = lambda message: None, *, workers: int = 8,
-                   stats: Optional[dict] = None) -> dict[str, Digest]:
+                   stats: Optional[dict] = None, watch: Optional[Stopwatch] = None) -> dict[str, Digest]:
     """The digest of every landed change, once per key (the first copy in listing order, as the writer takes it).
     The objects are read `workers` at a time, a short way ahead of the digest, but folded in listing order, so the first
     copy of a key is the same one the writer takes whatever the order the reads finish in. With a dict as `stats` it
-    is given the number of objects read. It does not use anything else from bronze (except the read-ahead helper), so
+    is given the number of objects read. With a Stopwatch it is told how long the main thread waited for objects and how
+    long it worked on them. It does not use anything else from bronze (except the read-ahead helper), so
     the check does not rest on the code it checks."""
+    watch = watch or Stopwatch()
     digests = {table: Digest() for table in TABLE_ORDER}
     seen: set[tuple[int, int]] = set()
     objects = reader.list_keys()
     if stats is not None:
         stats["objects"] = len(objects)
-    for number, (landed, data) in enumerate(_read_ahead(reader, objects, workers), 1):
-        for event in events_in(data):
-            if key(event) in seen:
-                continue
-            seen.add(key(event))
-            table = event["source"]["table"]
-            digests[table] = digests[table].add(event)
+    arriving = iter(_read_ahead(reader, objects, workers))
+    number = 0
+    while True:
+        with watch.stage("landed_wait"):
+            arrived = next(arriving, None)
+        if arrived is None:
+            break
+        landed, data = arrived
+        number += 1
+        with watch.stage("landed_work"):
+            for event in events_in(data):
+                if key(event) in seen:
+                    continue
+                seen.add(key(event))
+                table = event["source"]["table"]
+                digests[table] = digests[table].add(event)
         if number % 100 == 0:
             say(f"landed side: {number:,} of {len(objects):,} objects")
     return digests
 
 
-def bronze_slices(catalog: Catalog, *, source_db: str,
-                  snapshots: Optional[dict] = None) -> Iterator[tuple[str, list[dict]]]:
+def bronze_slices(catalog: Catalog, *, source_db: str, snapshots: Optional[dict] = None,
+                  watch: Optional[Stopwatch] = None) -> Iterator[tuple[str, list[dict]]]:
     """Every Bronze row as an event, table by table in the replay order, SLICE rows at a time. With a dict as
     `snapshots` it is given, for each table as it is loaded, the id of the snapshot being read (None if the table has
-    none): the version of Bronze this read is of."""
+    none): the version of Bronze this read is of. With a Stopwatch it is told the time spent getting rows out of the
+    tables and the time spent turning them into events."""
+    watch = watch or Stopwatch()
     for name in TABLE_ORDER:
-        table = catalog.load_table(f"{NAMESPACE}.{name}")
-        if snapshots is not None:
-            current = table.current_snapshot()
-            snapshots[name] = current.snapshot_id if current else None
-        for batch in table.scan().to_arrow_batch_reader():
+        with watch.stage("bronze_read"):
+            table = catalog.load_table(f"{NAMESPACE}.{name}")
+            if snapshots is not None:
+                current = table.current_snapshot()
+                snapshots[name] = current.snapshot_id if current else None
+            batches = iter(table.scan().to_arrow_batch_reader())
+        while True:
+            with watch.stage("bronze_read"):
+                batch = next(batches, None)
+            if batch is None:
+                break
             for start in range(0, batch.num_rows, SLICE):
-                rows = batch.slice(start, SLICE).to_pylist()
-                yield name, [row_to_event(name, row, source_db=source_db) for row in rows]
+                with watch.stage("bronze_convert"):
+                    rows = batch.slice(start, SLICE).to_pylist()
+                    events = [row_to_event(name, row, source_db=source_db) for row in rows]
+                yield name, events
 
 
 @dataclass
@@ -128,26 +184,29 @@ class Held:
 
 
 def read_bronze(catalog: Catalog, *, source_db: str, replay_into=None,
-                say: Callable[[str], None] = lambda message: None) -> Held:
+                say: Callable[[str], None] = lambda message: None, watch: Optional[Stopwatch] = None) -> Held:
     """One pass over Bronze. With a connection, the inserts are applied to it as they are read (the updates are
     kept for the caller: they go in last, in commit order, like cdc.reconcile does)."""
+    watch = watch or Stopwatch()
     held = Held()
     seen: dict[str, set[tuple[int, int]]] = {table: set() for table in TABLE_ORDER}
-    for name, slices in groupby(bronze_slices(catalog, source_db=source_db, snapshots=held.snapshots),
+    for name, slices in groupby(bronze_slices(catalog, source_db=source_db, snapshots=held.snapshots, watch=watch),
                                 key=lambda part: part[0]):
         for _, events in slices:
             inserts = []
-            for event in events:
-                held.digests[name] = held.digests[name].add(event)
-                if key(event) in seen[name]:
-                    held.duplicates[name] += 1
-                seen[name].add(key(event))
-                if event["op"] == "c":
-                    inserts.append(event["after"])
-                else:
-                    held.updates.append(event)
+            with watch.stage("bronze_digest"):
+                for event in events:
+                    held.digests[name] = held.digests[name].add(event)
+                    if key(event) in seen[name]:
+                        held.duplicates[name] += 1
+                    seen[name].add(key(event))
+                    if event["op"] == "c":
+                        inserts.append(event["after"])
+                    else:
+                        held.updates.append(event)
             if replay_into is not None and inserts:
-                insert_rows(replay_into, name, inserts)
+                with watch.stage("replay_insert"):
+                    insert_rows(replay_into, name, inserts)
         say(f"Bronze side: {name} {held.digests[name].rows:,} rows")
     return held
 
@@ -166,6 +225,8 @@ class Report:
     objects: int = 0                                    # landed objects read
     moved: list[str] = field(default_factory=list)      # tables whose source digest changed while the check ran
     source_before: dict[str, tuple[int, int]] = field(default_factory=dict)   # the source's digests when the check began
+    timings: dict[str, float] = field(default_factory=dict)   # seconds per stage (STAGES keys)
+    total_seconds: float = 0.0                               # the whole check
 
     @property
     def ok(self) -> bool:
@@ -187,20 +248,33 @@ def landed_differences(landed: dict[str, Digest], held: Held) -> list[str]:
 
 
 def check(catalog: Catalog, reader: LandingReader, source_dsn: Optional[str], *, source_db: str,
-          say: Callable[[str], None] = lambda message: None, workers: int = 8) -> Report:
+          say: Callable[[str], None] = lambda message: None, workers: int = 8,
+          clock: Callable[[], float] = time.monotonic) -> Report:
     """Run the three questions. With no source_dsn only the first is asked (no database is needed).
 
     With a source the check takes the source's table digests before it starts and again at the end: a table that
     changed in between is reported in `moved` and not compared (the comparison would be of Bronze with a source that
-    was not the one Bronze was checked against), so a source that moved is "not proven" and never a Bronze mismatch."""
+    was not the one Bronze was checked against), so a source that moved is "not proven" and never a Bronze mismatch.
+
+    The report says where the time went (`timings`, the stages in STAGES) and how long the whole check took."""
+    watch = Stopwatch(clock)
+    began = clock()
     report = Report()
+    try:
+        return _check(catalog, reader, source_dsn, source_db, say, workers, watch, report)
+    finally:
+        report.timings, report.total_seconds = dict(watch.seconds), clock() - began
+
+
+def _check(catalog, reader, source_dsn, source_db, say, workers, watch, report) -> Report:
     if source_dsn is not None:
-        report.source_before = {table: table_digest(source_dsn, table) for table in TABLE_ORDER}
+        with watch.stage("source_before"):
+            report.source_before = {table: table_digest(source_dsn, table) for table in TABLE_ORDER}
     stats: dict = {}
-    report.landed = landed_digests(reader, say, workers=workers, stats=stats)
+    report.landed = landed_digests(reader, say, workers=workers, stats=stats, watch=watch)
     report.objects = stats["objects"]
     if source_dsn is None:
-        held = read_bronze(catalog, source_db=source_db, say=say)
+        held = read_bronze(catalog, source_db=source_db, say=say, watch=watch)
         report.bronze, report.snapshots = held.digests, held.snapshots
         report.problems.extend(landed_differences(report.landed, held))
         report.updates = len(held.updates)
@@ -208,31 +282,33 @@ def check(catalog: Catalog, reader: LandingReader, source_dsn: Optional[str], *,
 
     with blank_database(source_dsn) as replay_dsn:
         with psycopg.connect(replay_dsn) as target:
-            held = read_bronze(catalog, source_db=source_db, replay_into=target, say=say)
+            held = read_bronze(catalog, source_db=source_db, replay_into=target, say=say, watch=watch)
             report.bronze, report.updates, report.snapshots = held.digests, len(held.updates), held.snapshots
             report.problems.extend(landed_differences(report.landed, held))
-            for event in sorted(held.updates, key=key):
-                try:
-                    with target.transaction():
-                        update_row(target, event)
-                except (psycopg.Error, AssertionError) as error:
-                    report.problems.append(f"update at {key(event)}: {' '.join(str(error).split())[:200]}")
-        for table in TABLE_ORDER:
-            report.source[table] = table_digest(source_dsn, table)
-            report.replayed[table] = table_digest(replay_dsn, table)
-            if report.source[table] != report.source_before[table]:
-                report.moved.append(table)
-                say(f"{table}: the source changed during the check ({report.source_before[table][0]:,} rows before, "
-                    f"{report.source[table][0]:,} after); not compared")
-            elif report.source[table] != report.replayed[table]:
-                report.problems.append(
-                    f"{table}: the table replayed from Bronze differs from the source (rows {report.replayed[table][0]:,} "
-                    f"against {report.source[table][0]:,}): {explain_difference(source_dsn, replay_dsn, table)}")
-            else:
-                say(f"{table}: {report.source[table][0]:,} rows, the replay from Bronze equals the source")
-        with psycopg.connect(source_dsn, autocommit=True) as source:
-            disbursed = {row[0] for row in source.execute(
-                "SELECT application_id FROM loan_applications WHERE disbursed_at IS NOT NULL")}
+            with watch.stage("replay_updates"):
+                for event in sorted(held.updates, key=key):
+                    try:
+                        with target.transaction():
+                            update_row(target, event)
+                    except (psycopg.Error, AssertionError) as error:
+                        report.problems.append(f"update at {key(event)}: {' '.join(str(error).split())[:200]}")
+        with watch.stage("source_compare"):
+            for table in TABLE_ORDER:
+                report.source[table] = table_digest(source_dsn, table)
+                report.replayed[table] = table_digest(replay_dsn, table)
+                if report.source[table] != report.source_before[table]:
+                    report.moved.append(table)
+                    say(f"{table}: the source changed during the check ({report.source_before[table][0]:,} rows before, "
+                        f"{report.source[table][0]:,} after); not compared")
+                elif report.source[table] != report.replayed[table]:
+                    report.problems.append(
+                        f"{table}: the table replayed from Bronze differs from the source (rows {report.replayed[table][0]:,} "
+                        f"against {report.source[table][0]:,}): {explain_difference(source_dsn, replay_dsn, table)}")
+                else:
+                    say(f"{table}: {report.source[table][0]:,} rows, the replay from Bronze equals the source")
+            with psycopg.connect(source_dsn, autocommit=True) as source:
+                disbursed = {row[0] for row in source.execute(
+                    "SELECT application_id FROM loan_applications WHERE disbursed_at IS NOT NULL")}
         report.disbursed = len(disbursed)
         updated = {event["after"]["application_id"] for event in held.updates}
         if updated != disbursed and "loan_applications" not in report.moved:

@@ -587,3 +587,72 @@ def test_the_real_command_refuses_to_start_without_credentials(arguments):
     done = subprocess.run([sys.executable, "-m", "bronze.verify", *arguments], cwd=ROOT, env=environ,
                           capture_output=True, text=True, timeout=120)
     assert done.returncode == 1 and "GOOGLE_APPLICATION_CREDENTIALS" in done.stderr and done.stdout == ""
+
+
+# ---------------------------------------------------------------------------
+# where the time went
+# ---------------------------------------------------------------------------
+
+from bronze.replay import STAGES
+from bronze.verify import render_timings
+
+
+def timed_report(**changes) -> Report:
+    timings = {"source_before": 2.0, "landed_wait": 30.0, "landed_work": 60.0, "bronze_read": 40.0, "bronze_convert": 50.0,
+               "bronze_digest": 20.0, "replay_insert": 100.0, "replay_updates": 1.0, "source_compare": 7.0}
+    return full_report(timings=timings, total_seconds=320.0, **changes)
+
+
+def test_the_time_table_shows_each_stage_that_ran_in_order_with_its_share_of_the_whole():
+    lines = render_timings(timed_report())
+    rows = {l.split("  ")[0].strip(): l for l in lines}
+    labels = [label for key, label in STAGES]
+    shown = [l for l in lines[2:] if any(l.startswith(label) for label in labels)]
+    assert [next(label for label in labels if l.startswith(label)) for l in shown] == labels            # the order of STAGES
+    assert "landed side: waiting for objects to arrive" in rows and rows["landed side: waiting for objects to arrive"].split()[-2:] == ["30.0", "9.4%"]
+    assert rows["replay: inserting into the scratch database"].split()[-2:] == ["100.0", "31.2%"]
+
+
+def test_what_no_stage_covers_is_shown_and_the_whole_check_is_the_last_figure():
+    lines = render_timings(timed_report())
+    other = next(l for l in lines if l.startswith("everything else")).split()
+    assert other[-2:] == ["10.0", "3.1%"]                                  # 320 - 310
+    whole = next(l for l in lines if l.startswith("the whole check")).split()
+    assert whole[-2:] == ["320.0", "100.0%"]
+    assert lines[-1].startswith("waiting is time the digest sat idle")
+
+
+def test_a_stage_that_did_not_run_is_not_shown_and_a_report_without_timings_has_no_table():
+    report = full_report(timings={"landed_wait": 1.0, "landed_work": 3.0}, total_seconds=4.0)
+    lines = render_timings(report)
+    assert any(l.startswith("landed side: waiting") for l in lines) and not any("replay" in l for l in lines)
+    assert render_timings(full_report()) == []
+
+
+def test_the_rest_is_never_negative_and_a_zero_total_does_not_divide():
+    over = render_timings(full_report(timings={"landed_wait": 5.0}, total_seconds=4.0))
+    assert next(l for l in over if l.startswith("everything else")).split()[-2] == "0.0"
+    zero = render_timings(full_report(timings={"landed_wait": 0.0}, total_seconds=0.0))
+    assert next(l for l in zero if l.startswith("the whole check")).split()[-1] == "-"
+
+
+def test_the_full_report_ends_with_the_time_table_and_the_landing_only_report_puts_it_before_the_banner():
+    full = render(timed_report(), landing_only=False)
+    assert full.index("updates held in Bronze") < full.index("where the time went")
+    landing = render(timed_report(source={}, replayed={}, disbursed=None), landing_only=True)
+    assert landing.index("where the time went") < landing.index(NOT_FULL_PROOF) and landing.endswith(NOT_FULL_PROOF)
+
+
+def test_the_time_table_is_in_what_the_command_prints(verifier):
+    out = verifier(check_fn=stub(timed_report()))[1]
+    assert "where the time went" in out and "the whole check" in out and "320.0" in out
+
+
+def test_the_time_table_columns_line_up_whatever_the_longest_label_is():
+    lines = render_timings(timed_report())
+    table = [l for l in lines[1:-1]]                                       # the header, the stages, the rest, the whole
+    assert len({len(l) for l in table}) == 1                               # every row is as wide as the header
+    longest = max(len(label) for key, label in STAGES)
+    assert table[0].index("seconds") >= longest                            # the numbers start after the longest label
+    short = render_timings(full_report(timings={"landed_wait": 1.0}, total_seconds=2.0))
+    assert len({len(l) for l in short[1:-1]}) == 1 and short[1].index("seconds") == len("landed side: waiting for objects to arrive") + 2 + 2

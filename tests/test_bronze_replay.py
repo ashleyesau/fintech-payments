@@ -494,3 +494,106 @@ def test_the_report_without_a_source_has_nothing_to_move(tmp_path):
     env, land = written(tmp_path)
     report = check(env.catalog, land.reader(), None, source_db=SOURCE_DB)
     assert report.source_before == {} and report.moved == [] and report.ok
+
+
+# ---------------------------------------------------------------------------
+# G4 step 2, follow-up: where the time of a check goes
+# ---------------------------------------------------------------------------
+
+def ticking():
+    """A clock that moves one second every time it is read, so a stage entered once is exactly one second."""
+    count = iter(range(1, 10_000_000))
+    return lambda: float(next(count))
+
+
+def test_a_stage_adds_up_over_many_entries_and_is_recorded_even_when_it_fails():
+    watch = replay.Stopwatch(ticking())
+    for _ in range(3):
+        with watch.stage("a"):
+            pass
+    with watch.stage("b"):
+        pass
+    with pytest.raises(ValueError):
+        with watch.stage("b"):
+            raise ValueError
+    assert watch.seconds == {"a": 3.0, "b": 2.0}
+
+
+def test_stages_are_named_once_and_in_the_order_they_are_shown():
+    keys = [key for key, label in replay.STAGES]
+    assert len(keys) == len(set(keys)) == 9 and keys[0] == "source_before" and keys[-1] == "source_compare"
+    assert len({label for key, label in replay.STAGES}) == 9
+
+
+def test_the_landed_side_times_each_wait_and_each_object_separately_and_the_last_wait_counts():
+    land = spread_landing(7)
+    watch = replay.Stopwatch(ticking())
+    landed_digests(land.reader(), workers=2, watch=watch)
+    assert watch.seconds == {"landed_wait": 8.0, "landed_work": 7.0}         # 7 objects: 7 waits that got one, one that did not
+
+
+def test_the_landed_side_without_a_stopwatch_still_works():
+    assert landed_digests(spread_landing(3).reader())["merchant_transactions"].rows == 6
+
+
+def test_waiting_for_objects_is_long_with_one_worker_and_short_with_many(tmp_path):
+    land = spread_landing(10)
+    waits = {}
+    for workers in (1, 8):
+        watch = replay.Stopwatch()
+        landed_digests(Concurrency(land.sink).reader(), workers=workers, watch=watch)      # each read takes 20 ms
+        waits[workers] = watch.seconds["landed_wait"]
+    assert waits[1] >= 0.15 and waits[8] < waits[1] / 2
+
+
+def test_bronze_slices_time_the_reading_and_the_converting_separately(tmp_path, monkeypatch):
+    env, land = written(tmp_path)
+    monkeypatch.setattr(replay, "SLICE", 1)
+    batches = sum(len(list(env.table(name).scan().to_arrow_batch_reader())) for name in replay.TABLE_ORDER)
+    watch = replay.Stopwatch(ticking())
+    slices = list(replay.bronze_slices(env.catalog, source_db=SOURCE_DB, watch=watch))
+    assert len(slices) == 27 == watch.seconds["bronze_convert"]                              # one second a one-row slice
+    assert watch.seconds["bronze_read"] == 5 + batches + 5                                   # a table, its batches, the end of each
+
+
+def test_reading_bronze_times_the_digest_and_the_inserts_only_when_it_replays(tmp_path, monkeypatch):
+    env, land = written(tmp_path)
+    monkeypatch.setattr(replay, "SLICE", 1)
+    monkeypatch.setattr(replay, "insert_rows", lambda conn, table, rows: None)
+    plain = replay.Stopwatch(ticking())
+    replay.read_bronze(env.catalog, source_db=SOURCE_DB, watch=plain)
+    assert plain.seconds["bronze_digest"] == 27 and "replay_insert" not in plain.seconds
+    replaying = replay.Stopwatch(ticking())
+    replay.read_bronze(env.catalog, source_db=SOURCE_DB, replay_into=object(), watch=replaying)
+    assert replaying.seconds["bronze_digest"] == 27 and replaying.seconds["replay_insert"] == 26      # 26 inserts, 1 update
+
+
+def test_a_landing_only_check_reports_the_landed_and_bronze_stages_and_nothing_else(tmp_path):
+    env, land = written(tmp_path)
+    report = check(env.catalog, land.reader(), None, source_db=SOURCE_DB)
+    assert set(report.timings) == {"landed_wait", "landed_work", "bronze_read", "bronze_convert", "bronze_digest"}
+    assert all(seconds >= 0 for seconds in report.timings.values())
+    assert report.total_seconds >= sum(report.timings.values()) - 1e-6                      # the stages never overlap
+
+
+def test_a_full_check_reports_every_stage(tmp_path, monkeypatch):
+    env, land = written(tmp_path)
+    FakeServer(monkeypatch, stable_source(), same(), disbursed=updated_loans(env))
+    report = check(env.catalog, land.reader(), "source-dsn", source_db=SOURCE_DB)
+    assert set(report.timings) == {key for key, label in replay.STAGES}
+    assert report.total_seconds >= sum(report.timings.values()) - 1e-6
+
+
+def test_the_whole_check_is_timed_from_its_start_to_its_end(tmp_path):
+    env, land = written(tmp_path)
+    clock = ticking()
+    report = check(env.catalog, land.reader(), None, source_db=SOURCE_DB, clock=clock)
+    # every clock read is one second: the total is the number of reads between the first and the last
+    assert report.total_seconds > sum(report.timings.values()) and report.total_seconds == int(report.total_seconds)
+
+
+def test_the_source_digests_before_and_the_comparison_are_timed_in_their_own_stages(tmp_path, monkeypatch):
+    env, land = written(tmp_path)
+    FakeServer(monkeypatch, stable_source(), same(), disbursed=updated_loans(env))
+    report = check(env.catalog, land.reader(), "source-dsn", source_db=SOURCE_DB, clock=ticking())
+    assert report.timings["source_before"] == 1.0 and report.timings["source_compare"] == 1.0 and report.timings["replay_updates"] == 1.0

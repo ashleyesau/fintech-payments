@@ -57,7 +57,7 @@ from bronze.config import BronzeSettings, require_credentials
 from bronze.errors import BronzeError, ConfigError, ContractError, SourceError
 from bronze.landing import LandingReader, open_landing
 from bronze.main import open_catalog
-from bronze.replay import Report, check
+from bronze.replay import STAGES, Report, check
 from bronze.run import NAMESPACE, TABLE_ORDER
 from cdc.config import CdcSettings
 from cdc.errors import SinkError
@@ -129,6 +129,27 @@ def _hex(value: int) -> str:
     return f"{value:x}"
 
 
+def render_timings(report: Report) -> list[str]:
+    """Where the time of the check went, one line a stage that ran, then what no stage covers, then the whole check.
+    Empty when the report has no timings. A stage's share is of the whole check."""
+    if not report.timings:
+        return []
+    total = report.total_seconds
+    width = max(len(label) for key, label in STAGES if key in report.timings)
+    share = lambda seconds: f"{100 * seconds / total:5.1f}%" if total > 0 else "     -"
+    lines = ["where the time went (the check itself; the checks before it are not included):",
+             f"{'stage':<{width}}  {'seconds':>9}  {'share':>6}"]
+    for key, label in STAGES:
+        if key in report.timings:
+            lines.append(f"{label:<{width}}  {report.timings[key]:>9,.1f}  {share(report.timings[key])}")
+    other = max(0.0, total - sum(report.timings.values()))
+    lines += [f"{'everything else':<{width}}  {other:>9,.1f}  {share(other)}",
+              f"{'the whole check':<{width}}  {total:>9,.1f}  {share(total)}",
+              "waiting is time the digest sat idle for the next landed object: if it is large the reads are the bottleneck, "
+              "if it is small the digest itself is"]
+    return lines
+
+
 def render(report: Report, *, landing_only: bool) -> str:
     """The counts and digests of a finished check, as a block of text."""
     width = max(len(t) for t in TABLE_ORDER)
@@ -142,8 +163,9 @@ def render(report: Report, *, landing_only: bool) -> str:
                      f"{snapshot if snapshot is not None else 'none'}")
     lines.append(f"{'total':<{width}}  {sum(d.rows for d in report.landed.values()):>12,}  "
                  f"{sum(d.rows for d in report.bronze.values()):>12,}")
+    timings = render_timings(report)
     if landing_only:
-        lines += ["", NOT_FULL_PROOF]
+        lines += (["", *timings] if timings else []) + ["", NOT_FULL_PROOF]
         return "\n".join(lines)
     lines += ["", "the source against Bronze replayed into a blank database (digests of the rows, computed in SQL):",
               f"{'table':<{width}}  {'source rows':>12}  {'replayed':>12}  {'source digest':>20}  {'replay digest':>20}"]
@@ -152,6 +174,8 @@ def render(report: Report, *, landing_only: bool) -> str:
         lines.append(f"{table:<{width}}  {source[0]:>12,}  {replayed[0]:>12,}  {_hex(source[1]):>20}  {_hex(replayed[1]):>20}")
     lines += ["", f"updates held in Bronze {report.updates:,}, loans the source shows as disbursed "
                   f"{report.disbursed if report.disbursed is not None else 'unknown'}"]
+    if timings:
+        lines += ["", *timings]
     return "\n".join(lines)
 
 

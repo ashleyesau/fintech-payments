@@ -536,3 +536,105 @@ def _sink_of(objects):
     sink = MemorySink()
     sink.objects = dict(objects)
     return sink
+
+
+# ---------------------------------------------------------------------------
+# G4 step 2: python -m bronze.verify over this run (a real source database, a real local Bronze, a landing in memory)
+# ---------------------------------------------------------------------------
+
+def run_verify(run, env, reader, tmp_path, **kwargs):
+    """The command over this run: returns (exit code, stdout, stderr). Credentials are a dummy file (nothing reaches GCS)."""
+    from bronze.config import CREDENTIALS_VARIABLE, BronzeSettings
+    from bronze.verify import execute as verify_command
+    credentials = tmp_path / "bronze-writer.json"
+    credentials.write_text("{}")
+    settings = BronzeSettings(_env_file=None, catalog_path=str(env.catalog_file))
+    out, err = io.StringIO(), io.StringIO()
+    code = verify_command(settings, source_dsn=run["dsn"], landing_factory=lambda s, e: reader,
+                          catalog_factory=lambda s: env.catalog, environ={CREDENTIALS_VARIABLE: str(credentials)},
+                          out=out, err=err, **kwargs)
+    return code, out.getvalue(), err.getvalue()
+
+
+def test_verify_passes_over_the_run_and_prints_the_sources_own_digests(run, bronze, tmp_path):
+    from cdc.reconcile import table_digest
+    code, out, err = run_verify(run, bronze["env"], bronze["reader"], tmp_path)
+    assert code == 0, err
+    assert out.rstrip().splitlines()[-1].startswith("VERIFIED: Bronze equals the source database fintech_cdc in all five tables")
+    for table in ("merchants", "merchant_transactions", "risk_events", "loan_applications", "loan_repayments"):
+        rows, digest = table_digest(run["dsn"], table)
+        line = next(l for l in out.splitlines() if l.startswith(table + " ") and f"{digest:x}" in l)
+        assert line.split() == [table, f"{rows:,}", f"{rows:,}", f"{digest:x}", f"{digest:x}"]
+    updates = len([e for e in landed_events(run["sink"]) if e["op"] == "u"])
+    assert f"updates held in Bronze {updates:,}, loans the source shows as disbursed {updates:,}" in out and updates > 0
+
+
+def test_verify_landing_only_over_the_run_passes_and_is_not_full_proof(run, bronze, tmp_path):
+    code, out, err = run_verify(run, bronze["env"], bronze["reader"], tmp_path, landing_only=True)
+    assert code == 0 and "OK (landing only)" in out and "SOURCE COMPARISON NOT RUN, THIS IS NOT FULL PROOF" in out
+    assert "the source against Bronze" not in out and "VERIFIED" not in out
+
+
+def changed_in_the_source(run, sql, undo):
+    """Run `sql` on the source now and `undo` afterwards (the module's source is shared: always put it back)."""
+    class Change:
+        def __enter__(self):
+            with psycopg.connect(run["dsn"], autocommit=True) as conn:
+                conn.execute(sql)
+
+        def __exit__(self, *exc):
+            with psycopg.connect(run["dsn"], autocommit=True) as conn:
+                conn.execute(undo)
+    return Change()
+
+
+def test_verify_finds_a_source_that_differs_from_bronze_and_names_the_row(run, bronze, tmp_path):
+    first = "SELECT transaction_id FROM merchant_transactions ORDER BY transaction_id LIMIT 1"
+    with changed_in_the_source(run, f"UPDATE merchant_transactions SET amount_minor = amount_minor + 1 WHERE transaction_id = ({first})",
+                               f"UPDATE merchant_transactions SET amount_minor = amount_minor - 1 WHERE transaction_id = ({first})"):
+        code, out, err = run_verify(run, bronze["env"], bronze["reader"], tmp_path)
+    assert code == 2 and "VERIFIED" not in out
+    (problem,) = [l for l in err.splitlines() if l.startswith("PROBLEM:")]
+    assert problem.startswith("PROBLEM: merchant_transactions: the table replayed from Bronze differs from the source")
+    assert "1 with different values" in problem
+    assert "error: NOT VERIFIED: 1 problems" in err and "NOT PROVEN" not in err
+
+
+def test_verify_says_not_proven_when_the_source_changes_while_it_runs(run, bronze, tmp_path):
+    """A real change to the source, made after the check has taken its first digests (at the first landed object read)."""
+    from tests.bronze_env import Spy
+    first = "SELECT alert_id FROM risk_events ORDER BY alert_id LIMIT 1"
+    sql = f"UPDATE risk_events SET risk_score = risk_score + 1 WHERE alert_id = ({first})"
+    undo = f"UPDATE risk_events SET risk_score = risk_score - 1 WHERE alert_id = ({first})"
+    sink = _sink_of(run["sink"].objects)
+    done = []
+
+    def change_once(key, n):
+        if not done:
+            done.append(key)
+            with psycopg.connect(run["dsn"], autocommit=True) as conn:
+                conn.execute(sql)
+
+    try:
+        code, out, err = run_verify(run, bronze["env"], LandingReader(Spy(sink, change_once), LANDING), tmp_path)
+    finally:
+        if done:
+            with psycopg.connect(run["dsn"], autocommit=True) as conn:
+                conn.execute(undo)
+    assert done and code == 2
+    assert [l for l in err.splitlines() if l.startswith("error:")] == [
+        "error: NOT PROVEN: the source changed during the check (tables: risk_events). This is not a Bronze mismatch and not "
+        "a pass: run it again when the source is quiet"]
+    assert [l for l in err.splitlines() if l.startswith("PROBLEM:")] == []         # the other four tables still matched
+    assert "VERIFIED" not in out
+
+
+def test_verify_leaves_no_scratch_database_behind_and_changes_nothing_in_bronze(run, bronze, tmp_path):
+    env = bronze["env"]
+    before = {"files": env.files(), "snapshots": env.snapshots(), "catalog": env.catalog_digest(), "store": dict(env.store.objects)}
+    run_verify(run, env, bronze["reader"], tmp_path)
+    after = {"files": env.files(), "snapshots": env.snapshots(), "catalog": env.catalog_digest(), "store": dict(env.store.objects)}
+    assert after == before
+    with psycopg.connect(run["dsn"], autocommit=True) as conn:
+        left = [r[0] for r in conn.execute("SELECT datname FROM pg_database WHERE datname LIKE 'fintech_replay_%'")]
+    assert left == []

@@ -14,6 +14,11 @@ class ConfigError(BronzeError):
     """A setting or credential the command needs is missing or unusable (exit code 1)."""
 
 
+class SourceError(BronzeError):
+    """The source database cannot be used for the comparison with Bronze: not reachable, not allowed to create the scratch
+    database, or without one of the five tables. The comparison is never skipped (bronze.verify, exit code 3)."""
+
+
 class ContractError(BronzeError):
     """What was landed breaks the CDC contract, so the run stops with nothing committed (exit code 2)."""
 

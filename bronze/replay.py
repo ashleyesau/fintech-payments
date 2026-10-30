@@ -22,7 +22,8 @@ one landed object at a time, plus the keys seen so far. It is NOT bounded by one
 batch reader held about 0.9 KB a row of the whole table (measured at 10.7M rows, P6: 12.9 GB peak in all), so the check
 needs roughly 1 GB a million rows of the largest table plus the key sets. That fits the Air at the real run's size (about
 1M rows) and does not at 11M events. G4 should read one data file at a time if it must run at that size. It reads the landing through the
-read-only LandingReader and writes nothing to Bronze or to the landing. There is no command yet: G4 decides it.
+read-only LandingReader and writes nothing to Bronze or to the landing. `python -m bronze.verify` (bronze/verify.py) is the
+command over `check`.
 """
 from __future__ import annotations
 
@@ -77,14 +78,20 @@ class Digest:
         return Digest(self.rows + 1, self.total + hasher(event))
 
 
-def landed_digests(reader: LandingReader, say: Callable[[str], None] = lambda message: None) -> dict[str, Digest]:
+def landed_digests(reader: LandingReader, say: Callable[[str], None] = lambda message: None, *, workers: int = 8,
+                   stats: Optional[dict] = None) -> dict[str, Digest]:
     """The digest of every landed change, once per key (the first copy in listing order, as the writer takes it).
-    It does not use anything else from bronze, so the check does not rest on the code it checks."""
+    The objects are read `workers` at a time, a short way ahead of the digest, but folded in listing order, so the first
+    copy of a key is the same one the writer takes whatever the order the reads finish in. With a dict as `stats` it
+    is given the number of objects read. It does not use anything else from bronze (except the read-ahead helper), so
+    the check does not rest on the code it checks."""
     digests = {table: Digest() for table in TABLE_ORDER}
     seen: set[tuple[int, int]] = set()
     objects = reader.list_keys()
-    for number, landed in enumerate(objects, 1):
-        for event in events_in(reader.read(landed.key)):
+    if stats is not None:
+        stats["objects"] = len(objects)
+    for number, (landed, data) in enumerate(_read_ahead(reader, objects, workers), 1):
+        for event in events_in(data):
             if key(event) in seen:
                 continue
             seen.add(key(event))
@@ -95,10 +102,16 @@ def landed_digests(reader: LandingReader, say: Callable[[str], None] = lambda me
     return digests
 
 
-def bronze_slices(catalog: Catalog, *, source_db: str) -> Iterator[tuple[str, list[dict]]]:
-    """Every Bronze row as an event, table by table in the replay order, SLICE rows at a time."""
+def bronze_slices(catalog: Catalog, *, source_db: str,
+                  snapshots: Optional[dict] = None) -> Iterator[tuple[str, list[dict]]]:
+    """Every Bronze row as an event, table by table in the replay order, SLICE rows at a time. With a dict as
+    `snapshots` it is given, for each table as it is loaded, the id of the snapshot being read (None if the table has
+    none): the version of Bronze this read is of."""
     for name in TABLE_ORDER:
         table = catalog.load_table(f"{NAMESPACE}.{name}")
+        if snapshots is not None:
+            current = table.current_snapshot()
+            snapshots[name] = current.snapshot_id if current else None
         for batch in table.scan().to_arrow_batch_reader():
             for start in range(0, batch.num_rows, SLICE):
                 rows = batch.slice(start, SLICE).to_pylist()
@@ -111,6 +124,7 @@ class Held:
     digests: dict[str, Digest] = field(default_factory=lambda: {table: Digest() for table in TABLE_ORDER})
     duplicates: dict[str, int] = field(default_factory=lambda: {table: 0 for table in TABLE_ORDER})
     updates: list[dict] = field(default_factory=list)
+    snapshots: dict[str, Optional[int]] = field(default_factory=dict)
 
 
 def read_bronze(catalog: Catalog, *, source_db: str, replay_into=None,
@@ -119,7 +133,8 @@ def read_bronze(catalog: Catalog, *, source_db: str, replay_into=None,
     kept for the caller: they go in last, in commit order, like cdc.reconcile does)."""
     held = Held()
     seen: dict[str, set[tuple[int, int]]] = {table: set() for table in TABLE_ORDER}
-    for name, slices in groupby(bronze_slices(catalog, source_db=source_db), key=lambda part: part[0]):
+    for name, slices in groupby(bronze_slices(catalog, source_db=source_db, snapshots=held.snapshots),
+                                key=lambda part: part[0]):
         for _, events in slices:
             inserts = []
             for event in events:
@@ -146,10 +161,16 @@ class Report:
     source: dict[str, tuple[int, int]] = field(default_factory=dict)
     replayed: dict[str, tuple[int, int]] = field(default_factory=dict)
     updates: int = 0
+    disbursed: Optional[int] = None                     # loans the source shows as disbursed (None: not asked)
+    snapshots: dict[str, Optional[int]] = field(default_factory=dict)   # the Bronze snapshot each table was read at
+    objects: int = 0                                    # landed objects read
+    moved: list[str] = field(default_factory=list)      # tables whose source digest changed while the check ran
+    source_before: dict[str, tuple[int, int]] = field(default_factory=dict)   # the source's digests when the check began
 
     @property
     def ok(self) -> bool:
-        return not self.problems
+        """Passed: nothing differs and the source held still. A moved source is not a pass and not a Bronze failure."""
+        return not self.problems and not self.moved
 
 
 def landed_differences(landed: dict[str, Digest], held: Held) -> list[str]:
@@ -166,13 +187,21 @@ def landed_differences(landed: dict[str, Digest], held: Held) -> list[str]:
 
 
 def check(catalog: Catalog, reader: LandingReader, source_dsn: Optional[str], *, source_db: str,
-          say: Callable[[str], None] = lambda message: None) -> Report:
-    """Run the three questions. With no source_dsn only the first is asked (no database is needed)."""
+          say: Callable[[str], None] = lambda message: None, workers: int = 8) -> Report:
+    """Run the three questions. With no source_dsn only the first is asked (no database is needed).
+
+    With a source the check takes the source's table digests before it starts and again at the end: a table that
+    changed in between is reported in `moved` and not compared (the comparison would be of Bronze with a source that
+    was not the one Bronze was checked against), so a source that moved is "not proven" and never a Bronze mismatch."""
     report = Report()
-    report.landed = landed_digests(reader, say)
+    if source_dsn is not None:
+        report.source_before = {table: table_digest(source_dsn, table) for table in TABLE_ORDER}
+    stats: dict = {}
+    report.landed = landed_digests(reader, say, workers=workers, stats=stats)
+    report.objects = stats["objects"]
     if source_dsn is None:
         held = read_bronze(catalog, source_db=source_db, say=say)
-        report.bronze = held.digests
+        report.bronze, report.snapshots = held.digests, held.snapshots
         report.problems.extend(landed_differences(report.landed, held))
         report.updates = len(held.updates)
         return report
@@ -180,7 +209,7 @@ def check(catalog: Catalog, reader: LandingReader, source_dsn: Optional[str], *,
     with blank_database(source_dsn) as replay_dsn:
         with psycopg.connect(replay_dsn) as target:
             held = read_bronze(catalog, source_db=source_db, replay_into=target, say=say)
-            report.bronze, report.updates = held.digests, len(held.updates)
+            report.bronze, report.updates, report.snapshots = held.digests, len(held.updates), held.snapshots
             report.problems.extend(landed_differences(report.landed, held))
             for event in sorted(held.updates, key=key):
                 try:
@@ -191,7 +220,11 @@ def check(catalog: Catalog, reader: LandingReader, source_dsn: Optional[str], *,
         for table in TABLE_ORDER:
             report.source[table] = table_digest(source_dsn, table)
             report.replayed[table] = table_digest(replay_dsn, table)
-            if report.source[table] != report.replayed[table]:
+            if report.source[table] != report.source_before[table]:
+                report.moved.append(table)
+                say(f"{table}: the source changed during the check ({report.source_before[table][0]:,} rows before, "
+                    f"{report.source[table][0]:,} after); not compared")
+            elif report.source[table] != report.replayed[table]:
                 report.problems.append(
                     f"{table}: the table replayed from Bronze differs from the source (rows {report.replayed[table][0]:,} "
                     f"against {report.source[table][0]:,}): {explain_difference(source_dsn, replay_dsn, table)}")
@@ -200,8 +233,9 @@ def check(catalog: Catalog, reader: LandingReader, source_dsn: Optional[str], *,
         with psycopg.connect(source_dsn, autocommit=True) as source:
             disbursed = {row[0] for row in source.execute(
                 "SELECT application_id FROM loan_applications WHERE disbursed_at IS NOT NULL")}
+        report.disbursed = len(disbursed)
         updated = {event["after"]["application_id"] for event in held.updates}
-        if updated != disbursed:
+        if updated != disbursed and "loan_applications" not in report.moved:
             report.problems.append(f"Bronze holds updates for {len(updated):,} loans, the source shows {len(disbursed):,} "
                                    f"disbursed ({len(updated ^ disbursed):,} differ)")
     return report

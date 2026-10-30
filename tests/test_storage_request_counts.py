@@ -1,0 +1,371 @@
+"""tests/test_storage_request_counts.py: scripts/storage_request_counts.py, P2, against a fake Monitoring API.
+
+The first real call to the Monitoring API is on the Air; everything else (the request, the pages, the sums, the classes,
+the self-check against the first P2, the delta, the text and the exit codes) is tested here."""
+import io
+import json
+import sys
+import urllib.error
+import urllib.parse
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import storage_request_counts as src  # noqa: E402
+
+L, B, T = "cdc_landing", "fintech_bronze", "payments-512910-tfstate"
+
+
+def series(bucket, method, code, *values):
+    labels = {"method": method} if code is None else {"method": method, "response_code": code}
+    return {"resource": {"type": "gcs_bucket", "labels": {"bucket_name": bucket}}, "metric": {"type": src.METRIC, "labels": labels},
+            "points": [{"interval": {}, "value": {"int64Value": str(v)}} for v in values]}
+
+
+def query(url):
+    return urllib.parse.parse_qs(urllib.parse.urlparse(url).query, keep_blank_values=True)
+
+
+class FakeApi:
+    """get(url, token): answers from `windows`, a dict of interval.endTime -> a list of pages (each a list of series)."""
+
+    def __init__(self, windows):
+        self.windows, self.calls, self.tokens = windows, [], []
+
+    def __call__(self, url, token):
+        q = query(url)
+        self.calls.append(url)
+        self.tokens.append(token)
+        pages = self.windows[q["interval.endTime"][0]]
+        number = int(q["pageToken"][0]) if "pageToken" in q else 0
+        body = {"timeSeries": pages[number]}
+        if number + 1 < len(pages):
+            body["nextPageToken"] = str(number + 1)
+        return body
+
+
+# the first P2's raw counts (DECISION_LOG, "P2 done"): 6,709 requests
+FIRST = [
+    series(L, "WriteObject", "OK", 1_000, 341), series(L, "WriteObject", "FAILED_PRECONDITION", 166),
+    series(L, "ReadObject", "OK", 3_822), series(L, "ListObjects", "OK", 511), series(L, "ListObjects", "NOT_FOUND", 1),
+    series(L, "DeleteObject", "OK", 433), series(L, "GetObjectMetadata", "OK", 1), series(L, "GetObjectMetadata", "NOT_FOUND", 23),
+    series(L, "GetBucketMetadata", "OK", 19), series(L, "GetBucketMetadata", "PERMISSION_DENIED", 10),
+    series(L, "GetIamPolicy", "OK", 28), series(L, "GetBucketStorageLayout", "OK", 4),
+    series(L, "TestIamPermissions", "OK", 4), series(L, "TestIamPermissions", "INVALID_ARGUMENT", 1),
+    series(L, "SetIamPolicy", "OK", 3),
+    series(B, "WriteObject", "OK", 35), series(B, "ReadObject", "OK", 47), series(B, "ReadObject", "CANCELLED", 1),
+    series(B, "GetObjectMetadata", "OK", 80), series(B, "ListObjects", "OK", 18), series(B, "DeleteObject", "OK", 35),
+    series(B, "GetBucketMetadata", "OK", 20), series(B, "GetIamPolicy", "OK", 18),
+    series(T, "WriteObject", "OK", 15), series(T, "ListObjects", "OK", 4), series(T, "UpdateBucketMetadata", "OK", 1),
+    series(T, "ReadObject", "OK", 29), series(T, "GetObjectMetadata", "OK", 27), series(T, "DeleteObject", "OK", 11),
+    series(T, "GetBucketMetadata", "OK", 1),
+]
+
+
+def test_the_fixture_is_the_first_p2s_raw_counts_and_totals():
+    counts = src.counts_between("p", "s", "e", "t", FakeApi({"e": [FIRST]}))
+    assert src.by_bucket(counts) == {B: 254, L: 6_367, T: 88} == dict(sorted(src.FIRST_P2_TOTALS.items()))
+    assert sum(counts.values()) == 6_709
+
+
+# ---------------------------------------------------------------------------
+# the request and the pages
+# ---------------------------------------------------------------------------
+
+def test_the_request_asks_for_the_request_count_of_buckets_summed_per_bucket_method_and_code():
+    url = src.request_url("my-project", "2026-10-01T07:00:00Z", "2026-10-29T11:03:00Z")
+    assert url.startswith("https://monitoring.googleapis.com/v3/projects/my-project/timeSeries?")
+    q = query(url)
+    assert q["filter"] == ['metric.type = "storage.googleapis.com/api/request_count" AND resource.type = "gcs_bucket"']
+    assert src.METRIC == "storage.googleapis.com/api/request_count"
+    assert (q["interval.startTime"], q["interval.endTime"]) == (["2026-10-01T07:00:00Z"], ["2026-10-29T11:03:00Z"])
+    assert q["aggregation.alignmentPeriod"] == ["86400s"] and q["aggregation.perSeriesAligner"] == ["ALIGN_SUM"]
+    assert q["aggregation.crossSeriesReducer"] == ["REDUCE_SUM"]
+    assert q["aggregation.groupByFields"] == ["resource.label.bucket_name", "metric.label.method", "metric.label.response_code"]
+    assert q["view"] == ["FULL"] and "pageToken" not in q
+
+
+def test_a_page_token_is_added_only_when_given():
+    assert query(src.request_url("p", "a", "b", "TOKEN"))["pageToken"] == ["TOKEN"]
+    assert "pageToken" not in query(src.request_url("p", "a", "b", None))
+
+
+def test_points_and_series_with_the_same_key_are_added_and_pages_are_followed():
+    pages = [[series(L, "ReadObject", "OK", 1, 2, 3)], [series(L, "ReadObject", "OK", 10), series(B, "ListObjects", "OK", 4)],
+             [series(L, "ReadObject", "NOT_FOUND", 100)]]
+    api = FakeApi({"e": pages})
+    counts = src.counts_between("p", "s", "e", "TOKEN", api)
+    assert counts == {(L, "ReadObject", "OK"): 16, (B, "ListObjects", "OK"): 4, (L, "ReadObject", "NOT_FOUND"): 100}
+    assert len(api.calls) == 3 and api.tokens == ["TOKEN"] * 3
+    assert "pageToken" not in query(api.calls[0]) and query(api.calls[1])["pageToken"] == ["1"] and query(api.calls[2])["pageToken"] == ["2"]
+
+
+def test_a_series_without_a_response_code_or_points_and_an_empty_answer():
+    assert src.counts_between("p", "s", "e", "t", FakeApi({"e": [[series(L, "ReadObject", None, 5)]]})) == {(L, "ReadObject", ""): 5}
+    empty = series(L, "ReadObject", "OK")
+    assert src.counts_between("p", "s", "e", "t", FakeApi({"e": [[empty]]})) == {}
+    assert src.counts_between("p", "s", "e", "t", lambda url, token: {}) == {}
+
+
+# ---------------------------------------------------------------------------
+# the real getters, with the network and gcloud replaced
+# ---------------------------------------------------------------------------
+
+class Answer:
+    def __init__(self, body):
+        self.body = body
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_http_get_sends_the_token_and_reads_json(monkeypatch):
+    seen = {}
+
+    def urlopen(request, timeout):
+        seen["header"], seen["url"], seen["timeout"] = request.get_header("Authorization"), request.full_url, timeout
+        return Answer(b'{"timeSeries": []}')
+
+    monkeypatch.setattr(src.urllib.request, "urlopen", urlopen)
+    assert src.http_get("https://example/x", "SECRET") == {"timeSeries": []}
+    assert seen == {"header": "Bearer SECRET", "url": "https://example/x", "timeout": 60}
+
+
+def test_an_api_error_carries_the_status_and_googles_message(monkeypatch):
+    def urlopen(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, io.BytesIO(b'{"error": {"message": "no permission"}}'))
+
+    monkeypatch.setattr(src.urllib.request, "urlopen", urlopen)
+    with pytest.raises(RuntimeError) as stop:
+        src.http_get("https://example/x", "t")
+    assert str(stop.value).startswith("the Monitoring API answered 403: ") and "no permission" in str(stop.value)
+
+
+def test_a_network_error_is_a_runtime_error(monkeypatch):
+    def urlopen(request, timeout):
+        raise urllib.error.URLError("name not known")
+
+    monkeypatch.setattr(src.urllib.request, "urlopen", urlopen)
+    with pytest.raises(RuntimeError, match="could not reach the Monitoring API: name not known"):
+        src.http_get("https://example/x", "t")
+
+
+class Ran:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def test_the_token_comes_from_gcloud_for_the_project(monkeypatch):
+    seen = {}
+
+    def run(command, **kwargs):
+        seen["command"], seen["kwargs"] = command, kwargs
+        return Ran(0, "  ya29.TOKEN\n")
+
+    monkeypatch.setattr(src.subprocess, "run", run)
+    assert src.gcloud_token() == "ya29.TOKEN"
+    assert seen["command"] == ["gcloud", "auth", "print-access-token", "--project=payments-512910"]
+    assert seen["kwargs"]["capture_output"] is True and seen["kwargs"]["text"] is True and seen["kwargs"]["timeout"] == 60
+
+
+@pytest.mark.parametrize("ran", [Ran(1, "", "not logged in"), Ran(0, "  \n", ""), Ran(1, "ya29.LOOKS-LIKE-A-TOKEN", "failed")])
+def test_no_token_is_a_runtime_error_and_never_prints_one(monkeypatch, ran):
+    monkeypatch.setattr(src.subprocess, "run", lambda command, **kwargs: ran)
+    with pytest.raises(RuntimeError, match="gcloud could not give a token"):
+        src.gcloud_token()
+
+
+def test_a_missing_gcloud_is_a_runtime_error(monkeypatch):
+    def run(command, **kwargs):
+        raise FileNotFoundError("gcloud")
+
+    monkeypatch.setattr(src.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="could not run gcloud for a token"):
+        src.gcloud_token()
+
+
+# ---------------------------------------------------------------------------
+# what the counts mean
+# ---------------------------------------------------------------------------
+
+def test_totals_by_bucket_are_sorted():
+    assert src.by_bucket({(T, "a", ""): 1, (B, "a", ""): 2, (B, "b", "x"): 3, (L, "a", ""): 4}) == {B: 5, L: 4, T: 1}
+    assert list(src.by_bucket({(T, "a", ""): 1, (B, "a", ""): 2})) == [B, T]
+
+
+def test_the_first_p2s_class_a_for_the_landing_bucket_is_reproduced_with_and_without_the_refused_creates():
+    counts = src.counts_between("p", "s", "e", "t", FakeApi({"e": [FIRST]}))
+    c = src.classify(counts)[L]
+    assert c["a_high"] == 1_341 + 166 + 512 + 3 == 2_022 and c["a_low"] == 1_856
+    assert c["b"] == 3_822 + 24 + 29 + 28 + 4 + 5 and c["free"] == 433 and c["unmapped"] == {}
+
+
+def test_each_method_is_in_exactly_one_class_and_only_a_refused_create_is_split_out():
+    counts = {(L, m, "OK"): 1 for m in src.CLASS_A + src.CLASS_B + src.FREE}
+    c = src.classify(counts)["all"]
+    assert (c["a_low"], c["a_high"], c["b"], c["free"], c["unmapped"]) == (4, 4, 6, 1, {})
+    assert set(src.CLASS_A).isdisjoint(src.CLASS_B) and set(src.CLASS_A + src.CLASS_B).isdisjoint(src.FREE)
+    refused = {(L, "WriteObject", "FAILED_PRECONDITION"): 7, (L, "WriteObject", "OK"): 3, (L, "ListObjects", "FAILED_PRECONDITION"): 2,
+               (L, "ReadObject", "FAILED_PRECONDITION"): 5}
+    c = src.classify(refused)["all"]
+    assert (c["a_low"], c["a_high"], c["b"]) == (5, 12, 5)         # only WriteObject's refusal is a "refused create"
+
+
+def test_a_method_that_is_not_mapped_is_listed_apart_and_counted_nowhere_else():
+    counts = {(L, "ComposeObject", "OK"): 4, (B, "ComposeObject", "OK"): 1, (L, "ReadObject", "OK"): 9, (L, "RewriteObject", "OK"): 2}
+    classes = src.classify(counts)
+    assert classes["all"]["unmapped"] == {"ComposeObject": 5, "RewriteObject": 2}
+    assert classes[L]["unmapped"] == {"ComposeObject": 4, "RewriteObject": 2} and classes[B]["unmapped"] == {"ComposeObject": 1}
+    assert (classes["all"]["a_high"], classes["all"]["b"]) == (0, 9)
+
+
+def test_classes_are_given_for_all_buckets_and_for_each_separately():
+    counts = {(L, "ReadObject", "OK"): 5, (B, "ReadObject", "OK"): 7, (B, "WriteObject", "OK"): 2}
+    classes = src.classify(counts)
+    assert list(classes) == ["all", L, B]
+    assert classes["all"]["b"] == 12 and classes[B] == {"a_low": 2, "a_high": 2, "b": 7, "free": 0, "unmapped": {}}
+    assert classes[L]["b"] == 5 and classes[L]["a_low"] == 0
+
+
+def test_the_difference_keeps_what_moved_in_either_direction_and_drops_what_did_not():
+    before = {(L, "ReadObject", "OK"): 10, (L, "ListObjects", "OK"): 5, (B, "WriteObject", "OK"): 3}
+    now = {(L, "ReadObject", "OK"): 1_826, (L, "ListObjects", "OK"): 5, (B, "ReadObject", "OK"): 2}
+    assert src.difference(now, before) == {(B, "ReadObject", "OK"): 2, (B, "WriteObject", "OK"): -3, (L, "ReadObject", "OK"): 1_816}
+    assert list(src.difference(now, before)) == sorted(src.difference(now, before))
+    assert src.difference(now, now) == {}
+
+
+def test_the_self_check_passes_on_the_first_p2s_totals_and_names_each_bucket_that_differs():
+    counts = src.counts_between("p", "s", "e", "t", FakeApi({"e": [FIRST]}))
+    ok, text = src.reproduces_first_p2(counts)
+    assert ok and text.startswith("the first window reproduces the first P2 (6,709 requests")
+    exact = {(L, "ReadObject", "OK"): 6_367, (B, "ReadObject", "OK"): 254, (T, "ReadObject", "OK"): 88}
+    ok, text = src.reproduces_first_p2(exact)
+    assert ok and text == ("the first window reproduces the first P2 (6,709 requests: cdc_landing 6,367, fintech_bronze 254, "
+                           "payments-512910-tfstate 88)")
+    ok, text = src.reproduces_first_p2({**exact, (L, "ReadObject", "OK"): 6_368})
+    assert not ok and "does NOT reproduce" in text and "cdc_landing: found 6,368, first P2 6,367" in text and "fintech_bronze" not in text
+    ok, text = src.reproduces_first_p2({(L, "ReadObject", "OK"): 6_367, (B, "ReadObject", "OK"): 254})
+    assert not ok and "payments-512910-tfstate: found 0, first P2 88" in text
+    ok, text = src.reproduces_first_p2({**exact, ("another_bucket", "ReadObject", "OK"): 1})
+    assert not ok and "another_bucket: found 1, first P2 0" in text
+
+
+# ---------------------------------------------------------------------------
+# the text
+# ---------------------------------------------------------------------------
+
+def test_the_tables_are_sorted_by_bucket_method_and_response_code_whatever_order_they_arrive_in():
+    counts = {(T, "ReadObject", "OK"): 1, (B, "WriteObject", "OK"): 2, (B, "ListObjects", "OK"): 3, (B, "ListObjects", "A_CODE"): 4}
+    rows = [line.split() for line in src.table(counts, "title")[2:-1]]
+    assert [(r[0], r[1], r[2]) for r in rows] == [(B, "ListObjects", "A_CODE"), (B, "ListObjects", "OK"), (B, "WriteObject", "OK"),
+                                                   (T, "ReadObject", "OK")]
+    assert src.table(counts, "title")[0] == "title" and src.table(counts, "title")[-1] == "  total 10 requests"
+
+
+def test_the_report_names_the_windows_the_check_the_tables_the_delta_the_classes_and_the_headroom():
+    first = {(L, "WriteObject", "OK"): 1_000, (L, "WriteObject", "FAILED_PRECONDITION"): 100, (L, "ReadObject", "OK"): 3_000}
+    now = {**first, (L, "ReadObject", "OK"): 4_816, (L, "ListObjects", "OK"): 2, (L, "ComposeObject", "OK"): 3}
+    text = src.render(first, now, "FIRSTEND", "NOWEND", "START", "THE CHECK LINE")
+    lines = text.splitlines()
+    assert lines[:4] == ["window 1: START to FIRSTEND", "window 2: START to NOWEND", "", "THE CHECK LINE"]
+    assert "window 1 (FIRSTEND)" in text and "window 2 (NOWEND)" in text and "since window 1 (window 2 less window 1)" in text
+    assert "  cdc_landing                ReadObject               OK                       1,816" in text
+    assert "  cdc_landing                ListObjects              OK                           2" in text
+    assert "  total 4,100 requests" in text and "  total 5,921 requests" in text and "  total 1,821 requests" in text
+    assert "NOT MAPPED: ComposeObject 3 (not counted in A or B)" in text
+    assert "Class A   1,002 to 1,102   Class B   4,816" in text
+    assert "Class A 20.0% to 22.0% of 5,000; Class B 9.6% of 50,000" in text
+    assert "headroom for the first write (about 110 to 125 Class A, plus one marker, one catalog copy and a few listings): 3,898 Class A left" in text
+    assert "NOT ENOUGH" not in text
+
+
+def test_a_window_with_no_change_says_so_and_a_single_class_a_figure_has_no_range():
+    same = {(L, "WriteObject", "OK"): 10}
+    text = src.render(same, same, "A", "B", "S", "c")
+    assert "since window 1: no request" in text
+    classes = text.split("classes (my mapping")[1].split("against the second-hand")[0]
+    assert "  all                        Class A               10   Class B       0" in classes and " to " not in classes
+
+
+def test_the_headroom_warns_only_when_the_room_is_under_the_write_and_ten():
+    def headroom(a):
+        return src.render({}, {(L, "WriteObject", "OK"): a}, "A", "B", "S", "c").splitlines()[-1]
+    assert headroom(5_000 - 135).endswith("135 Class A left at the high count")
+    assert headroom(5_000 - 134).endswith("(NOT ENOUGH)")
+
+
+# ---------------------------------------------------------------------------
+# the command
+# ---------------------------------------------------------------------------
+
+END1, END2 = "2026-10-29T11:03:00Z", "2026-10-30T19:30:00Z"
+GOOD_FIRST = [series(L, "ReadObject", "OK", 6_367), series(B, "ReadObject", "OK", 254), series(T, "ReadObject", "OK", 88)]
+
+
+def run_main(windows, argv=(), token=lambda: "TOKEN", clock=lambda: datetime(2026, 10, 30, 19, 30, 45, tzinfo=timezone.utc)):
+    out, err, api = io.StringIO(), io.StringIO(), FakeApi(windows)
+    code = src.main(list(argv), token_source=token, get=api, clock=clock, out=out, err=err)
+    return code, out.getvalue(), err.getvalue(), api
+
+
+def test_the_command_exits_zero_when_the_first_window_reproduces_the_first_p2():
+    code, out, err, api = run_main({END1: [GOOD_FIRST], END2: [GOOD_FIRST + [series(L, "ReadObject", "OK", 1_816)]]})
+    assert code == 0 and err == "" and "the first window reproduces the first P2 (6,709 requests" in out
+    assert "since window 1" in out and "1,816" in out
+    ends = [query(u)["interval.endTime"][0] for u in api.calls]
+    assert ends == [END1, END2] and {query(u)["interval.startTime"][0] for u in api.calls} == {src.MONTH_START}
+    assert api.tokens == ["TOKEN", "TOKEN"] and f"/projects/{src.PROJECT}/" in api.calls[0]
+    assert f"window 2: {src.MONTH_START} to {END2}" in out                  # now, to the minute
+
+
+def test_the_command_still_prints_everything_but_exits_two_when_the_check_fails():
+    wrong = [series(L, "ReadObject", "OK", 6_000), series(B, "ReadObject", "OK", 254), series(T, "ReadObject", "OK", 88)]
+    code, out, err, _ = run_main({END1: [wrong], END2: [wrong]})
+    assert code == 2 and "does NOT reproduce" in out and "window 2" in out and err == ""
+
+
+def test_the_options_reach_the_requests():
+    code, out, err, api = run_main({"B": [GOOD_FIRST], "C": [GOOD_FIRST]},
+                                   ["--project", "other", "--start", "A", "--first-end", "B", "--end", "C"])
+    assert code == 0
+    assert [(query(u)["interval.startTime"][0], query(u)["interval.endTime"][0]) for u in api.calls] == [("A", "B"), ("A", "C")]
+    assert all("/projects/other/" in u for u in api.calls)
+
+
+def test_the_default_end_is_now_to_the_minute_in_utc():
+    zone = timezone.utc
+    code, out, err, api = run_main({END1: [GOOD_FIRST], "2026-12-31T23:59:00Z": [GOOD_FIRST]},
+                                   clock=lambda: datetime(2026, 12, 31, 23, 59, 59, tzinfo=zone))
+    assert code == 0 and query(api.calls[1])["interval.endTime"] == ["2026-12-31T23:59:00Z"]
+
+
+def test_a_token_failure_exits_one_with_one_error_line_and_nothing_on_stdout():
+    def no_token():
+        raise RuntimeError("gcloud could not give a token (exit 1): not logged in")
+
+    code, out, err, api = run_main({}, token=no_token)
+    assert code == 1 and out == "" and err == "error: gcloud could not give a token (exit 1): not logged in\n" and api.calls == []
+
+
+def test_an_api_failure_exits_one_and_prints_nothing_of_the_figures():
+    def broken(url, token):
+        raise RuntimeError("the Monitoring API answered 403: denied")
+
+    out, err = io.StringIO(), io.StringIO()
+    assert src.main([], token_source=lambda: "t", get=broken, out=out, err=err) == 1
+    assert out.getvalue() == "" and err.getvalue() == "error: the Monitoring API answered 403: denied\n"
+
+
+def test_the_token_is_never_printed():
+    code, out, err, _ = run_main({END1: [GOOD_FIRST], END2: [GOOD_FIRST]}, token=lambda: "SUPER-SECRET-TOKEN")
+    assert "SUPER-SECRET" not in out + err

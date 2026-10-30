@@ -17,8 +17,11 @@ exactly as pass 2 will convert it (events_to_arrow with the table's real Arrow s
 mapped back with row_to_event, and must equal the original event, field by field. It writes nothing and needs no
 catalog, warehouse or database.
 
-It holds one slice of a table at a time (SLICE rows, dict rows cost about 5.8 KB each) and, for question 1, one
-landed object at a time plus the keys seen so far, so the real run fits the Air. It reads the landing through the
+It turns rows into events one slice at a time (SLICE rows; dict rows cost about 5.8 KB each) and, for question 1, reads
+one landed object at a time, plus the keys seen so far. It is NOT bounded by one slice in the Arrow read: PyIceberg's
+batch reader held about 0.9 KB a row of the whole table (measured at 10.7M rows, P6: 12.9 GB peak in all), so the check
+needs roughly 1 GB a million rows of the largest table plus the key sets. That fits the Air at the real run's size (about
+1M rows) and does not at 11M events. G4 should read one data file at a time if it must run at that size. It reads the landing through the
 read-only LandingReader and writes nothing to Bronze or to the landing. There is no command yet: G4 decides it.
 """
 from __future__ import annotations

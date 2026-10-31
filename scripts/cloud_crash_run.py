@@ -141,18 +141,19 @@ def _run(catalog: Catalog, store, land, settings: BronzeSettings,
     kwargs.setdefault("write", True)
     kwargs.setdefault("warehouse", f"gs://{settings.bucket}")
     kwargs.setdefault("source_db", SOURCE_DB)
+    kwargs.setdefault("workers", 1)          # single-threaded to avoid curl multi-handle crash
     if catalog_path is not None:
         kwargs.setdefault("catalog_file", catalog_path)
     return run(land.reader(), catalog, store, **kwargs)
 
 
 def _verify(catalog: Catalog, land, *, label: str) -> bool:
-    r = check(catalog, land.reader(), None, source_db=SOURCE_DB)
+    r = check(catalog, land.reader(), None, source_db=SOURCE_DB, workers=1)
     if r.ok:
         print(f"  verify [{label}]: PASSED — {sum(d.rows for d in r.landed.values())} events, "
-              f"digests match")
+              f"digests match", flush=True)
     else:
-        print(f"  verify [{label}]: FAILED — {r.problems[:3]}")
+        print(f"  verify [{label}]: FAILED — {r.problems[:3]}", flush=True)
     return r.ok
 
 
@@ -172,7 +173,7 @@ def _check_orphans(catalog, store, *, label: str, expect_orphans: bool,
 
 
 def _say(msg: str):
-    print(f"    {msg}")
+    print(f"    {msg}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +198,8 @@ def main():
         sys.exit(1)
 
     credentials = require_credentials()
-    print(f"cloud crash run on gs://{settings.bucket} (credentials {credentials})")
-    print(f"catalog: {catalog_path}")
+    print(f"cloud crash run on gs://{settings.bucket} (credentials {credentials})", flush=True)
+    print(f"catalog: {catalog_path}", flush=True)
     print()
 
     all_ok = True
@@ -209,7 +210,7 @@ def main():
     # -----------------------------------------------------------------------
     # step 1: baseline write
     # -----------------------------------------------------------------------
-    print("step 1: baseline write")
+    print("step 1: baseline write", flush=True)
     land = busy_landing()
     report = _run(catalog, store, land, settings, catalog_path=catalog_path)
     total = sum(t.rows_appended for t in report.tables.values())
@@ -218,7 +219,7 @@ def main():
           f"({'first write' if total > 0 else 'no-op resume'})")
     baseline_ok = _verify(catalog, land, label="baseline")
     m1 = newest_marker(store)
-    print(f"  marker M1: {m1.run_id}")
+    print(f"  marker M1: {m1.run_id}", flush=True)
     all_ok = all_ok and baseline_ok
 
     # -----------------------------------------------------------------------
@@ -231,7 +232,7 @@ def main():
         ("P2 crash (after manifest list, before metadata json)", _P2Injector),
         ("P3 crash (after metadata json, before catalog row update)", _P3Injector),
     ], start=2):
-        print(f"\nstep {step_num}: {label}")
+        print(f"\nstep {step_num}: {label}", flush=True)
         # New transaction so there is always one commit to crash on
         land.transaction(("merchants", "c"), ("merchant_transactions", "c"),
                          ("risk_events", "c"), date=DATES[step_num % len(DATES)])
@@ -240,10 +241,10 @@ def main():
         with Injector(crash_on=1):
             try:
                 _run(catalog, store, land, settings, catalog_path=catalog_path)
-                print(f"  FAILED: no crash raised")
+                print(f"  FAILED: no crash raised", flush=True)
                 all_ok = False
             except SimulatedCrash as e:
-                print(f"  crash: {e}")
+                print(f"  crash: {e}", flush=True)
 
         p_orphans_ok = _check_orphans(catalog, store, label=f"{label[:2]} before recovery",
                                       expect_orphans=True, bucket_name=settings.bucket)
@@ -256,7 +257,7 @@ def main():
     # -----------------------------------------------------------------------
     # step 5: late object
     # -----------------------------------------------------------------------
-    print("\nstep 5: late object")
+    print("\nstep 5: late object", flush=True)
     land.transaction(("merchants", "c"), ("merchant_transactions", "c"),
                      ("merchant_transactions", "c"), ("risk_events", "c"), date=DATES[0])
     land.flush()
@@ -268,7 +269,7 @@ def main():
     all_markers = store.list_keys("_runs/")
     late_ok = (m_after_late.run_id != m_before_late.run_id
                and any(m_before_late.run_id in k for k in all_markers))
-    print(f"  late rows appended: {appended}")
+    print(f"  late rows appended: {appended}", flush=True)
     print(f"  old marker kept: {any(m_before_late.run_id in k for k in all_markers)}, "
           f"new marker written: {m_after_late.run_id != m_before_late.run_id}, "
           f"total markers: {len(all_markers)}")
@@ -278,7 +279,7 @@ def main():
     # -----------------------------------------------------------------------
     # step 6: rebuild + verify
     # -----------------------------------------------------------------------
-    print("\nstep 6: rebuild from newest marker + verify")
+    print("\nstep 6: rebuild from newest marker + verify", flush=True)
     scratch_catalog_path = args.work / "scratch_catalog.db"
     if scratch_catalog_path.exists():
         scratch_catalog_path.unlink()
@@ -288,19 +289,19 @@ def main():
         warehouse=f"gs://{settings.bucket}",
     )
     marker_used = rebuild_catalog(scratch_catalog, store)
-    print(f"  rebuilt from marker: {marker_used.run_id}")
+    print(f"  rebuilt from marker: {marker_used.run_id}", flush=True)
     rebuild_verify_ok = _verify(scratch_catalog, land, label="rebuilt catalog")
     r_rebuilt = check(scratch_catalog, land.reader(), None, source_db=SOURCE_DB)
     r_original = check(catalog, land.reader(), None, source_db=SOURCE_DB)
     digests_match = all(r_rebuilt.bronze[t].total == r_original.bronze[t].total
                         for t in TABLE_ORDER)
-    print(f"  rebuilt digests match original catalog: {digests_match}")
+    print(f"  rebuilt digests match original catalog: {digests_match}", flush=True)
     all_ok = all_ok and rebuild_verify_ok and digests_match
 
     # -----------------------------------------------------------------------
     # step 7: refused-creates sample
     # -----------------------------------------------------------------------
-    print("\nstep 7: refused-creates sample")
+    print("\nstep 7: refused-creates sample", flush=True)
     existing_marker_key = store.list_keys("_runs/")[-1]
     result = store.put_if_absent(existing_marker_key, b'{"test": "refused_create_sample"}')
     print(f"  put_if_absent on existing key {existing_marker_key!r}: "
@@ -314,9 +315,9 @@ def main():
     elapsed = time.monotonic() - t_start
     print(f"\n{'PASSED' if all_ok else 'FAILED'}: all steps in "
           f"{int(elapsed // 60)} min {int(elapsed % 60)} s")
-    print(f"work directory: {args.work} (remove when done)")
-    print(f"bucket: gs://{settings.bucket}")
-    print("run scripts/storage_request_counts.py after this script to record the cost")
+    print(f"work directory: {args.work} (remove when done)", flush=True)
+    print(f"bucket: gs://{settings.bucket}", flush=True)
+    print("run scripts/storage_request_counts.py after this script to record the cost", flush=True)
     return 0 if all_ok else 1
 
 

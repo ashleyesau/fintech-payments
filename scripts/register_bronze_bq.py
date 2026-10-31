@@ -11,10 +11,11 @@ for each of the five tables, and executes one statement per table:
 
 With --dry-run the DDL is printed to stdout without executing anything.
 
-Run as bronze-writer:
+Run with your own gcloud login (Application Default Credentials), not as bronze-writer.
+bronze-writer has no BigQuery permissions; this script needs bigquery.jobs.create and
+bigquery.tables.create, which your project-owner account already has.
 
-    GOOGLE_APPLICATION_CREDENTIALS=/path/to/bronze-writer.json \\
-        python scripts/register_bronze_bq.py --connection fintech-bronze
+    python scripts/register_bronze_bq.py --connection fintech-bronze
 
 Exit codes:
     0  all five tables registered (or --dry-run printed the DDL)
@@ -26,9 +27,11 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Optional
 
 import click
+
+_BUCKET = "fintech_bronze"
+_RUNS_PREFIX = "_runs/"
 
 _TABLES = (
     "merchants",
@@ -44,6 +47,33 @@ def _full_connection(project: str, location: str, name: str) -> str:
     if name.startswith("projects/"):
         return name
     return f"projects/{project}/locations/{location}/connections/{name}"
+
+
+def _read_newest_marker(project: str) -> dict:
+    """Read and parse the newest run marker JSON from gs://fintech_bronze/_runs/."""
+    from google.cloud import storage as gcs
+    from google.api_core import exceptions as gcp_exc
+
+    try:
+        client = gcs.Client(project=project)
+        blobs = sorted(
+            [b for b in client.list_blobs(_BUCKET, prefix=_RUNS_PREFIX)
+             if b.name.endswith(".json")],
+            key=lambda b: b.name,
+        )
+    except gcp_exc.GoogleAPICallError as exc:
+        click.echo(f"error: could not list {_BUCKET}/{_RUNS_PREFIX}: {exc}", err=True)
+        sys.exit(3)
+
+    if not blobs:
+        click.echo(f"error: no run marker found in gs://{_BUCKET}/{_RUNS_PREFIX}", err=True)
+        sys.exit(2)
+
+    try:
+        return json.loads(blobs[-1].download_as_bytes())
+    except gcp_exc.GoogleAPICallError as exc:
+        click.echo(f"error: could not read marker {blobs[-1].name}: {exc}", err=True)
+        sys.exit(3)
 
 
 @click.command()
@@ -79,43 +109,26 @@ def main(
     location: str,
     dry_run: bool,
 ) -> None:
-    """Register Bronze Iceberg tables as BigQuery external Iceberg tables."""
-    from bronze.config import require_credentials, BronzeSettings
-    from bronze.store import open_store
-    from bronze.marker import newest_marker
-    from bronze.errors import ConfigError
+    """Register Bronze Iceberg tables as BigQuery external Iceberg tables.
 
-    try:
-        require_credentials()
-    except ConfigError as exc:
-        click.echo(f"error: {exc}", err=True)
-        sys.exit(1)
-
-    settings = BronzeSettings()
+    Run with your own gcloud login, not as bronze-writer.
+    """
     conn_path = _full_connection(project, location, connection)
 
-    click.echo(f"Reading newest run marker from gs://{settings.bucket}/_runs/ ...", err=True)
-    try:
-        store = open_store(settings)
-        marker = newest_marker(store)
-    except Exception as exc:
-        click.echo(f"error: failed to read from Bronze bucket: {exc}", err=True)
-        sys.exit(3)
+    click.echo(f"Reading newest run marker from gs://{_BUCKET}/{_RUNS_PREFIX} ...", err=True)
+    marker = _read_newest_marker(project)
+    run_id = marker.get("run_id", "(unknown)")
+    click.echo(f"Marker: {run_id}", err=True)
 
-    if marker is None:
-        click.echo("error: no run marker found in gs://fintech_bronze/_runs/", err=True)
-        sys.exit(2)
-
-    click.echo(f"Marker: {marker.run_id}", err=True)
-
+    tables_data = marker.get("tables", {})
     statements: list[tuple[str, str, int]] = []
     for table in _TABLES:
-        entry = marker.tables.get(table)
+        entry = tables_data.get(table)
         if entry is None:
             click.echo(f"error: table {table!r} not found in marker", err=True)
             sys.exit(2)
-        meta_loc = entry.metadata_location
-        rows = entry.rows
+        meta_loc = entry["metadata_location"]
+        rows = entry["rows"]
         ddl = (
             f"CREATE OR REPLACE EXTERNAL TABLE `{project}.bronze.{table}`\n"
             f"WITH CONNECTION `{conn_path}`\n"

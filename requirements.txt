@@ -17,6 +17,10 @@ cryptography<49
 # is the last line that still ships a macosx_12_0 x86_64 wheel to check before any bump. pyiceberg does
 # not require pyarrow or pyiceberg-core itself; the writer needs both. sqlalchemy is for the SQLite
 # catalog; the bound is pyiceberg's own for its sql-sqlite extra.
+# Semantic Layer (S0). google-cloud-bigquery is a pure-Python wheel; no native code,
+# no cryptography dependency beyond what google-auth already brings. Minimum 3.4.0 for
+# the ICEBERG format option in CREATE EXTERNAL TABLE DDL via the query API.
+google-cloud-bigquery>=3.4.0
 pyiceberg==0.12.0
 pyiceberg-core==0.10.1
 pyarrow==26.0.0

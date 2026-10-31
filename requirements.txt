@@ -7,7 +7,7 @@ faker>=24.0
 python-dotenv>=1.0
 python-dateutil>=2.0
 click>=8.0
-google-cloud-storage>=3
+google-cloud-storage>=3,<3.2
 # cryptography 50 ships Apple Silicon wheels only, so on an Intel Mac pip would try a source
 # build (Rust) and fail. Drop this bound when the project leaves the Intel Mac or cryptography
 # restores Intel wheels.
@@ -21,6 +21,10 @@ cryptography<49
 # no cryptography dependency beyond what google-auth already brings. Minimum 3.4.0 for
 # the ICEBERG format option in CREATE EXTERNAL TABLE DDL via the query API.
 google-cloud-bigquery>=3.4.0
+# Semantic Layer (S1). dbt-bigquery 1.9.x (not 1.8.x): 1.8.x requires google-cloud-storage~=2.4
+# which conflicts with the >=3 bound above; 1.9.x allows <3.2 which is compatible.
+# Both 1.8.x and 1.9.x use dbt-core 1.12.x underneath (SL-D8, session 31).
+dbt-bigquery~=1.9.2
 pyiceberg==0.12.0
 pyiceberg-core==0.10.1
 pyarrow==26.0.0

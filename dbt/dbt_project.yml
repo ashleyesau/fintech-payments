@@ -1,0 +1,37 @@
+name: fintech
+version: '1.0.0'
+config-version: 2
+
+profile: fintech
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+seeds:
+  fintech:
+    +schema: staging
+
+models:
+  fintech:
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: table
+      +schema: staging
+    marts:
+      +materialized: incremental
+      +schema: marts
+
+snapshots:
+  fintech:
+    +schema: staging
+    +strategy: check
+    +check_cols: all

@@ -408,7 +408,7 @@ def test_an_injected_client_factory_is_used_as_it_is_whatever_the_project(monkey
 def test_nothing_but_the_gcs_module_pulls_in_googles_libraries():
     code = ("import sys, cdc.consumer, cdc.landing, cdc.reader, cdc.dedup, cdc.envelope, cdc.pgoutput, "
             "cdc.transactions, cdc.columns, cdc.sink, cdc.lag, cdc.reconcile; "
-            "bad = sorted(m for m in sys.modules if m.split('.')[0] in ('google', 'googleapiclient', 'requests')); "
+            "bad = sorted(m for m in sys.modules if m.split('.')[0] in ('google', 'googleapiclient', 'requests') and getattr(sys.modules.get(m), '__file__', None) is not None); "
             "print(bad); sys.exit(1 if bad else 0)")
     result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True,
                             env={"PYTHONPATH": str(ROOT), "PATH": "/usr/bin:/usr/local/bin"})

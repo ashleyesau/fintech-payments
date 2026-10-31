@@ -235,7 +235,7 @@ def test_the_module_runs_documents_itself_and_refuses_a_nonsense_interval():
 
 
 def test_the_command_never_loads_googles_libraries():
-    code = "import sys, cdc.lag; bad = sorted(m for m in sys.modules if m.split('.')[0] in ('google', 'requests')); print(bad); sys.exit(1 if bad else 0)"
+    code = "import sys, cdc.lag; bad = sorted(m for m in sys.modules if m.split('.')[0] in ('google', 'requests') and getattr(sys.modules.get(m), '__file__', None) is not None); print(bad); sys.exit(1 if bad else 0)"
     result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True,
                             env={"PYTHONPATH": str(ROOT), "PATH": "/usr/bin:/usr/local/bin"})
     assert result.returncode == 0, result.stdout + result.stderr

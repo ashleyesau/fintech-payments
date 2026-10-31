@@ -1,0 +1,23 @@
+# Copy this file to ~/.dbt/profiles.yml and fill in the fields.
+# Never commit the real profiles.yml; it contains credentials.
+#
+# dbt reads this file from ~/.dbt/profiles.yml by default.
+# To point it at a different file: dbt run --profiles-dir /path/to/dir
+#
+# project: payments-512910 (us-east1)
+# datasets: staging and marts are created by S0 (scripts/register_bronze_bq.py).
+# method: oauth uses your gcloud application-default credentials.
+#   Before first use: gcloud auth application-default login
+
+fintech:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: payments-512910
+      dataset: staging
+      location: us-east1
+      threads: 4
+      timeout_seconds: 300
+      priority: interactive

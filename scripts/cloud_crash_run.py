@@ -182,13 +182,10 @@ def _say(msg: str):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--work", required=True, type=Path,
-                        help="directory for the catalog file (must not exist)")
+                        help="directory for the catalog file; existing directory is reused")
     args = parser.parse_args()
 
-    if args.work.exists():
-        print(f"error: {args.work} already exists; use a new directory", file=sys.stderr)
-        sys.exit(1)
-    args.work.mkdir(parents=True)
+    args.work.mkdir(parents=True, exist_ok=True)
     catalog_path = args.work / "catalog.db"
 
     settings = BronzeSettings()
@@ -207,74 +204,54 @@ def main():
     all_ok = True
     t_start = time.monotonic()
 
+    catalog, store, catalog_path = _open(catalog_path, settings)
+
     # -----------------------------------------------------------------------
     # step 1: baseline write
     # -----------------------------------------------------------------------
     print("step 1: baseline write")
     land = busy_landing()
-    catalog, store, catalog_path = _open(catalog_path, settings)
     report = _run(catalog, store, land, settings, catalog_path=catalog_path)
     total = sum(t.rows_appended for t in report.tables.values())
     print(f"  {total} rows appended in "
-          f"{sum(t.batches for t in report.tables.values())} batch(es)")
+          f"{sum(t.batches for t in report.tables.values())} batch(es) "
+          f"({'first write' if total > 0 else 'no-op resume'})")
     baseline_ok = _verify(catalog, land, label="baseline")
-    baseline_digests = {t: check(catalog, land.reader(), None, source_db=SOURCE_DB).landed[t]
-                        for t in TABLE_ORDER}
     m1 = newest_marker(store)
     print(f"  marker M1: {m1.run_id}")
     all_ok = all_ok and baseline_ok
 
     # -----------------------------------------------------------------------
-    # step 2: P1 crash + recovery
+    # steps 2-4: P1, P2, P3 crash + recovery
+    # Each extends the landing with one new transaction so there is exactly one
+    # new commit for the injector to crash on.
     # -----------------------------------------------------------------------
-    print("\nstep 2: P1 crash (after data files, before manifests)")
-    snapshots_before = {t: (catalog.load_table(f"bronze.{t}").current_snapshot().snapshot_id
-                            if catalog.table_exists(f"bronze.{t}") else None)
-                        for t in TABLE_ORDER}
-    with _P1Injector(crash_on=1):
-        try:
-            _run(catalog, store, land, settings, catalog_path=catalog_path)
-            print("  FAILED: no crash raised")
-            all_ok = False
-        except SimulatedCrash as e:
-            print(f"  crash: {e}")
-    p1_orphans_ok = _check_orphans(catalog, store, label="P1 before recovery", expect_orphans=True, bucket_name=settings.bucket)
-    _run(catalog, store, land, settings, catalog_path=catalog_path)
-    p1_verify_ok = _verify(catalog, land, label="P1 after recovery")
-    p1_orphans_clean = _check_orphans(catalog, store, label="P1 after recovery", expect_orphans=False, bucket_name=settings.bucket)
-    all_ok = all_ok and p1_orphans_ok and p1_verify_ok and p1_orphans_clean
+    for step_num, (label, Injector) in enumerate([
+        ("P1 crash (after data files, before manifests)", _P1Injector),
+        ("P2 crash (after manifest list, before metadata json)", _P2Injector),
+        ("P3 crash (after metadata json, before catalog row update)", _P3Injector),
+    ], start=2):
+        print(f"\nstep {step_num}: {label}")
+        # New transaction so there is always one commit to crash on
+        land.transaction(("merchants", "c"), ("merchant_transactions", "c"),
+                         ("risk_events", "c"), date=DATES[step_num % len(DATES)])
+        land.flush()
 
-    # -----------------------------------------------------------------------
-    # step 3: P2 crash + recovery
-    # -----------------------------------------------------------------------
-    print("\nstep 3: P2 crash (after manifest list, before metadata json)")
-    with _P2Injector(crash_on=1):
-        try:
-            _run(catalog, store, land, settings, catalog_path=catalog_path)
-            print("  FAILED: no crash raised")
-            all_ok = False
-        except SimulatedCrash as e:
-            print(f"  crash: {e}")
-    p2_orphans_ok = _check_orphans(catalog, store, label="P2 before recovery", expect_orphans=True, bucket_name=settings.bucket)
-    _run(catalog, store, land, settings, catalog_path=catalog_path)
-    p2_verify_ok = _verify(catalog, land, label="P2 after recovery")
-    all_ok = all_ok and p2_orphans_ok and p2_verify_ok
+        with Injector(crash_on=1):
+            try:
+                _run(catalog, store, land, settings, catalog_path=catalog_path)
+                print(f"  FAILED: no crash raised")
+                all_ok = False
+            except SimulatedCrash as e:
+                print(f"  crash: {e}")
 
-    # -----------------------------------------------------------------------
-    # step 4: P3 crash + recovery
-    # -----------------------------------------------------------------------
-    print("\nstep 4: P3 crash (after metadata json, before catalog row update)")
-    with _P3Injector(crash_on=1):
-        try:
-            _run(catalog, store, land, settings, catalog_path=catalog_path)
-            print("  FAILED: no crash raised")
-            all_ok = False
-        except SimulatedCrash as e:
-            print(f"  crash: {e}")
-    p3_orphans_ok = _check_orphans(catalog, store, label="P3 before recovery", expect_orphans=True, bucket_name=settings.bucket)
-    _run(catalog, store, land, settings, catalog_path=catalog_path)
-    p3_verify_ok = _verify(catalog, land, label="P3 after recovery")
-    all_ok = all_ok and p3_orphans_ok and p3_verify_ok
+        p_orphans_ok = _check_orphans(catalog, store, label=f"{label[:2]} before recovery",
+                                      expect_orphans=True, bucket_name=settings.bucket)
+        _run(catalog, store, land, settings, catalog_path=catalog_path)
+        p_verify_ok = _verify(catalog, land, label=f"{label[:2]} after recovery")
+        p_orphans_clean = _check_orphans(catalog, store, label=f"{label[:2]} after recovery",
+                                         expect_orphans=False, bucket_name=settings.bucket)
+        all_ok = all_ok and p_orphans_ok and p_verify_ok and p_orphans_clean
 
     # -----------------------------------------------------------------------
     # step 5: late object
@@ -283,17 +260,17 @@ def main():
     land.transaction(("merchants", "c"), ("merchant_transactions", "c"),
                      ("merchant_transactions", "c"), ("risk_events", "c"), date=DATES[0])
     land.flush()
+    m_before_late = newest_marker(store)
     report = _run(catalog, store, land, settings, catalog_path=catalog_path)
     appended = {t: report.tables[t].rows_appended for t in TABLE_ORDER
                 if report.tables[t].rows_appended > 0}
-    m2 = newest_marker(store)
+    m_after_late = newest_marker(store)
     all_markers = store.list_keys("_runs/")
-    late_ok = (len(all_markers) >= 2
-               and any(m1.run_id in k for k in all_markers)
-               and m2.run_id != m1.run_id)
+    late_ok = (m_after_late.run_id != m_before_late.run_id
+               and any(m_before_late.run_id in k for k in all_markers))
     print(f"  late rows appended: {appended}")
-    print(f"  old marker kept: {any(m1.run_id in k for k in all_markers)}, "
-          f"new marker written: {m2.run_id != m1.run_id}, "
+    print(f"  old marker kept: {any(m_before_late.run_id in k for k in all_markers)}, "
+          f"new marker written: {m_after_late.run_id != m_before_late.run_id}, "
           f"total markers: {len(all_markers)}")
     late_verify_ok = _verify(catalog, land, label="late object")
     all_ok = all_ok and late_ok and late_verify_ok
@@ -303,6 +280,8 @@ def main():
     # -----------------------------------------------------------------------
     print("\nstep 6: rebuild from newest marker + verify")
     scratch_catalog_path = args.work / "scratch_catalog.db"
+    if scratch_catalog_path.exists():
+        scratch_catalog_path.unlink()
     scratch_catalog = SqlCatalog(
         "bronze",
         uri=f"sqlite:///{scratch_catalog_path}",
@@ -311,12 +290,10 @@ def main():
     marker_used = rebuild_catalog(scratch_catalog, store)
     print(f"  rebuilt from marker: {marker_used.run_id}")
     rebuild_verify_ok = _verify(scratch_catalog, land, label="rebuilt catalog")
-    # Digests must match the baseline
     r_rebuilt = check(scratch_catalog, land.reader(), None, source_db=SOURCE_DB)
-    digests_match = all(
-        r_rebuilt.bronze[t].total == check(catalog, land.reader(), None, source_db=SOURCE_DB).bronze[t].total
-        for t in TABLE_ORDER
-    )
+    r_original = check(catalog, land.reader(), None, source_db=SOURCE_DB)
+    digests_match = all(r_rebuilt.bronze[t].total == r_original.bronze[t].total
+                        for t in TABLE_ORDER)
     print(f"  rebuilt digests match original catalog: {digests_match}")
     all_ok = all_ok and rebuild_verify_ok and digests_match
 
@@ -324,7 +301,7 @@ def main():
     # step 7: refused-creates sample
     # -----------------------------------------------------------------------
     print("\nstep 7: refused-creates sample")
-    existing_marker_key = store.list_keys("_runs/")[-1]   # the newest marker's key
+    existing_marker_key = store.list_keys("_runs/")[-1]
     result = store.put_if_absent(existing_marker_key, b'{"test": "refused_create_sample"}')
     print(f"  put_if_absent on existing key {existing_marker_key!r}: "
           f"{'created (UNEXPECTED)' if result else 'refused (expected)'}")

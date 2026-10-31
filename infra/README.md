@@ -91,5 +91,38 @@ objects as `cdc-consumer`, and a replay from a restored slot found all 83 alread
 
 ## Not here yet
 
-Nothing of the plan's stages is left. Not done: a scheduled plan to catch drift (a plan is run by hand), and the cause of
+Nothing of the original plan's stages is left. Not done: a scheduled plan to catch drift (a plan is run by hand), and the cause of
 `cdc_landing`'s customer-supplied-key restriction (stated in code as found).
+
+## Throwaway bucket for G4 step 8 (infra/scratch.tf)
+
+`infra/scratch.tf` defines two resources for the G4 cloud crash run: the throwaway bucket
+`payments-512910-bronze-crash-test` and bronze-writer's `objectUser` binding on it. It is kept in its own file
+so the `-target` flags in the apply and destroy commands are obvious and touch nothing else in the state.
+
+**Never apply or destroy without Ashley's go for that exact plan.**
+
+Apply (two resources added, nothing changed or destroyed):
+```
+terraform plan -target=google_storage_bucket.bronze_crash_test \
+               -target=google_storage_bucket_iam_member.bronze_writer_crash_test_user \
+               -out=scratch_apply.tfplan
+# review with Ashley, get her go
+terraform apply scratch_apply.tfplan
+```
+
+Use the bucket by setting `BRONZE_BUCKET=payments-512910-bronze-crash-test` for the Bronze commands.
+The `crash_test_bucket_name` output prints the exact name.
+
+Destroy (only after the crash run and on Ashley's go, with the bucket confirmed empty or relying on `force_destroy = true`):
+```
+terraform plan -destroy \
+               -target=google_storage_bucket.bronze_crash_test \
+               -target=google_storage_bucket_iam_member.bronze_writer_crash_test_user \
+               -out=scratch_destroy.tfplan
+# review with Ashley, get her go
+terraform apply scratch_destroy.tfplan
+```
+
+The bucket carries `force_destroy = true` (objects are deleted on destroy), soft delete off, no `prevent_destroy`
+and no `deletion_policy = PREVENT`. The real data buckets are unaffected by these commands.

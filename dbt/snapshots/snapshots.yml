@@ -1,0 +1,34 @@
+version: 2
+
+snapshots:
+  - name: merchants_scd
+    description: >
+      SCD2 snapshot of daily merchant state. One row per (merchant_id, state period).
+      Detects transitions in merchant_state, risk_score, loan_count, has_active_loan
+      and other slowly changing attributes. dbt_is_current = TRUE marks the live record.
+    columns:
+      - name: dbt_scd_id
+        tests:
+          - not_null
+          - unique
+      - name: merchant_id
+        tests:
+          - not_null
+      - name: snapshot_at
+        tests:
+          - not_null
+      - name: merchant_state
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['new', 'growing', 'stable', 'stressed', 'delinquent', 'churned']
+      - name: risk_score
+        tests:
+          - not_null
+      - name: dbt_valid_from
+        tests:
+          - not_null
+      - name: dbt_is_current
+        tests:
+          - not_null

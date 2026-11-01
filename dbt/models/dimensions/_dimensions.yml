@@ -1,0 +1,73 @@
+version: 2
+
+models:
+  - name: dim_merchants
+    description: >
+      Current-state merchant dimension. One row per merchant (dbt_is_current = TRUE).
+      Derived from the merchants_scd SCD2 snapshot. Use this model for all current
+      merchant lookups; use merchants_scd directly for historical analysis.
+    columns:
+      - name: merchant_id
+        tests:
+          - not_null
+          - unique
+      - name: snapshot_at
+        tests:
+          - not_null
+      - name: merchant_state
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['new', 'growing', 'stable', 'stressed', 'delinquent', 'churned']
+      - name: risk_score
+        tests:
+          - not_null
+      - name: dbt_valid_from
+        tests:
+          - not_null
+      - name: dbt_is_current
+        tests:
+          - not_null
+
+  - name: dim_date
+    description: >
+      Date spine covering 2025-01-01 through 2026-12-31 (731 rows). SA public holidays
+      joined from seeds/sa_public_holidays.csv. Attributes: is_business_day,
+      is_payday_period (days 2-4 and 25-27), is_sa_holiday, is_month_end,
+      is_quarter_end, day_of_week (BigQuery: 1=Sun 7=Sat), month_number, quarter.
+    columns:
+      - name: date_day
+        tests:
+          - not_null
+          - unique
+      - name: year
+        tests:
+          - not_null
+      - name: month_number
+        tests:
+          - not_null
+      - name: quarter
+        tests:
+          - not_null
+      - name: day_of_month
+        tests:
+          - not_null
+      - name: day_of_week
+        tests:
+          - not_null
+      - name: is_sa_holiday
+        tests:
+          - not_null
+      - name: is_month_end
+        tests:
+          - not_null
+      - name: is_quarter_end
+        tests:
+          - not_null
+      - name: is_business_day
+        tests:
+          - not_null
+      - name: is_payday_period
+        tests:
+          - not_null

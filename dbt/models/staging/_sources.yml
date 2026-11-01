@@ -1,0 +1,46 @@
+version: 2
+
+sources:
+  - name: bronze
+    database: payments-512910
+    schema: bronze
+    description: >
+      Five Bronze Iceberg external tables registered by scripts/register_bronze_bq.py.
+      Each table is a fixed snapshot of the Bronze Iceberg layer on gs://fintech_bronze,
+      run marker 20261030T094628001661Z. Re-run the registration script after each Bronze
+      write to re-point the external tables at the newest Iceberg snapshot.
+    loaded_at_field: ingested_at
+    freshness:
+      warn_after: {count: 14, period: day}
+      error_after: {count: 90, period: day}
+
+    tables:
+      - name: merchants
+        description: >
+          Daily end-of-day merchant dimension snapshots (op = 'c' only).
+          One row per merchant per simulated day at 23:59 SAST.
+          Primary key is (merchant_id, snapshot_at).
+
+      - name: merchant_transactions
+        description: >
+          Payment event stream (op = 'c' only). One row per payment attempt.
+          Includes completed payments, refunds, and chargebacks.
+          Primary key is transaction_id.
+
+      - name: loan_applications
+        description: >
+          Loan application stream, append-only. Contains both op = 'c' rows (application
+          INSERT at decision time) and op = 'u' rows (disbursement UPDATE). Silver staging
+          deduplicates to the latest row per application_id.
+
+      - name: loan_repayments
+        description: >
+          Loan repayment collection stream (op = 'c' only). One row per collection attempt;
+          retries, cures and write-offs each produce a new row.
+          Primary key is repayment_id.
+
+      - name: risk_events
+        description: >
+          Fraud and risk alert stream (op = 'c' only). One row per rule firing.
+          resolved_ts and outcome are always null in the current data.
+          Primary key is alert_id.

@@ -16,7 +16,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['new', 'growing', 'stable', 'stressed', 'delinquent', 'churned']
+              arguments:
+                values: ['new', 'growing', 'stable', 'stressed', 'delinquent', 'churned']
       - name: risk_score
         tests:
           - not_null
@@ -43,12 +44,14 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['payment', 'refund', 'chargeback', 'void']
+              arguments:
+                values: ['payment', 'refund', 'chargeback', 'void']
       - name: channel
         tests:
           - not_null
           - accepted_values:
-              values: ['card_present', 'card_ecom', 'instant_eft', 'payment_link', 'payshap']
+              arguments:
+                values: ['card_present', 'card_ecom', 'instant_eft', 'payment_link', 'payshap']
       - name: amount_minor
         tests:
           - not_null
@@ -101,19 +104,21 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['current', '1-30', '31-60', '61-90', '90+']
+              arguments:
+                values: ['current', '1-30', '31-60', '61-90', '90+']
       - name: collection_status
         tests:
           - not_null
           - accepted_values:
-              values:
-                - success
-                - unpaid_nsf
-                - unpaid_account_closed
-                - unpaid_no_authority
-                - disputed
-                - reversed
-                - partial
+              arguments:
+                values:
+                  - success
+                  - unpaid_nsf
+                  - unpaid_account_closed
+                  - unpaid_no_authority
+                  - disputed
+                  - reversed
+                  - partial
       - name: event_date
         tests:
           - not_null
@@ -137,18 +142,20 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values:
-                - refund_spike
-                - velocity_breach
-                - chargeback_accumulation
-                - scheme_warning
-                - large_txn_flag
-                - otp_abuse
+              arguments:
+                values:
+                  - refund_spike
+                  - velocity_breach
+                  - chargeback_accumulation
+                  - scheme_warning
+                  - large_txn_flag
+                  - otp_abuse
       - name: action
         tests:
           - not_null
           - accepted_values:
-              values: ['allow', 'flag_review', 'block']
+              arguments:
+                values: ['allow', 'flag_review', 'block']
       - name: event_date
         tests:
           - not_null

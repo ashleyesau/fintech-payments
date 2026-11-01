@@ -9,10 +9,11 @@ sources:
       Each table is a fixed snapshot of the Bronze Iceberg layer on gs://fintech_bronze,
       run marker 20261030T094628001661Z. Re-run the registration script after each Bronze
       write to re-point the external tables at the newest Iceberg snapshot.
+    config:
+      freshness:
+        warn_after: {count: 14, period: day}
+        error_after: {count: 90, period: day}
     loaded_at_field: ingested_at
-    freshness:
-      warn_after: {count: 14, period: day}
-      error_after: {count: 90, period: day}
 
     tables:
       - name: merchants

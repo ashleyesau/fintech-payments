@@ -44,9 +44,6 @@ models:
         tests:
           - not_null
           - unique
-      - name: snapshot_at
-        tests:
-          - not_null
       - name: merchant_state
         tests:
           - not_null
@@ -65,7 +62,7 @@ models:
 
   - name: dim_date
     description: >
-      Date spine covering 2025-01-01 through 2026-12-31 (731 rows). SA public holidays
+      Date spine covering 2025-01-01 through 2026-12-31 (730 rows). SA public holidays
       joined from seeds/sa_public_holidays.csv. Attributes: is_business_day,
       is_payday_period (days 2-4 and 25-27), is_sa_holiday, is_month_end,
       is_quarter_end, day_of_week (BigQuery: 1=Sun 7=Sat), month_number, quarter.

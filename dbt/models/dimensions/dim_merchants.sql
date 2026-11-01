@@ -6,7 +6,6 @@
 
 SELECT
     merchant_id,
-    snapshot_at,
     archetype,
     province,
     is_metro,

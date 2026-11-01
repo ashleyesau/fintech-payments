@@ -1,0 +1,194 @@
+version: 2
+
+models:
+  - name: int_payments__transaction_enriched
+    description: >
+      Every payment event enriched with the merchant SCD2 record that was current on
+      the transaction's SAST event_date. Adds merchant context (archetype, province,
+      merchant_state, risk_score at the time), pre-computed fee totals, GPV flags
+      (is_gpv, is_refund, is_chargeback) and EFT funnel timing in seconds.
+      Grain: one row per transaction_id (same as stg_merchant_transactions).
+    columns:
+      - name: transaction_id
+        tests:
+          - not_null
+          - unique
+      - name: merchant_id
+        tests:
+          - not_null
+      - name: event_date
+        tests:
+          - not_null
+      - name: event_type
+        tests:
+          - not_null
+      - name: amount_minor
+        tests:
+          - not_null
+      - name: total_fee_minor
+        tests:
+          - not_null
+      - name: is_gpv
+        tests:
+          - not_null
+      - name: is_refund
+        tests:
+          - not_null
+      - name: is_chargeback
+        tests:
+          - not_null
+
+  - name: int_payments__merchant_daily_gpv
+    description: >
+      Daily per-merchant payment volume aggregation. Grain: one row per
+      (merchant_id, txn_date). Source is stg_merchant_transactions.
+      Columns: txn_count, completed_payment_count, declined_count,
+      refund_count, chargeback_count, gross_gpv_minor, refund_volume_minor,
+      chargeback_volume_minor, net_gpv_minor, fee totals.
+    columns:
+      - name: merchant_id
+        tests:
+          - not_null
+      - name: txn_date
+        tests:
+          - not_null
+      - name: txn_count
+        tests:
+          - not_null
+      - name: gross_gpv_minor
+        tests:
+          - not_null
+      - name: net_gpv_minor
+        tests:
+          - not_null
+
+  - name: int_payments__merchant_gpv_rolling
+    description: >
+      Rolling 30-day and 60-day GPV windows per merchant. Materialised as a BigQuery
+      materialized view maintained automatically after each refresh of
+      int_payments__merchant_daily_gpv. CALC-8: RANGE BETWEEN INTERVAL 29/59 DAY
+      PRECEDING AND CURRENT ROW gives a correct calendar-day window.
+    columns:
+      - name: merchant_id
+        tests:
+          - not_null
+      - name: txn_date
+        tests:
+          - not_null
+      - name: rolling_30d_gpv_minor
+        tests:
+          - not_null
+      - name: rolling_60d_gpv_minor
+        tests:
+          - not_null
+
+  - name: int_lending__loan_daily_snapshot
+    description: >
+      One row per disbursed loan per calendar day from disbursement date through
+      end-of-term + 60 days (capped at 2026-12-31). CALC-1: before the first
+      instalment due date, days_past_due = 0, par_bucket = 'current',
+      outstanding = disbursement_amount_minor, collection_status = 'not_yet_due'.
+      After first due date, state is from the most recent repayment record.
+      Grain: (loan_id, snapshot_date).
+    columns:
+      - name: loan_id
+        tests:
+          - not_null
+      - name: merchant_id
+        tests:
+          - not_null
+      - name: snapshot_date
+        tests:
+          - not_null
+      - name: disbursed_date
+        tests:
+          - not_null
+      - name: disbursement_amount_minor
+        tests:
+          - not_null
+      - name: days_past_due
+        tests:
+          - not_null
+      - name: par_bucket
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['current', '1-30 dpd', '31-60 dpd', '61-90 dpd', '90+ dpd']
+      - name: outstanding_principal_minor
+        tests:
+          - not_null
+      - name: collection_status
+        tests:
+          - not_null
+      - name: is_written_off
+        tests:
+          - not_null
+
+  - name: int_lending__loan_fee_schedule
+    description: >
+      One row per disbursed loan per calendar month of the approved term. CALC-2:
+      straight-line amortisation of total_cost_percent * disbursement_amount_minor
+      over approved_term_months. month_number runs 1..N; cohort_date is DATE_TRUNC
+      of disbursement to month. Used by fct_revenue_daily and fct_loan_unit_economics.
+      Grain: (loan_id, fee_month).
+    columns:
+      - name: loan_id
+        tests:
+          - not_null
+      - name: merchant_id
+        tests:
+          - not_null
+      - name: fee_month
+        tests:
+          - not_null
+      - name: month_number
+        tests:
+          - not_null
+      - name: monthly_fee_minor
+        tests:
+          - not_null
+      - name: cohort_date
+        tests:
+          - not_null
+
+  - name: int_lending__portfolio_par
+    description: >
+      Ephemeral. PAR30/60/90 aggregation by snapshot_date across all active (non-
+      written-off) loans. Compiles to a CTE inside fct_loan_portfolio_daily.
+      Columns: active_loan_count, total_outstanding_minor, par30/60/90 balances
+      and rates. SAFE_DIVIDE used for rates so zero portfolio returns NULL not error.
+
+  - name: int_lending__vintage_cohorts
+    description: >
+      Ephemeral. Month-end snapshots of each disbursed loan with MOB (month_on_book)
+      and vintage_month. Compiles to a CTE inside fct_vintage_curves.
+      month_on_book = DATE_DIFF(snapshot_date, disbursed_date, MONTH).
+      pct_outstanding = outstanding_principal_minor / disbursement_amount_minor.
+
+  - name: int_risk__merchant_risk_daily
+    description: >
+      Daily risk profile per merchant. Joins daily GPV to risk event aggregates.
+      Adds rolling 30-day risk event count and GPV trend (30d rolling GPV change
+      vs 30 days prior). Grain: (merchant_id, snapshot_date) for days with
+      at least one transaction. Current merchant risk_score and merchant_state
+      joined from dim_merchants.
+    columns:
+      - name: merchant_id
+        tests:
+          - not_null
+      - name: snapshot_date
+        tests:
+          - not_null
+      - name: gross_gpv_minor
+        tests:
+          - not_null
+      - name: risk_event_count
+        tests:
+          - not_null
+      - name: risk_events_rolling_30d
+        tests:
+          - not_null
+      - name: gpv_rolling_30d_minor
+        tests:
+          - not_null

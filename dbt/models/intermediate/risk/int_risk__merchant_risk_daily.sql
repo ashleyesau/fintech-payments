@@ -74,17 +74,20 @@ windowed AS (
         merchant_state,
 
         -- rolling 30-day risk event count (calendar-day window)
+        -- UNIX_DATE gives an integer (days since epoch); RANGE BETWEEN 29 PRECEDING
+        -- is semantically identical to INTERVAL 29 DAY PRECEDING on a DATE column.
+        -- BigQuery requires numeric ORDER BY for RANGE BETWEEN with offset bounds.
         SUM(risk_event_count) OVER (
             PARTITION BY merchant_id
-            ORDER BY snapshot_date
-            RANGE BETWEEN INTERVAL 29 DAY PRECEDING AND CURRENT ROW
+            ORDER BY UNIX_DATE(snapshot_date)
+            RANGE BETWEEN 29 PRECEDING AND CURRENT ROW
         )                                                               AS risk_events_rolling_30d,
 
         -- rolling 30-day GPV for trend calculation
         SUM(gross_gpv_minor) OVER (
             PARTITION BY merchant_id
-            ORDER BY snapshot_date
-            RANGE BETWEEN INTERVAL 29 DAY PRECEDING AND CURRENT ROW
+            ORDER BY UNIX_DATE(snapshot_date)
+            RANGE BETWEEN 29 PRECEDING AND CURRENT ROW
         )                                                               AS gpv_rolling_30d_minor
 
     FROM combined

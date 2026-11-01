@@ -21,3 +21,6 @@ catalog.db
 .terraform/
 crash.log
 *.tfvars
+
+# Lightdash
+dbt/lightdash/.lightdash-metadata.json

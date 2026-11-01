@@ -17,7 +17,6 @@ SELECT
     loan_count,
     has_active_loan,
     dbt_scd_id,
-    dbt_updated_at,
     dbt_valid_from,
     dbt_valid_to,
     dbt_is_current

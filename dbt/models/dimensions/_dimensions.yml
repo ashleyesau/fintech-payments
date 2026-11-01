@@ -1,11 +1,44 @@
 version: 2
 
 models:
+  - name: merchants_scd
+    description: >
+      Full SCD2 history of merchant attribute changes, built from all daily Bronze
+      snapshots using LAG window functions. One row per (merchant_id, state period).
+      A new record opens whenever any of the nine tracked columns changes:
+      archetype, province, is_metro, onboarded_at, first_transaction_at,
+      merchant_state, risk_score, loan_count, has_active_loan.
+      dbt_valid_from is the first day the state was observed.
+      dbt_valid_to is the day the next change was detected (NULL for the current record).
+    columns:
+      - name: dbt_scd_id
+        tests:
+          - not_null
+          - unique
+      - name: merchant_id
+        tests:
+          - not_null
+      - name: dbt_valid_from
+        tests:
+          - not_null
+      - name: dbt_is_current
+        tests:
+          - not_null
+      - name: merchant_state
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['new', 'growing', 'stable', 'stressed', 'delinquent', 'churned']
+      - name: risk_score
+        tests:
+          - not_null
+
   - name: dim_merchants
     description: >
       Current-state merchant dimension. One row per merchant (dbt_is_current = TRUE).
-      Derived from the merchants_scd SCD2 snapshot. Use this model for all current
-      merchant lookups; use merchants_scd directly for historical analysis.
+      Derived from merchants_scd. Use this model for all current merchant lookups;
+      use merchants_scd directly for historical analysis.
     columns:
       - name: merchant_id
         tests:

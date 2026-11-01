@@ -1,0 +1,6 @@
+par_bucket,provision_rate
+current,0.02
+1-30,0.10
+31-60,0.30
+61-90,0.60
+90+,1.00

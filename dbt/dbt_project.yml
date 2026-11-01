@@ -17,6 +17,9 @@ clean-targets: ["target", "dbt_packages"]
 seeds:
   fintech:
     +schema: staging
+    provision_rates:
+      +column_types:
+        provision_rate: FLOAT64
 
 models:
   fintech:

@@ -35,9 +35,3 @@ models:
     marts:
       +materialized: incremental
       +schema: marts
-
-snapshots:
-  fintech:
-    +schema: staging
-    +strategy: check
-    +check_cols: all

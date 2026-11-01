@@ -114,7 +114,7 @@ models:
           - not_null
           - accepted_values:
               arguments:
-                values: ['current', '1-30 dpd', '31-60 dpd', '61-90 dpd', '90+ dpd']
+                values: ['current', '1-30', '31-60', '61-90', '90+']
       - name: outstanding_principal_minor
         tests:
           - not_null

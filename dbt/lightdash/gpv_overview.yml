@@ -1,0 +1,171 @@
+version: 1
+type: space
+name: "GPV Overview"
+description: "Daily payment volume, take rate, and transaction counts"
+isPrivate: false
+
+savedCharts:
+
+  - name: "Daily GPV by Month"
+    description: "Total gross payment volume (ZAR) aggregated by month"
+    tableName: "fct_payments_daily"
+    metricQuery:
+      dimensions:
+        - "fct_payments_daily_txn_date"
+      metrics:
+        - "fct_payments_daily_total_gpv"
+      filters: {}
+      sorts:
+        - fieldId: "fct_payments_daily_txn_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_payments_daily_txn_date"
+          yField:
+            - "fct_payments_daily_total_gpv"
+        eChartsConfig:
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_payments_daily_txn_date"
+                yRef:
+                  field: "fct_payments_daily_total_gpv"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Take Rate by Month"
+    description: "Average acquirer take rate (%) by month"
+    tableName: "fct_payments_daily"
+    metricQuery:
+      dimensions:
+        - "fct_payments_daily_txn_date"
+      metrics:
+        - "fct_payments_daily_avg_take_rate"
+      filters: {}
+      sorts:
+        - fieldId: "fct_payments_daily_txn_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_payments_daily_txn_date"
+          yField:
+            - "fct_payments_daily_avg_take_rate"
+        eChartsConfig:
+          series:
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_payments_daily_txn_date"
+                yRef:
+                  field: "fct_payments_daily_avg_take_rate"
+    tableConfig:
+      columnOrder: []
+
+  - name: "GPV by Archetype"
+    description: "Total gross payment volume (ZAR) split by merchant archetype"
+    tableName: "fct_payments_daily"
+    metricQuery:
+      dimensions:
+        - "fct_payments_daily_archetype"
+      metrics:
+        - "fct_payments_daily_total_gpv"
+      filters: {}
+      sorts:
+        - fieldId: "fct_payments_daily_total_gpv"
+          descending: true
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: pie
+      config:
+        metricId: "fct_payments_daily_total_gpv"
+        groupFieldIds:
+          - "fct_payments_daily_archetype"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Transaction Count by Month"
+    description: "Total transaction count aggregated by month"
+    tableName: "fct_payments_daily"
+    metricQuery:
+      dimensions:
+        - "fct_payments_daily_txn_date"
+      metrics:
+        - "fct_payments_daily_total_transactions"
+      filters: {}
+      sorts:
+        - fieldId: "fct_payments_daily_txn_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_payments_daily_txn_date"
+          yField:
+            - "fct_payments_daily_total_transactions"
+        eChartsConfig:
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_payments_daily_txn_date"
+                yRef:
+                  field: "fct_payments_daily_total_transactions"
+    tableConfig:
+      columnOrder: []
+
+dashboards:
+  - name: "GPV Overview"
+    description: "Daily GPV by month, take rate, GPV by merchant archetype, and transaction counts"
+    tiles:
+      - type: saved_chart
+        x: 0
+        y: 0
+        w: 12
+        h: 9
+        properties:
+          chartName: "Daily GPV by Month"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 0
+        y: 9
+        w: 6
+        h: 9
+        properties:
+          chartName: "Take Rate by Month"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 6
+        y: 9
+        w: 6
+        h: 9
+        properties:
+          chartName: "GPV by Archetype"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 0
+        y: 18
+        w: 12
+        h: 9
+        properties:
+          chartName: "Transaction Count by Month"
+          title: ""
+          hideTitle: false

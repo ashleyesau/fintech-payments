@@ -1,0 +1,232 @@
+version: 1
+type: space
+name: "Portfolio Quality"
+description: "PAR30/60/90 portfolio quality, vintage curves, and loan portfolio metrics"
+isPrivate: false
+
+savedCharts:
+
+  - name: "PAR Rates Over Time"
+    description: "PAR30, PAR60, and PAR90 rates as a percentage of total outstanding portfolio, daily"
+    tableName: "fct_loan_portfolio_daily"
+    metricQuery:
+      dimensions:
+        - "fct_loan_portfolio_daily_snapshot_date"
+      metrics:
+        - "fct_loan_portfolio_daily_avg_par30_rate"
+        - "fct_loan_portfolio_daily_avg_par60_rate"
+        - "fct_loan_portfolio_daily_avg_par90_rate"
+      filters: {}
+      sorts:
+        - fieldId: "fct_loan_portfolio_daily_snapshot_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_loan_portfolio_daily_snapshot_date"
+          yField:
+            - "fct_loan_portfolio_daily_avg_par30_rate"
+            - "fct_loan_portfolio_daily_avg_par60_rate"
+            - "fct_loan_portfolio_daily_avg_par90_rate"
+        eChartsConfig:
+          legend:
+            show: true
+          series:
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_loan_portfolio_daily_snapshot_date"
+                yRef:
+                  field: "fct_loan_portfolio_daily_avg_par30_rate"
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_loan_portfolio_daily_snapshot_date"
+                yRef:
+                  field: "fct_loan_portfolio_daily_avg_par60_rate"
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_loan_portfolio_daily_snapshot_date"
+                yRef:
+                  field: "fct_loan_portfolio_daily_avg_par90_rate"
+    tableConfig:
+      columnOrder: []
+
+  - name: "PAR Balances Over Time"
+    description: "ZAR value of loans in PAR30, PAR60, and PAR90 buckets, daily"
+    tableName: "fct_loan_portfolio_daily"
+    metricQuery:
+      dimensions:
+        - "fct_loan_portfolio_daily_snapshot_date"
+      metrics:
+        - "fct_loan_portfolio_daily_par30_balance"
+        - "fct_loan_portfolio_daily_par60_balance"
+        - "fct_loan_portfolio_daily_par90_balance"
+      filters: {}
+      sorts:
+        - fieldId: "fct_loan_portfolio_daily_snapshot_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_loan_portfolio_daily_snapshot_date"
+          yField:
+            - "fct_loan_portfolio_daily_par30_balance"
+            - "fct_loan_portfolio_daily_par60_balance"
+            - "fct_loan_portfolio_daily_par90_balance"
+        eChartsConfig:
+          legend:
+            show: true
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_loan_portfolio_daily_snapshot_date"
+                yRef:
+                  field: "fct_loan_portfolio_daily_par30_balance"
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_loan_portfolio_daily_snapshot_date"
+                yRef:
+                  field: "fct_loan_portfolio_daily_par60_balance"
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_loan_portfolio_daily_snapshot_date"
+                yRef:
+                  field: "fct_loan_portfolio_daily_par90_balance"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Portfolio Size Over Time"
+    description: "Total outstanding balance (ZAR) and active loan count, daily"
+    tableName: "fct_loan_portfolio_daily"
+    metricQuery:
+      dimensions:
+        - "fct_loan_portfolio_daily_snapshot_date"
+      metrics:
+        - "fct_loan_portfolio_daily_total_outstanding"
+        - "fct_loan_portfolio_daily_max_active_loans"
+      filters: {}
+      sorts:
+        - fieldId: "fct_loan_portfolio_daily_snapshot_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_loan_portfolio_daily_snapshot_date"
+          yField:
+            - "fct_loan_portfolio_daily_total_outstanding"
+            - "fct_loan_portfolio_daily_max_active_loans"
+        eChartsConfig:
+          legend:
+            show: true
+          series:
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_loan_portfolio_daily_snapshot_date"
+                yRef:
+                  field: "fct_loan_portfolio_daily_total_outstanding"
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_loan_portfolio_daily_snapshot_date"
+                yRef:
+                  field: "fct_loan_portfolio_daily_max_active_loans"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Vintage Curves by Cohort"
+    description: "PAR30 rate by balance at each month on book, split by origination vintage"
+    tableName: "fct_vintage_curves"
+    metricQuery:
+      dimensions:
+        - "fct_vintage_curves_month_on_book"
+        - "fct_vintage_curves_vintage_month"
+      metrics:
+        - "fct_vintage_curves_avg_par30_rate_by_balance"
+      filters: {}
+      sorts:
+        - fieldId: "fct_vintage_curves_month_on_book"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    pivotConfig:
+      columns:
+        - "fct_vintage_curves_vintage_month"
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_vintage_curves_month_on_book"
+          yField:
+            - "fct_vintage_curves_avg_par30_rate_by_balance"
+        eChartsConfig:
+          legend:
+            show: true
+          series:
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_vintage_curves_month_on_book"
+                yRef:
+                  field: "fct_vintage_curves_avg_par30_rate_by_balance"
+    tableConfig:
+      columnOrder: []
+
+dashboards:
+  - name: "Portfolio Quality"
+    description: "PAR30/60/90 rates and balances over time, vintage curves, and portfolio size"
+    tiles:
+      - type: saved_chart
+        x: 0
+        y: 0
+        w: 12
+        h: 9
+        properties:
+          chartName: "PAR Rates Over Time"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 0
+        y: 9
+        w: 12
+        h: 9
+        properties:
+          chartName: "PAR Balances Over Time"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 0
+        y: 18
+        w: 6
+        h: 9
+        properties:
+          chartName: "Portfolio Size Over Time"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 6
+        y: 18
+        w: 6
+        h: 9
+        properties:
+          chartName: "Vintage Curves by Cohort"
+          title: ""
+          hideTitle: false

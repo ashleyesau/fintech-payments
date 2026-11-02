@@ -1,0 +1,218 @@
+version: 1
+type: space
+name: "Settlement Reconciliation"
+description: "Net payout vs gross GPV, acquirer revenue, settlement by channel"
+isPrivate: false
+
+savedCharts:
+
+  - name: "Gross GPV vs Net Payout"
+    description: "Daily gross GPV and net payout (ZAR) showing the spread between funds collected and funds settled"
+    tableName: "fct_settlement_daily"
+    metricQuery:
+      dimensions:
+        - "fct_settlement_daily_settlement_date"
+      metrics:
+        - "fct_settlement_daily_total_gross_gpv"
+        - "fct_settlement_daily_total_net_payout"
+      filters: {}
+      sorts:
+        - fieldId: "fct_settlement_daily_settlement_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_settlement_daily_settlement_date"
+          yField:
+            - "fct_settlement_daily_total_gross_gpv"
+            - "fct_settlement_daily_total_net_payout"
+        eChartsConfig:
+          legend:
+            show: true
+          series:
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_settlement_daily_settlement_date"
+                yRef:
+                  field: "fct_settlement_daily_total_gross_gpv"
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_settlement_daily_settlement_date"
+                yRef:
+                  field: "fct_settlement_daily_total_net_payout"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Acquirer Revenue by Date"
+    description: "Daily acquirer markup revenue (ZAR) earned on settled transactions"
+    tableName: "fct_settlement_daily"
+    metricQuery:
+      dimensions:
+        - "fct_settlement_daily_settlement_date"
+      metrics:
+        - "fct_settlement_daily_total_acquirer_revenue"
+      filters: {}
+      sorts:
+        - fieldId: "fct_settlement_daily_settlement_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_settlement_daily_settlement_date"
+          yField:
+            - "fct_settlement_daily_total_acquirer_revenue"
+        eChartsConfig:
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_settlement_daily_settlement_date"
+                yRef:
+                  field: "fct_settlement_daily_total_acquirer_revenue"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Net Payout by Channel"
+    description: "Total net payout (ZAR) split by payment rail (card, EFT, instant)"
+    tableName: "fct_settlement_daily"
+    metricQuery:
+      dimensions:
+        - "fct_settlement_daily_channel"
+      metrics:
+        - "fct_settlement_daily_total_gross_gpv"
+        - "fct_settlement_daily_total_net_payout"
+        - "fct_settlement_daily_total_acquirer_revenue"
+      filters: {}
+      sorts:
+        - fieldId: "fct_settlement_daily_total_net_payout"
+          descending: true
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_settlement_daily_channel"
+          yField:
+            - "fct_settlement_daily_total_gross_gpv"
+            - "fct_settlement_daily_total_net_payout"
+            - "fct_settlement_daily_total_acquirer_revenue"
+        eChartsConfig:
+          legend:
+            show: true
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_settlement_daily_channel"
+                yRef:
+                  field: "fct_settlement_daily_total_gross_gpv"
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_settlement_daily_channel"
+                yRef:
+                  field: "fct_settlement_daily_total_net_payout"
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_settlement_daily_channel"
+                yRef:
+                  field: "fct_settlement_daily_total_acquirer_revenue"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Fee Breakdown Over Time"
+    description: "Daily merchant fee and refund volume (ZAR) deducted from gross GPV to arrive at net payout"
+    tableName: "fct_settlement_daily"
+    metricQuery:
+      dimensions:
+        - "fct_settlement_daily_settlement_date"
+      metrics:
+        - "fct_settlement_daily_total_merchant_fee"
+        - "fct_settlement_daily_total_refund_volume"
+      filters: {}
+      sorts:
+        - fieldId: "fct_settlement_daily_settlement_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_settlement_daily_settlement_date"
+          yField:
+            - "fct_settlement_daily_total_merchant_fee"
+            - "fct_settlement_daily_total_refund_volume"
+        eChartsConfig:
+          legend:
+            show: true
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_settlement_daily_settlement_date"
+                yRef:
+                  field: "fct_settlement_daily_total_merchant_fee"
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_settlement_daily_settlement_date"
+                yRef:
+                  field: "fct_settlement_daily_total_refund_volume"
+    tableConfig:
+      columnOrder: []
+
+dashboards:
+  - name: "Settlement Reconciliation"
+    description: "Net payout vs gross GPV, acquirer revenue, and fee breakdown by channel"
+    tiles:
+      - type: saved_chart
+        x: 0
+        y: 0
+        w: 12
+        h: 9
+        properties:
+          chartName: "Gross GPV vs Net Payout"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 0
+        y: 9
+        w: 6
+        h: 9
+        properties:
+          chartName: "Acquirer Revenue by Date"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 6
+        y: 9
+        w: 6
+        h: 9
+        properties:
+          chartName: "Net Payout by Channel"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 0
+        y: 18
+        w: 12
+        h: 9
+        properties:
+          chartName: "Fee Breakdown Over Time"
+          title: ""
+          hideTitle: false

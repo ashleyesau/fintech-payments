@@ -57,7 +57,10 @@ with DAG(
 
     bronze_write = BashOperator(
         task_id="bronze_write",
-        bash_command=f"cd {REPO} && {VENV}/python -m bronze.main --write",
+        bash_command=(
+            f"cd {REPO} && {VENV}/python -m bronze.main --rebuild-catalog"
+            f" && {VENV}/python -m bronze.main --write"
+        ),
         env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_BRONZE},
         append_env=True,
     )

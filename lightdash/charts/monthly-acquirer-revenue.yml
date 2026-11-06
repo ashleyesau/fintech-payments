@@ -3,14 +3,14 @@ chartConfig:
     conditionalFormattings: []
     eChartsConfig:
       series:
-      - encode:
-          xRef:
-            field: fct_merchant_monthly_summary_month_month
-          yRef:
-            field: fct_merchant_monthly_summary_total_acquirer_revenue
-        isFilteredOut: false
-        type: bar
-        yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_merchant_monthly_summary_month_month
+            yRef:
+              field: fct_merchant_monthly_summary_total_acquirer_revenue
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
       showAxisTicks: false
     layout:
       flipAxes: false
@@ -18,7 +18,7 @@ chartConfig:
       stack: none
       xField: fct_merchant_monthly_summary_month_month
       yField:
-      - fct_merchant_monthly_summary_total_acquirer_revenue
+        - fct_merchant_monthly_summary_total_acquirer_revenue
   type: cartesian
 contentType: chart
 dashboardSlug: merchant-monthly-statement
@@ -27,16 +27,16 @@ metricQuery:
   additionalMetrics: []
   customDimensions: []
   dimensions:
-  - fct_merchant_monthly_summary_month_month
+    - fct_merchant_monthly_summary_month_month
   exploreName: fct_merchant_monthly_summary
   filters: {}
   limit: 500
   metricOverrides: {}
   metrics:
-  - fct_merchant_monthly_summary_total_acquirer_revenue
+    - fct_merchant_monthly_summary_total_acquirer_revenue
   sorts:
-  - descending: true
-    fieldId: fct_merchant_monthly_summary_month_month
+    - descending: true
+      fieldId: fct_merchant_monthly_summary_month_month
   tableCalculations: []
   timezone: project_timezone
 name: Monthly Acquirer Revenue
@@ -44,8 +44,8 @@ slug: monthly-acquirer-revenue
 spaceSlug: shared
 tableConfig:
   columnOrder:
-  - fct_merchant_monthly_summary_month_month
-  - fct_merchant_monthly_summary_total_acquirer_revenue
+    - fct_merchant_monthly_summary_month_month
+    - fct_merchant_monthly_summary_total_acquirer_revenue
 tableName: fct_merchant_monthly_summary
 verification: null
 version: 1

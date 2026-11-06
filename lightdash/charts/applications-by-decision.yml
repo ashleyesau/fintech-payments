@@ -3,14 +3,14 @@ chartConfig:
     conditionalFormattings: []
     eChartsConfig:
       series:
-      - encode:
-          xRef:
-            field: fct_loan_applications_daily_event_date_month
-          yRef:
-            field: fct_loan_applications_daily_total_applications
-        isFilteredOut: false
-        type: bar
-        yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_loan_applications_daily_event_date_month
+            yRef:
+              field: fct_loan_applications_daily_total_applications
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
       showAxisTicks: false
     layout:
       flipAxes: false
@@ -18,7 +18,7 @@ chartConfig:
       stack: none
       xField: fct_loan_applications_daily_event_date_month
       yField:
-      - fct_loan_applications_daily_total_applications
+        - fct_loan_applications_daily_total_applications
   type: cartesian
 contentType: chart
 dashboardSlug: lending-operations
@@ -27,17 +27,17 @@ metricQuery:
   additionalMetrics: []
   customDimensions: []
   dimensions:
-  - fct_loan_applications_daily_event_date_month
-  - fct_loan_applications_daily_decision
+    - fct_loan_applications_daily_event_date_month
+    - fct_loan_applications_daily_decision
   exploreName: fct_loan_applications_daily
   filters: {}
   limit: 500
   metricOverrides: {}
   metrics:
-  - fct_loan_applications_daily_total_applications
+    - fct_loan_applications_daily_total_applications
   sorts:
-  - descending: true
-    fieldId: fct_loan_applications_daily_event_date_month
+    - descending: true
+      fieldId: fct_loan_applications_daily_event_date_month
   tableCalculations: []
   timezone: project_timezone
 name: Applications by Decision
@@ -45,9 +45,9 @@ slug: applications-by-decision
 spaceSlug: shared
 tableConfig:
   columnOrder:
-  - fct_loan_applications_daily_event_date_month
-  - fct_loan_applications_daily_decision
-  - fct_loan_applications_daily_total_applications
+    - fct_loan_applications_daily_event_date_month
+    - fct_loan_applications_daily_decision
+    - fct_loan_applications_daily_total_applications
 tableName: fct_loan_applications_daily
 verification: null
 version: 1

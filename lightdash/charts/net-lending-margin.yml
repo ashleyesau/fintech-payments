@@ -3,14 +3,14 @@ chartConfig:
     conditionalFormattings: []
     eChartsConfig:
       series:
-      - encode:
-          xRef:
-            field: fct_loan_unit_economics_fee_month_month
-          yRef:
-            field: fct_loan_unit_economics_total_net_margin
-        isFilteredOut: false
-        type: line
-        yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_loan_unit_economics_fee_month_month
+            yRef:
+              field: fct_loan_unit_economics_total_net_margin
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
       showAxisTicks: false
     layout:
       flipAxes: false
@@ -18,25 +18,27 @@ chartConfig:
       stack: none
       xField: fct_loan_unit_economics_fee_month_month
       yField:
-      - fct_loan_unit_economics_total_net_margin
+        - fct_loan_unit_economics_total_net_margin
   type: cartesian
 contentType: chart
 dashboardSlug: lending-operations
-description: Total net lending margin (ZAR) per fee month (fee income minus bad debt provision).
+description: >-
+  Total net lending margin (ZAR) per fee month (fee income minus bad debt
+  provision).
 metricQuery:
   additionalMetrics: []
   customDimensions: []
   dimensions:
-  - fct_loan_unit_economics_fee_month_month
+    - fct_loan_unit_economics_fee_month_month
   exploreName: fct_loan_unit_economics
   filters: {}
   limit: 500
   metricOverrides: {}
   metrics:
-  - fct_loan_unit_economics_total_net_margin
+    - fct_loan_unit_economics_total_net_margin
   sorts:
-  - descending: true
-    fieldId: fct_loan_unit_economics_fee_month_month
+    - descending: true
+      fieldId: fct_loan_unit_economics_fee_month_month
   tableCalculations: []
   timezone: project_timezone
 name: Net Lending Margin
@@ -44,8 +46,8 @@ slug: net-lending-margin
 spaceSlug: shared
 tableConfig:
   columnOrder:
-  - fct_loan_unit_economics_fee_month_month
-  - fct_loan_unit_economics_total_net_margin
+    - fct_loan_unit_economics_fee_month_month
+    - fct_loan_unit_economics_total_net_margin
 tableName: fct_loan_unit_economics
 verification: null
 version: 1

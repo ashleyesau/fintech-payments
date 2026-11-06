@@ -14,65 +14,65 @@ slug: lending-operations
 spaceSlug: shared
 tabs: []
 tiles:
-- h: 9
-  properties:
-    chartName: Applications by Decision
-    chartSlug: applications-by-decision
-    hideTitle: false
-    title: ""
+  - h: 9
+    properties:
+      chartName: Applications by Decision
+      chartSlug: applications-by-decision
+      hideTitle: false
+      title: ""
     tabSlug: null
     tileSlug: applications-by-decision
-  type: saved_chart
-  w: 17
-  x: 0
-  "y": 0
-- h: 9
-  properties:
-    chartName: Approval and Disbursement Rates
-    chartSlug: approval-disbursement-rates
-    hideTitle: false
-    title: ""
+    type: saved_chart
+    w: 17
+    x: 0
+    "y": 0
+  - h: 9
+    properties:
+      chartName: Approval and Disbursement Rates
+      chartSlug: approval-disbursement-rates
+      hideTitle: false
+      title: ""
     tabSlug: null
     tileSlug: approval-disbursement-rates
-  type: saved_chart
-  w: 17
-  x: 17
-  "y": 0
-- h: 9
-  properties:
-    chartName: Collection Attempts by Status
-    chartSlug: collection-attempts-by-status
-    hideTitle: false
-    title: ""
+    type: saved_chart
+    w: 17
+    x: 17
+    "y": 0
+  - h: 9
+    properties:
+      chartName: Collection Attempts by Status
+      chartSlug: collection-attempts-by-status
+      hideTitle: false
+      title: ""
     tabSlug: null
     tileSlug: collection-attempts-by-status
-  type: saved_chart
-  w: 34
-  x: 0
-  "y": 9
-- h: 9
-  properties:
-    chartName: Fee Income vs Provision
-    chartSlug: fee-income-vs-provision
-    hideTitle: false
-    title: ""
+    type: saved_chart
+    w: 34
+    x: 0
+    "y": 9
+  - h: 9
+    properties:
+      chartName: Fee Income vs Provision
+      chartSlug: fee-income-vs-provision
+      hideTitle: false
+      title: ""
     tabSlug: null
     tileSlug: fee-income-vs-provision
-  type: saved_chart
-  w: 17
-  x: 0
-  "y": 18
-- h: 9
-  properties:
-    chartName: Net Lending Margin
-    chartSlug: net-lending-margin
-    hideTitle: false
-    title: ""
+    type: saved_chart
+    w: 17
+    x: 0
+    "y": 18
+  - h: 9
+    properties:
+      chartName: Net Lending Margin
+      chartSlug: net-lending-margin
+      hideTitle: false
+      title: ""
     tabSlug: null
     tileSlug: net-lending-margin
-  type: saved_chart
-  w: 17
-  x: 17
-  "y": 18
+    type: saved_chart
+    w: 17
+    x: 17
+    "y": 18
 verification: null
 version: 1

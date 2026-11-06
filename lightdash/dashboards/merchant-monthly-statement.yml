@@ -14,53 +14,53 @@ slug: merchant-monthly-statement
 spaceSlug: shared
 tabs: []
 tiles:
-- h: 9
-  properties:
-    chartName: Monthly GPV Over Time
-    chartSlug: monthly-gpv-over-time
-    hideTitle: false
-    title: ""
+  - h: 9
+    properties:
+      chartName: Monthly GPV Over Time
+      chartSlug: monthly-gpv-over-time
+      hideTitle: false
+      title: ""
     tabSlug: null
     tileSlug: monthly-gpv-over-time
-  type: saved_chart
-  w: 34
-  x: 0
-  "y": 0
-- h: 9
-  properties:
-    chartName: Net GPV vs Loan Balance
-    chartSlug: net-gpv-vs-loan-balance
-    hideTitle: false
-    title: ""
+    type: saved_chart
+    w: 34
+    x: 0
+    "y": 0
+  - h: 9
+    properties:
+      chartName: Net GPV vs Loan Balance
+      chartSlug: net-gpv-vs-loan-balance
+      hideTitle: false
+      title: ""
     tabSlug: null
     tileSlug: net-gpv-vs-loan-balance
-  type: saved_chart
-  w: 34
-  x: 0
-  "y": 9
-- h: 9
-  properties:
-    chartName: Monthly Collections
-    chartSlug: monthly-collections
-    hideTitle: false
-    title: ""
+    type: saved_chart
+    w: 34
+    x: 0
+    "y": 9
+  - h: 9
+    properties:
+      chartName: Monthly Collections
+      chartSlug: monthly-collections
+      hideTitle: false
+      title: ""
     tabSlug: null
     tileSlug: monthly-collections
-  type: saved_chart
-  w: 17
-  x: 0
-  "y": 18
-- h: 9
-  properties:
-    chartName: Monthly Acquirer Revenue
-    chartSlug: monthly-acquirer-revenue
-    hideTitle: false
-    title: ""
+    type: saved_chart
+    w: 17
+    x: 0
+    "y": 18
+  - h: 9
+    properties:
+      chartName: Monthly Acquirer Revenue
+      chartSlug: monthly-acquirer-revenue
+      hideTitle: false
+      title: ""
     tabSlug: null
     tileSlug: monthly-acquirer-revenue
-  type: saved_chart
-  w: 17
-  x: 17
-  "y": 18
+    type: saved_chart
+    w: 17
+    x: 17
+    "y": 18
 verification: null
 version: 1

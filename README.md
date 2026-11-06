@@ -22,6 +22,7 @@ This is not real data, a model fitted to any company's books, or a benchmark. Pa
 | Warehouse | | BigQuery |
 | Transforms | | dbt (staging, intermediate, marts in `dbt/`) |
 | BI | | Lightdash Cloud (dashboards, `lightdash/`) |
+| Orchestration | | Airflow 2.9.3 LocalExecutor (Docker Compose, `airflow/`, DAG in `dags/`) |
 
 ## Quick start
 
@@ -511,6 +512,66 @@ Each Bronze refresh triggers this chain in order:
 2. `python scripts/register_bronze_bq.py --project payments-512910 --location us-east1 --connection fintech-bronze` -- re-point the BigQuery external tables at the new Iceberg metadata file (required after every Bronze write; without it dbt reads stale data)
 3. `dbt run --select marts` -- rebuild the mart tables from the updated source
 4. Lightdash dashboards update automatically on the next query
+
+## Orchestration (Airflow)
+
+Apache Airflow 2.9.3 runs the four-step pipeline automatically on a cron schedule. The stack uses Docker Compose with LocalExecutor: three containers (Airflow metadata Postgres, webserver, scheduler), no Celery or Redis needed for a single-node pipeline.
+
+**DAG:** `dags/fintech_pipeline.py` -- `fintech_pipeline` -- `bronze_write >> register_bq >> dbt_marts`
+
+**Schedule:** `0 6 * * *` (06:00 UTC / 08:00 SAST). DAGs are paused at creation; unpause from the UI toggle or the CLI.
+
+### Setup (once)
+
+```bash
+cp airflow/.env.example airflow/.env
+```
+
+Edit `airflow/.env` and fill in three absolute paths:
+
+| Variable | What it points to |
+|---|---|
+| `BRONZE_WRITER_CREDS_PATH` | The bronze-writer impersonated credentials file (`~/.config/gcloud_bronze`) |
+| `ADC_CREDS_PATH` | Your ADC JSON file (`~/.config/gcloud/application_default_credentials.json`) |
+| `DBT_PROFILES_DIR` | The directory containing `profiles.yml` (typically `~/.dbt`) |
+
+Then initialise the Airflow database and create the admin user:
+
+```bash
+docker compose -f airflow/docker-compose.yml up airflow-init
+```
+
+### Start and stop
+
+```bash
+docker compose -f airflow/docker-compose.yml up -d webserver scheduler
+docker compose -f airflow/docker-compose.yml down
+```
+
+The image is built from `airflow/Dockerfile` on first `up`. Rebuild after a dependency change: `docker compose -f airflow/docker-compose.yml build`.
+
+UI: `http://localhost:8080` -- username `admin`, password `admin`.
+
+### Trigger a run manually
+
+```bash
+docker compose -f airflow/docker-compose.yml exec scheduler airflow dags trigger fintech_pipeline
+```
+
+Or use the **Trigger DAG** button in the UI.
+
+### Pause and unpause the cron schedule
+
+```bash
+docker compose -f airflow/docker-compose.yml exec scheduler airflow dags pause fintech_pipeline
+docker compose -f airflow/docker-compose.yml exec scheduler airflow dags unpause fintech_pipeline
+```
+
+The cron will not fire while the DAG is paused. Manual triggers still work.
+
+### View task logs
+
+Open the UI, click **fintech_pipeline**, select a run, and click any task box. Logs stream in the browser. The scheduler also writes logs to the `airflow_logs` Docker volume.
 
 ## Validating a run
 

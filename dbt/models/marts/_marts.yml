@@ -30,15 +30,7 @@ models:
             dimension:
               label: "Merchant Archetype"
       - name: province
-        config:
-          meta:
-            dimension:
-              label: "Province"
       - name: merchant_state
-        config:
-          meta:
-            dimension:
-              label: "Merchant State"
       - name: txn_count
         tests:
           - not_null
@@ -346,10 +338,6 @@ models:
               label: "Snapshot Date"
               type: date
       - name: merchant_state
-        config:
-          meta:
-            dimension:
-              label: "Merchant State"
       - name: current_risk_score
         tests:
           - not_null
@@ -439,17 +427,9 @@ models:
       - name: decision
         tests:
           - not_null
-        config:
-          meta:
-            dimension:
-              label: "Decision"
       - name: application_channel
         tests:
           - not_null
-        config:
-          meta:
-            dimension:
-              label: "Application Channel"
       - name: application_count
         tests:
           - not_null
@@ -541,10 +521,6 @@ models:
       - name: collection_status
         tests:
           - not_null
-        config:
-          meta:
-            dimension:
-              label: "Collection Status"
       - name: par_bucket
         config:
           meta:
@@ -934,10 +910,6 @@ models:
       - name: rule_type
         tests:
           - not_null
-        config:
-          meta:
-            dimension:
-              label: "Rule Type"
       - name: archetype
         config:
           meta:

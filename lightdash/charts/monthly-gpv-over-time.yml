@@ -1,0 +1,51 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+      - encode:
+          xRef:
+            field: fct_merchant_monthly_summary_month_month
+          yRef:
+            field: fct_merchant_monthly_summary_total_gpv
+        isFilteredOut: false
+        type: bar
+        yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      stack: none
+      xField: fct_merchant_monthly_summary_month_month
+      yField:
+      - fct_merchant_monthly_summary_total_gpv
+  type: cartesian
+contentType: chart
+dashboardSlug: merchant-monthly-statement
+description: Total gross payment volume (ZAR) aggregated by month across all merchants.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+  - fct_merchant_monthly_summary_month_month
+  exploreName: fct_merchant_monthly_summary
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+  - fct_merchant_monthly_summary_total_gpv
+  sorts:
+  - descending: true
+    fieldId: fct_merchant_monthly_summary_month_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Monthly GPV Over Time
+slug: monthly-gpv-over-time
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+  - fct_merchant_monthly_summary_month_month
+  - fct_merchant_monthly_summary_total_gpv
+tableName: fct_merchant_monthly_summary
+verification: null
+version: 1

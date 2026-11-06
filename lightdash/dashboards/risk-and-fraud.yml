@@ -1,0 +1,54 @@
+config:
+  isAddFilterDisabled: false
+  isDateZoomDisabled: false
+  pinnedParameters: []
+contentType: dashboard
+description: Risk events by rule type, blocked vs flagged actions, and merchants affected
+filters:
+  dimensions: []
+  metrics: []
+  tableCalculations: []
+name: Risk and Fraud
+parameters: {}
+slug: risk-and-fraud
+spaceSlug: shared
+tabs: []
+tiles:
+- h: 9
+  properties:
+    chartName: Risk Events by Rule Type
+    chartSlug: risk-events-by-rule-type
+    hideTitle: false
+    title: ""
+    tabSlug: null
+    tileSlug: risk-events-by-rule-type
+  type: saved_chart
+  w: 34
+  x: 0
+  "y": 0
+- h: 9
+  properties:
+    chartName: Blocked vs Flagged Actions
+    chartSlug: blocked-vs-flagged-actions
+    hideTitle: false
+    title: ""
+    tabSlug: null
+    tileSlug: blocked-vs-flagged-actions
+  type: saved_chart
+  w: 17
+  x: 0
+  "y": 9
+- h: 9
+  properties:
+    chartName: Merchants Affected by Risk Events
+    chartSlug: merchants-affected-by-risk
+    hideTitle: false
+    title: ""
+    tabSlug: null
+    tileSlug: merchants-affected-by-risk
+  type: saved_chart
+  w: 17
+  x: 17
+  "y": 9
+verification: null
+version: 1

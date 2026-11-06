@@ -1,0 +1,53 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+      - encode:
+          xRef:
+            field: fct_collections_performance_daily_event_date_month
+          yRef:
+            field: fct_collections_performance_daily_total_attempts
+        isFilteredOut: false
+        type: bar
+        yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      stack: none
+      xField: fct_collections_performance_daily_event_date_month
+      yField:
+      - fct_collections_performance_daily_total_attempts
+  type: cartesian
+contentType: chart
+dashboardSlug: lending-operations
+description: Total collection attempts grouped by collection status over time.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+  - fct_collections_performance_daily_event_date_month
+  - fct_collections_performance_daily_collection_status
+  exploreName: fct_collections_performance_daily
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+  - fct_collections_performance_daily_total_attempts
+  sorts:
+  - descending: true
+    fieldId: fct_collections_performance_daily_event_date_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Collection Attempts by Status
+slug: collection-attempts-by-status
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+  - fct_collections_performance_daily_event_date_month
+  - fct_collections_performance_daily_collection_status
+  - fct_collections_performance_daily_total_attempts
+tableName: fct_collections_performance_daily
+verification: null
+version: 1

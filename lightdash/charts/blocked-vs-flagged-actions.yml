@@ -1,0 +1,62 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+      - encode:
+          xRef:
+            field: fct_risk_events_daily_event_date_month
+          yRef:
+            field: fct_risk_events_daily_total_blocks
+        isFilteredOut: false
+        type: bar
+        yAxisIndex: 0
+      - encode:
+          xRef:
+            field: fct_risk_events_daily_event_date_month
+          yRef:
+            field: fct_risk_events_daily_total_flagged
+        isFilteredOut: false
+        type: bar
+        yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      stack: none
+      xField: fct_risk_events_daily_event_date_month
+      yField:
+      - fct_risk_events_daily_total_blocks
+      - fct_risk_events_daily_total_flagged
+  type: cartesian
+contentType: chart
+dashboardSlug: risk-and-fraud
+description: Total blocked and flagged-for-review actions per month.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+  - fct_risk_events_daily_event_date_month
+  exploreName: fct_risk_events_daily
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+  - fct_risk_events_daily_total_blocks
+  - fct_risk_events_daily_total_flagged
+  sorts:
+  - descending: true
+    fieldId: fct_risk_events_daily_event_date_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Blocked vs Flagged Actions
+slug: blocked-vs-flagged-actions
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+  - fct_risk_events_daily_event_date_month
+  - fct_risk_events_daily_total_blocks
+  - fct_risk_events_daily_total_flagged
+tableName: fct_risk_events_daily
+verification: null
+version: 1

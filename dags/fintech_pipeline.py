@@ -26,6 +26,10 @@ Lightdash
     No step needed. Lightdash queries BigQuery directly and picks up the new mart data
     on the next dashboard load.
 
+Pipeline virtualenv: /opt/pipeline-venv
+    Airflow 2.9.3 uses SQLAlchemy 1.4.x; pyiceberg 0.12.0 requires 2.x. All pipeline
+    tasks use the isolated venv to avoid the conflict.
+
 Schedule: 0 6 * * * (06:00 UTC, 08:00 SAST). Paused at creation; unpause from the UI
 or: docker compose exec scheduler airflow dags unpause fintech_pipeline
 """
@@ -37,6 +41,7 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 
 REPO = "/opt/repo"
+VENV = "/opt/pipeline-venv/bin"
 CREDS_BRONZE = "/opt/credentials/bronze_writer.json"
 CREDS_ADC = "/opt/credentials/adc.json"
 
@@ -52,7 +57,7 @@ with DAG(
 
     bronze_write = BashOperator(
         task_id="bronze_write",
-        bash_command=f"cd {REPO} && python -m bronze.main --write",
+        bash_command=f"cd {REPO} && {VENV}/python -m bronze.main --write",
         env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_BRONZE},
         append_env=True,
     )
@@ -60,7 +65,7 @@ with DAG(
     register_bq = BashOperator(
         task_id="register_bq",
         bash_command=(
-            f"cd {REPO} && python scripts/register_bronze_bq.py"
+            f"cd {REPO} && {VENV}/python scripts/register_bronze_bq.py"
             " --project payments-512910 --location us-east1 --connection fintech-bronze"
         ),
         env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_ADC},
@@ -69,7 +74,7 @@ with DAG(
 
     dbt_marts = BashOperator(
         task_id="dbt_marts",
-        bash_command=f"cd {REPO}/dbt && dbt deps && dbt run --select marts",
+        bash_command=f"cd {REPO}/dbt && {VENV}/dbt deps && {VENV}/dbt run --select marts",
         env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_ADC},
         append_env=True,
     )

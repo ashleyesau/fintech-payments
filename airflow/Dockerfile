@@ -1,9 +1,14 @@
 FROM apache/airflow:2.9.3-python3.11
 
-# Install pipeline packages on top of the Airflow base image.
-# No constraints file: the Airflow 2.9.3 constraints pin pyiceberg==0.6.1 which conflicts
-# with the pipeline requirement of pyiceberg==0.12.0. Pipeline tasks run as BashOperator
-# subprocesses so their package versions are independent of Airflow's own imports.
-# Build context is the repo root (docker-compose sets context: ..).
-COPY airflow/requirements-pipeline.txt /requirements-pipeline.txt
-RUN pip install --no-cache-dir --default-timeout 100 -r /requirements-pipeline.txt
+# Airflow 2.9.3 uses SQLAlchemy 1.4.x; pyiceberg 0.12.0 requires SQLAlchemy 2.x.
+# A shared Python environment cannot satisfy both. Solution: build a separate virtualenv
+# for the pipeline at /opt/pipeline-venv so the two dependency sets never conflict.
+# BashOperator tasks invoke /opt/pipeline-venv/bin/python and /opt/pipeline-venv/bin/dbt.
+USER root
+RUN python3 -m venv /opt/pipeline-venv && \
+    /opt/pipeline-venv/bin/pip install --no-cache-dir --default-timeout 100 \
+        pyiceberg==0.12.0 \
+        pyiceberg-core==0.10.1 \
+        pyarrow==26.0.0 \
+        "dbt-bigquery~=1.9.2"
+USER airflow

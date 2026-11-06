@@ -5,891 +5,994 @@ models:
     description: >
       Daily payment volume mart. Grain: merchant_id + txn_date. Adds take_rate
       (acquirer_markup / gross_gpv) and current merchant dimension from dim_merchants.
-    meta:
-      label: "Daily Payments"
+    config:
+      meta:
+        label: "Daily Payments"
     columns:
       - name: merchant_id
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Merchant ID"
+        config:
+          meta:
+            dimension:
+              label: "Merchant ID"
       - name: txn_date
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Transaction Date"
-            type: date
+        config:
+          meta:
+            dimension:
+              label: "Transaction Date"
+              type: date
       - name: archetype
-        meta:
-          dimension:
-            label: "Merchant Archetype"
+        config:
+          meta:
+            dimension:
+              label: "Merchant Archetype"
       - name: province
-        meta:
-          dimension:
-            label: "Province"
+        config:
+          meta:
+            dimension:
+              label: "Province"
       - name: merchant_state
-        meta:
-          dimension:
-            label: "Merchant State"
+        config:
+          meta:
+            dimension:
+              label: "Merchant State"
       - name: txn_count
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_transactions:
-              type: sum
-              label: "Total Transactions"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_transactions:
+                type: sum
+                label: "Total Transactions"
       - name: completed_payment_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            completed_payments:
-              type: sum
-              label: "Completed Payments"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              completed_payments:
+                type: sum
+                label: "Completed Payments"
       - name: declined_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_declined:
-              type: sum
-              label: "Declined Transactions"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_declined:
+                type: sum
+                label: "Declined Transactions"
       - name: refund_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_refunds:
-              type: sum
-              label: "Refund Count"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_refunds:
+                type: sum
+                label: "Refund Count"
       - name: chargeback_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_chargebacks:
-              type: sum
-              label: "Chargeback Count"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_chargebacks:
+                type: sum
+                label: "Chargeback Count"
       - name: gross_gpv_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_gpv:
-              type: number
-              sql: "SUM(${TABLE}.gross_gpv_minor) / 100.0"
-              label: "Total GPV (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_gpv:
+                type: number
+                sql: "SUM(${TABLE}.gross_gpv_minor) / 100.0"
+                label: "Total GPV (ZAR)"
+                round: 2
       - name: net_gpv_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_net_gpv:
-              type: number
-              sql: "SUM(${TABLE}.net_gpv_minor) / 100.0"
-              label: "Total Net GPV (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_net_gpv:
+                type: number
+                sql: "SUM(${TABLE}.net_gpv_minor) / 100.0"
+                label: "Total Net GPV (ZAR)"
+                round: 2
       - name: refund_volume_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_refund_volume:
-              type: number
-              sql: "SUM(${TABLE}.refund_volume_minor) / 100.0"
-              label: "Total Refund Volume (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_refund_volume:
+                type: number
+                sql: "SUM(${TABLE}.refund_volume_minor) / 100.0"
+                label: "Total Refund Volume (ZAR)"
+                round: 2
       - name: chargeback_volume_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_chargeback_volume:
-              type: number
-              sql: "SUM(${TABLE}.chargeback_volume_minor) / 100.0"
-              label: "Total Chargeback Volume (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_chargeback_volume:
+                type: number
+                sql: "SUM(${TABLE}.chargeback_volume_minor) / 100.0"
+                label: "Total Chargeback Volume (ZAR)"
+                round: 2
       - name: total_acquirer_markup_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_acquirer_revenue:
-              type: number
-              sql: "SUM(${TABLE}.total_acquirer_markup_minor) / 100.0"
-              label: "Total Acquirer Revenue (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_acquirer_revenue:
+                type: number
+                sql: "SUM(${TABLE}.total_acquirer_markup_minor) / 100.0"
+                label: "Total Acquirer Revenue (ZAR)"
+                round: 2
       - name: take_rate
-        meta:
-          dimension:
-            label: "Take Rate"
-          metrics:
-            avg_take_rate:
-              type: average
-              label: "Avg Take Rate"
-              format: percent
-              round: 4
+        config:
+          meta:
+            dimension:
+              label: "Take Rate"
+            metrics:
+              avg_take_rate:
+                type: average
+                label: "Avg Take Rate"
+                format: percent
+                round: 4
 
   - name: fct_settlement_daily
     description: >
       Daily settlement reconciliation mart. Grain: merchant_id + settlement_date +
       batch_id + channel. CALC-3: net_payout = gross_gpv - merchant_fee -
       refund_volume - chargeback_volume. acquirer_revenue = SUM(acquirer_markup).
-    meta:
-      label: "Daily Settlement"
+    config:
+      meta:
+        label: "Daily Settlement"
     columns:
       - name: merchant_id
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Merchant ID"
+        config:
+          meta:
+            dimension:
+              label: "Merchant ID"
       - name: settlement_date
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Settlement Date"
-            type: date
+        config:
+          meta:
+            dimension:
+              label: "Settlement Date"
+              type: date
       - name: batch_id
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Batch ID"
+        config:
+          meta:
+            dimension:
+              label: "Batch ID"
       - name: channel
-        meta:
-          dimension:
-            label: "Payment Channel"
+        config:
+          meta:
+            dimension:
+              label: "Payment Channel"
       - name: txn_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_transactions:
-              type: sum
-              label: "Total Transactions"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_transactions:
+                type: sum
+                label: "Total Transactions"
       - name: completed_payment_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            completed_payments:
-              type: sum
-              label: "Completed Payments"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              completed_payments:
+                type: sum
+                label: "Completed Payments"
       - name: gross_gpv_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_gross_gpv:
-              type: number
-              sql: "SUM(${TABLE}.gross_gpv_minor) / 100.0"
-              label: "Total Gross GPV (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_gross_gpv:
+                type: number
+                sql: "SUM(${TABLE}.gross_gpv_minor) / 100.0"
+                label: "Total Gross GPV (ZAR)"
+                round: 2
       - name: net_payout_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_net_payout:
-              type: number
-              sql: "SUM(${TABLE}.net_payout_minor) / 100.0"
-              label: "Total Net Payout (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_net_payout:
+                type: number
+                sql: "SUM(${TABLE}.net_payout_minor) / 100.0"
+                label: "Total Net Payout (ZAR)"
+                round: 2
       - name: acquirer_revenue_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_acquirer_revenue:
-              type: number
-              sql: "SUM(${TABLE}.acquirer_revenue_minor) / 100.0"
-              label: "Total Acquirer Revenue (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_acquirer_revenue:
+                type: number
+                sql: "SUM(${TABLE}.acquirer_revenue_minor) / 100.0"
+                label: "Total Acquirer Revenue (ZAR)"
+                round: 2
       - name: merchant_fee_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_merchant_fee:
-              type: number
-              sql: "SUM(${TABLE}.merchant_fee_minor) / 100.0"
-              label: "Total Merchant Fee (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_merchant_fee:
+                type: number
+                sql: "SUM(${TABLE}.merchant_fee_minor) / 100.0"
+                label: "Total Merchant Fee (ZAR)"
+                round: 2
       - name: refund_volume_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_refund_volume:
-              type: number
-              sql: "SUM(${TABLE}.refund_volume_minor) / 100.0"
-              label: "Total Refund Volume (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_refund_volume:
+                type: number
+                sql: "SUM(${TABLE}.refund_volume_minor) / 100.0"
+                label: "Total Refund Volume (ZAR)"
+                round: 2
 
   - name: fct_revenue_daily
     description: >
       Daily platform revenue mart. Grain: revenue_date + revenue_stream + merchant_id.
       CALC-4: two streams via UNION ALL. revenue_stream = 'card_acquiring' posts on
       transaction date; 'loan_fees' posts on first day of each fee month.
-    meta:
-      label: "Daily Revenue"
+    config:
+      meta:
+        label: "Daily Revenue"
     columns:
       - name: merchant_id
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Merchant ID"
+        config:
+          meta:
+            dimension:
+              label: "Merchant ID"
       - name: revenue_date
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Revenue Date"
-            type: date
+        config:
+          meta:
+            dimension:
+              label: "Revenue Date"
+              type: date
       - name: revenue_stream
         tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ['card_acquiring', 'loan_fees']
-        meta:
-          dimension:
-            label: "Revenue Stream"
+        config:
+          meta:
+            dimension:
+              label: "Revenue Stream"
       - name: revenue_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_revenue:
-              type: number
-              sql: "SUM(${TABLE}.revenue_minor) / 100.0"
-              label: "Total Revenue (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_revenue:
+                type: number
+                sql: "SUM(${TABLE}.revenue_minor) / 100.0"
+                label: "Total Revenue (ZAR)"
+                round: 2
 
   - name: fct_merchant_health_daily
     description: >
       Daily merchant health and risk mart. Grain: merchant_id + snapshot_date.
       Covers days with at least one transaction. Adds is_flagged
       (risk_score > 60 OR block_count > 0) and is_gpv_declining flags.
-    meta:
-      label: "Merchant Health"
+    config:
+      meta:
+        label: "Merchant Health"
     columns:
       - name: merchant_id
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Merchant ID"
+        config:
+          meta:
+            dimension:
+              label: "Merchant ID"
       - name: snapshot_date
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Snapshot Date"
-            type: date
+        config:
+          meta:
+            dimension:
+              label: "Snapshot Date"
+              type: date
       - name: merchant_state
-        meta:
-          dimension:
-            label: "Merchant State"
+        config:
+          meta:
+            dimension:
+              label: "Merchant State"
       - name: current_risk_score
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Risk Score"
-          metrics:
-            avg_risk_score:
-              type: average
-              label: "Avg Risk Score"
-              round: 1
+        config:
+          meta:
+            dimension:
+              label: "Risk Score"
+            metrics:
+              avg_risk_score:
+                type: average
+                label: "Avg Risk Score"
+                round: 1
       - name: is_flagged
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Is Flagged"
-            type: boolean
-          metrics:
-            flagged_merchant_count:
-              type: count_distinct
-              sql: "CASE WHEN ${TABLE}.is_flagged THEN ${TABLE}.merchant_id END"
-              label: "Flagged Merchants"
+        config:
+          meta:
+            dimension:
+              label: "Is Flagged"
+              type: boolean
+            metrics:
+              flagged_merchant_count:
+                type: count_distinct
+                sql: "CASE WHEN ${TABLE}.is_flagged THEN ${TABLE}.merchant_id END"
+                label: "Flagged Merchants"
       - name: is_gpv_declining
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "GPV Declining"
-            type: boolean
-          metrics:
-            gpv_declining_count:
-              type: count_distinct
-              sql: "CASE WHEN ${TABLE}.is_gpv_declining THEN ${TABLE}.merchant_id END"
-              label: "Merchants with Declining GPV"
+        config:
+          meta:
+            dimension:
+              label: "GPV Declining"
+              type: boolean
+            metrics:
+              gpv_declining_count:
+                type: count_distinct
+                sql: "CASE WHEN ${TABLE}.is_gpv_declining THEN ${TABLE}.merchant_id END"
+                label: "Merchants with Declining GPV"
       - name: gross_gpv_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_gpv:
-              type: number
-              sql: "SUM(${TABLE}.gross_gpv_minor) / 100.0"
-              label: "Total GPV (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_gpv:
+                type: number
+                sql: "SUM(${TABLE}.gross_gpv_minor) / 100.0"
+                label: "Total GPV (ZAR)"
+                round: 2
       - name: risk_event_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_risk_events:
-              type: sum
-              label: "Total Risk Events"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_risk_events:
+                type: sum
+                label: "Total Risk Events"
       - name: block_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_blocks:
-              type: sum
-              label: "Total Blocks"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_blocks:
+                type: sum
+                label: "Total Blocks"
 
   - name: fct_loan_applications_daily
     description: >
       Daily loan origination mart. Grain: event_date + decision + application_channel.
       Covers approval rate, disbursement rate, and loan amounts.
-    meta:
-      label: "Loan Applications"
+    config:
+      meta:
+        label: "Loan Applications"
     columns:
       - name: event_date
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Application Date"
-            type: date
+        config:
+          meta:
+            dimension:
+              label: "Application Date"
+              type: date
       - name: decision
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Decision"
+        config:
+          meta:
+            dimension:
+              label: "Decision"
       - name: application_channel
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Application Channel"
+        config:
+          meta:
+            dimension:
+              label: "Application Channel"
       - name: application_count
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_applications:
-              type: sum
-              label: "Total Applications"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_applications:
+                type: sum
+                label: "Total Applications"
       - name: approved_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_approved:
-              type: sum
-              label: "Approved Applications"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_approved:
+                type: sum
+                label: "Approved Applications"
       - name: declined_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_declined:
-              type: sum
-              label: "Declined Applications"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_declined:
+                type: sum
+                label: "Declined Applications"
       - name: disbursed_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_disbursed:
-              type: sum
-              label: "Disbursed Loans"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_disbursed:
+                type: sum
+                label: "Disbursed Loans"
       - name: gross_approval_rate
-        meta:
-          dimension:
-            label: "Gross Approval Rate"
-          metrics:
-            avg_gross_approval_rate:
-              type: average
-              label: "Avg Gross Approval Rate"
-              format: percent
-              round: 3
+        config:
+          meta:
+            dimension:
+              label: "Gross Approval Rate"
+            metrics:
+              avg_gross_approval_rate:
+                type: average
+                label: "Avg Gross Approval Rate"
+                format: percent
+                round: 3
       - name: disbursement_rate
-        meta:
-          dimension:
-            label: "Disbursement Rate"
-          metrics:
-            avg_disbursement_rate:
-              type: average
-              label: "Avg Disbursement Rate"
-              format: percent
-              round: 3
+        config:
+          meta:
+            dimension:
+              label: "Disbursement Rate"
+            metrics:
+              avg_disbursement_rate:
+                type: average
+                label: "Avg Disbursement Rate"
+                format: percent
+                round: 3
       - name: total_disbursed_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_disbursed_amount:
-              type: number
-              sql: "SUM(${TABLE}.total_disbursed_minor) / 100.0"
-              label: "Total Disbursed (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_disbursed_amount:
+                type: number
+                sql: "SUM(${TABLE}.total_disbursed_minor) / 100.0"
+                label: "Total Disbursed (ZAR)"
+                round: 2
 
   - name: fct_collections_performance_daily
     description: >
       Daily collections operations mart. Grain: event_date + collection_status +
       par_bucket. event_date uses payment_ts (with due_date fallback for unpaid rows).
-    meta:
-      label: "Collections Performance"
+    config:
+      meta:
+        label: "Collections Performance"
     columns:
       - name: event_date
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Collection Date"
-            type: date
+        config:
+          meta:
+            dimension:
+              label: "Collection Date"
+              type: date
       - name: collection_status
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Collection Status"
+        config:
+          meta:
+            dimension:
+              label: "Collection Status"
       - name: par_bucket
-        meta:
-          dimension:
-            label: "PAR Bucket"
+        config:
+          meta:
+            dimension:
+              label: "PAR Bucket"
       - name: attempt_count
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_attempts:
-              type: sum
-              label: "Total Collection Attempts"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_attempts:
+                type: sum
+                label: "Total Collection Attempts"
       - name: loan_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_loans:
-              type: sum
-              label: "Loans in Collections"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_loans:
+                type: sum
+                label: "Loans in Collections"
       - name: total_due_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_due:
-              type: number
-              sql: "SUM(${TABLE}.total_due_minor) / 100.0"
-              label: "Total Due (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_due:
+                type: number
+                sql: "SUM(${TABLE}.total_due_minor) / 100.0"
+                label: "Total Due (ZAR)"
+                round: 2
       - name: total_collected_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_collected:
-              type: number
-              sql: "SUM(${TABLE}.total_collected_minor) / 100.0"
-              label: "Total Collected (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_collected:
+                type: number
+                sql: "SUM(${TABLE}.total_collected_minor) / 100.0"
+                label: "Total Collected (ZAR)"
+                round: 2
       - name: collection_rate
-        meta:
-          dimension:
-            label: "Collection Rate"
-          metrics:
-            avg_collection_rate:
-              type: average
-              label: "Avg Collection Rate"
-              format: percent
-              round: 3
+        config:
+          meta:
+            dimension:
+              label: "Collection Rate"
+            metrics:
+              avg_collection_rate:
+                type: average
+                label: "Avg Collection Rate"
+                format: percent
+                round: 3
       - name: successful_collections_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            successful_collections:
-              type: number
-              sql: "SUM(${TABLE}.successful_collections_minor) / 100.0"
-              label: "Successful Collections (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              successful_collections:
+                type: number
+                sql: "SUM(${TABLE}.successful_collections_minor) / 100.0"
+                label: "Successful Collections (ZAR)"
+                round: 2
 
   - name: fct_loan_portfolio_daily
     description: >
       Daily portfolio quality mart. Grain: snapshot_date (one row per day). Merge
       strategy handles late-payment PAR bucket corrections. PAR30/60/90 rates and
       balances for the non-written-off portfolio.
-    meta:
-      label: "Loan Portfolio (PAR)"
+    config:
+      meta:
+        label: "Loan Portfolio (PAR)"
     columns:
       - name: snapshot_date
         tests:
           - not_null
           - unique
-        meta:
-          dimension:
-            label: "Snapshot Date"
-            type: date
+        config:
+          meta:
+            dimension:
+              label: "Snapshot Date"
+              type: date
       - name: active_loan_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            max_active_loans:
-              type: max
-              label: "Active Loans (latest)"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              max_active_loans:
+                type: max
+                label: "Active Loans (latest)"
       - name: total_outstanding_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_outstanding:
-              type: number
-              sql: "SUM(${TABLE}.total_outstanding_minor) / 100.0"
-              label: "Total Outstanding (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_outstanding:
+                type: number
+                sql: "SUM(${TABLE}.total_outstanding_minor) / 100.0"
+                label: "Total Outstanding (ZAR)"
+                round: 2
       - name: par30_balance_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            par30_balance:
-              type: number
-              sql: "SUM(${TABLE}.par30_balance_minor) / 100.0"
-              label: "PAR30 Balance (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              par30_balance:
+                type: number
+                sql: "SUM(${TABLE}.par30_balance_minor) / 100.0"
+                label: "PAR30 Balance (ZAR)"
+                round: 2
       - name: par60_balance_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            par60_balance:
-              type: number
-              sql: "SUM(${TABLE}.par60_balance_minor) / 100.0"
-              label: "PAR60 Balance (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              par60_balance:
+                type: number
+                sql: "SUM(${TABLE}.par60_balance_minor) / 100.0"
+                label: "PAR60 Balance (ZAR)"
+                round: 2
       - name: par90_balance_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            par90_balance:
-              type: number
-              sql: "SUM(${TABLE}.par90_balance_minor) / 100.0"
-              label: "PAR90 Balance (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              par90_balance:
+                type: number
+                sql: "SUM(${TABLE}.par90_balance_minor) / 100.0"
+                label: "PAR90 Balance (ZAR)"
+                round: 2
       - name: par30_rate
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "PAR30 Rate"
-          metrics:
-            avg_par30_rate:
-              type: average
-              label: "Avg PAR30 Rate"
-              format: percent
-              round: 4
+        config:
+          meta:
+            dimension:
+              label: "PAR30 Rate"
+            metrics:
+              avg_par30_rate:
+                type: average
+                label: "Avg PAR30 Rate"
+                format: percent
+                round: 4
       - name: par60_rate
-        meta:
-          dimension:
-            label: "PAR60 Rate"
-          metrics:
-            avg_par60_rate:
-              type: average
-              label: "Avg PAR60 Rate"
-              format: percent
-              round: 4
+        config:
+          meta:
+            dimension:
+              label: "PAR60 Rate"
+            metrics:
+              avg_par60_rate:
+                type: average
+                label: "Avg PAR60 Rate"
+                format: percent
+                round: 4
       - name: par90_rate
-        meta:
-          dimension:
-            label: "PAR90 Rate"
-          metrics:
-            avg_par90_rate:
-              type: average
-              label: "Avg PAR90 Rate"
-              format: percent
-              round: 4
+        config:
+          meta:
+            dimension:
+              label: "PAR90 Rate"
+            metrics:
+              avg_par90_rate:
+                type: average
+                label: "Avg PAR90 Rate"
+                format: percent
+                round: 4
 
   - name: fct_vintage_curves
     description: >
       Vintage curve analysis mart. Grain: vintage_month + month_on_book. Aggregates
       all loans in a cohort at each MOB (months on book). Used for lending return
       and portfolio aging analysis.
-    meta:
-      label: "Vintage Curves"
+    config:
+      meta:
+        label: "Vintage Curves"
     columns:
       - name: vintage_month
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Vintage Month"
-            type: date
+        config:
+          meta:
+            dimension:
+              label: "Vintage Month"
+              type: date
       - name: month_on_book
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Month on Book (MOB)"
-            type: number
+        config:
+          meta:
+            dimension:
+              label: "Month on Book (MOB)"
+              type: number
       - name: loan_count
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_loans:
-              type: sum
-              label: "Total Loans in Cohort"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_loans:
+                type: sum
+                label: "Total Loans in Cohort"
       - name: total_disbursed_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_disbursed:
-              type: number
-              sql: "SUM(${TABLE}.total_disbursed_minor) / 100.0"
-              label: "Total Disbursed (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_disbursed:
+                type: number
+                sql: "SUM(${TABLE}.total_disbursed_minor) / 100.0"
+                label: "Total Disbursed (ZAR)"
+                round: 2
       - name: total_outstanding_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_outstanding:
-              type: number
-              sql: "SUM(${TABLE}.total_outstanding_minor) / 100.0"
-              label: "Total Outstanding (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_outstanding:
+                type: number
+                sql: "SUM(${TABLE}.total_outstanding_minor) / 100.0"
+                label: "Total Outstanding (ZAR)"
+                round: 2
       - name: pct_outstanding
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "% Outstanding"
-          metrics:
-            avg_pct_outstanding:
-              type: average
-              label: "Avg % Outstanding"
-              format: percent
-              round: 4
+        config:
+          meta:
+            dimension:
+              label: "% Outstanding"
+            metrics:
+              avg_pct_outstanding:
+                type: average
+                label: "Avg % Outstanding"
+                format: percent
+                round: 4
       - name: par30_loan_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_par30_loans:
-              type: sum
-              label: "PAR30+ Loans"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_par30_loans:
+                type: sum
+                label: "PAR30+ Loans"
       - name: written_off_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_written_off:
-              type: sum
-              label: "Written-off Loans"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_written_off:
+                type: sum
+                label: "Written-off Loans"
       - name: par30_rate_by_balance
-        meta:
-          dimension:
-            label: "PAR30 Rate by Balance"
-          metrics:
-            avg_par30_rate_by_balance:
-              type: average
-              label: "Avg PAR30 Rate by Balance"
-              format: percent
-              round: 4
+        config:
+          meta:
+            dimension:
+              label: "PAR30 Rate by Balance"
+            metrics:
+              avg_par30_rate_by_balance:
+                type: average
+                label: "Avg PAR30 Rate by Balance"
+                format: percent
+                round: 4
 
   - name: fct_loan_unit_economics
     description: >
       Loan unit economics mart. Grain: loan_id + fee_month. CALC-5: applies provision
       rates from provision_rates seed to month-end closing balance.
       net_lending_margin = fee_income - bad_debt_provision.
-    meta:
-      label: "Loan Unit Economics"
+    config:
+      meta:
+        label: "Loan Unit Economics"
     columns:
       - name: loan_id
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Loan ID"
+        config:
+          meta:
+            dimension:
+              label: "Loan ID"
       - name: fee_month
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Fee Month"
-            type: date
+        config:
+          meta:
+            dimension:
+              label: "Fee Month"
+              type: date
       - name: merchant_id
-        meta:
-          dimension:
-            label: "Merchant ID"
+        config:
+          meta:
+            dimension:
+              label: "Merchant ID"
       - name: par_bucket
-        meta:
-          dimension:
-            label: "PAR Bucket"
+        config:
+          meta:
+            dimension:
+              label: "PAR Bucket"
       - name: fee_income_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_fee_income:
-              type: number
-              sql: "SUM(${TABLE}.fee_income_minor) / 100.0"
-              label: "Total Fee Income (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_fee_income:
+                type: number
+                sql: "SUM(${TABLE}.fee_income_minor) / 100.0"
+                label: "Total Fee Income (ZAR)"
+                round: 2
       - name: bad_debt_provision_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_provision:
-              type: number
-              sql: "SUM(${TABLE}.bad_debt_provision_minor) / 100.0"
-              label: "Total Bad Debt Provision (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_provision:
+                type: number
+                sql: "SUM(${TABLE}.bad_debt_provision_minor) / 100.0"
+                label: "Total Bad Debt Provision (ZAR)"
+                round: 2
       - name: net_lending_margin_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_net_margin:
-              type: number
-              sql: "SUM(${TABLE}.net_lending_margin_minor) / 100.0"
-              label: "Total Net Lending Margin (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_net_margin:
+                type: number
+                sql: "SUM(${TABLE}.net_lending_margin_minor) / 100.0"
+                label: "Total Net Lending Margin (ZAR)"
+                round: 2
       - name: closing_balance_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_closing_balance:
-              type: number
-              sql: "SUM(${TABLE}.closing_balance_minor) / 100.0"
-              label: "Total Closing Balance (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_closing_balance:
+                type: number
+                sql: "SUM(${TABLE}.closing_balance_minor) / 100.0"
+                label: "Total Closing Balance (ZAR)"
+                round: 2
 
   - name: fct_risk_events_daily
     description: >
       Daily fraud and risk event mart. Grain: event_date + rule_type + archetype.
       CALC-7: event_count, action breakdown (block/flag_review/allow),
       outcome breakdown, merchant_count_affected (COUNT DISTINCT).
-    meta:
-      label: "Risk Events"
+    config:
+      meta:
+        label: "Risk Events"
     columns:
       - name: event_date
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Event Date"
-            type: date
+        config:
+          meta:
+            dimension:
+              label: "Event Date"
+              type: date
       - name: rule_type
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Rule Type"
+        config:
+          meta:
+            dimension:
+              label: "Rule Type"
       - name: archetype
-        meta:
-          dimension:
-            label: "Merchant Archetype"
+        config:
+          meta:
+            dimension:
+              label: "Merchant Archetype"
       - name: event_count
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_events:
-              type: sum
-              label: "Total Risk Events"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_events:
+                type: sum
+                label: "Total Risk Events"
       - name: merchant_count_affected
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_merchants_affected:
-              type: sum
-              label: "Merchants Affected"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_merchants_affected:
+                type: sum
+                label: "Merchants Affected"
       - name: block_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_blocks:
-              type: sum
-              label: "Blocked Actions"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_blocks:
+                type: sum
+                label: "Blocked Actions"
       - name: flag_review_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_flagged:
-              type: sum
-              label: "Flagged for Review"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_flagged:
+                type: sum
+                label: "Flagged for Review"
       - name: avg_risk_score
-        meta:
-          dimension:
-            label: "Avg Risk Score"
-          metrics:
-            platform_avg_risk_score:
-              type: average
-              label: "Platform Avg Risk Score"
-              round: 1
+        config:
+          meta:
+            dimension:
+              label: "Avg Risk Score"
+            metrics:
+              platform_avg_risk_score:
+                type: average
+                label: "Platform Avg Risk Score"
+                round: 1
 
   - name: fct_merchant_monthly_summary
     description: >
@@ -898,85 +1001,94 @@ models:
       avoid mart-to-mart dependency. Month-end loan balance from
       int_lending__loan_daily_snapshot LAST_DAY. Collections from
       stg_loan_repayments filtered by due_date.
-    meta:
-      label: "Merchant Monthly Summary"
+    config:
+      meta:
+        label: "Merchant Monthly Summary"
     columns:
       - name: merchant_id
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Merchant ID"
+        config:
+          meta:
+            dimension:
+              label: "Merchant ID"
       - name: month
         tests:
           - not_null
-        meta:
-          dimension:
-            label: "Month"
-            type: date
+        config:
+          meta:
+            dimension:
+              label: "Month"
+              type: date
       - name: gross_gpv_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_gpv:
-              type: number
-              sql: "SUM(${TABLE}.gross_gpv_minor) / 100.0"
-              label: "Total GPV (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_gpv:
+                type: number
+                sql: "SUM(${TABLE}.gross_gpv_minor) / 100.0"
+                label: "Total GPV (ZAR)"
+                round: 2
       - name: net_gpv_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_net_gpv:
-              type: number
-              sql: "SUM(${TABLE}.net_gpv_minor) / 100.0"
-              label: "Total Net GPV (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_net_gpv:
+                type: number
+                sql: "SUM(${TABLE}.net_gpv_minor) / 100.0"
+                label: "Total Net GPV (ZAR)"
+                round: 2
       - name: month_end_loan_balance_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_loan_balance:
-              type: number
-              sql: "SUM(${TABLE}.month_end_loan_balance_minor) / 100.0"
-              label: "Total Loan Balance (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_loan_balance:
+                type: number
+                sql: "SUM(${TABLE}.month_end_loan_balance_minor) / 100.0"
+                label: "Total Loan Balance (ZAR)"
+                round: 2
       - name: amount_collected_minor
         tests:
           - not_null
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_collections:
-              type: number
-              sql: "SUM(${TABLE}.amount_collected_minor) / 100.0"
-              label: "Total Collections (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_collections:
+                type: number
+                sql: "SUM(${TABLE}.amount_collected_minor) / 100.0"
+                label: "Total Collections (ZAR)"
+                round: 2
       - name: acquirer_revenue_minor
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_acquirer_revenue:
-              type: number
-              sql: "SUM(${TABLE}.acquirer_revenue_minor) / 100.0"
-              label: "Total Acquirer Revenue (ZAR)"
-              round: 2
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_acquirer_revenue:
+                type: number
+                sql: "SUM(${TABLE}.acquirer_revenue_minor) / 100.0"
+                label: "Total Acquirer Revenue (ZAR)"
+                round: 2
       - name: txn_count
-        meta:
-          dimension:
-            hidden: true
-          metrics:
-            total_transactions:
-              type: sum
-              label: "Total Transactions"
+        config:
+          meta:
+            dimension:
+              hidden: true
+            metrics:
+              total_transactions:
+                type: sum
+                label: "Total Transactions"

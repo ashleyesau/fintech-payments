@@ -20,7 +20,8 @@ This is not real data, a model fitted to any company's books, or a benchmark. Pa
 | CDC | | Python `pgoutput` consumer (`cdc/`), landing gzipped NDJSON in GCS |
 | Lakehouse | | Iceberg on GCS (read side, schemas and mapping built, writing next) |
 | Warehouse | | BigQuery |
-| Transforms | | dbt |
+| Transforms | | dbt (staging, intermediate, marts in `dbt/`) |
+| BI | | Lightdash Cloud (dashboards, `lightdash/`) |
 
 ## Quick start
 
@@ -457,6 +458,59 @@ unset. `python -m cdc.permissions` shows what `cdc-consumer` may do against Goog
 CI has a `terraform` job: `fmt -check`, `init -backend=false` against the committed lock file, and `validate`. It has no
 credentials and runs no plan, so it shows the code is well formed, not that the real infrastructure matches it. That
 is a plan run by hand with the administrator's login.
+
+## BI layer (Lightdash)
+
+Lightdash Cloud connects to the dbt project and BigQuery marts and serves 8 dashboards covering all 11 business functions.
+
+**Live project:** https://app.lightdash.cloud/projects/96ca0acd-484c-4428-b1b7-4f5affb25d83/home
+
+### Dashboards
+
+| Dashboard | Models | What it shows |
+|---|---|---|
+| GPV Overview | `fct_payments_daily` | Monthly GPV, take rate, GPV by archetype, transaction counts |
+| Portfolio Quality | `fct_loan_portfolio_daily`, `fct_vintage_curves` | PAR30/60/90 rates and balances, portfolio size, vintage curves by cohort |
+| Settlement Reconciliation | `fct_settlement_daily` | Gross GPV vs net payout, acquirer revenue, fee breakdown, net payout by channel |
+| Revenue | `fct_revenue_daily` | Revenue by month and by stream (card\_acquiring vs loan\_fees) |
+| Merchant Health | `fct_merchant_health_daily` | Flagged merchants, avg risk score, GPV-declining merchants, risk events and blocks |
+| Merchant Monthly Statement | `fct_merchant_monthly_summary` | Monthly GPV, net GPV vs loan balance, collections, acquirer revenue |
+| Lending Operations | `fct_loan_applications_daily`, `fct_collections_performance_daily`, `fct_loan_unit_economics` | Application funnel, approval and disbursement rates, collection attempts by status, fee income vs provision, net lending margin |
+| Risk and Fraud | `fct_risk_events_daily` | Risk events by rule type, blocked vs flagged actions, merchants affected |
+
+### How it works
+
+The mart models in `dbt/models/marts/` are the semantic layer. The `config: meta:` blocks in `dbt/models/marts/_marts.yml` define the dimensions and metrics that Lightdash reads: ZAR amounts are exposed as `SUM / 100.0`, rates as percentages, and grain columns are labelled.
+
+Dashboards and charts are stored as code in `lightdash/` at the repo root (canonical YAML with UUIDs, downloaded from Lightdash Cloud).
+
+### Making a change
+
+```bash
+# deploy updated dbt meta blocks to Lightdash
+cd dbt && npx @lightdash/cli@latest deploy
+
+# upload a changed dashboard or chart
+npx @lightdash/cli@latest upload
+
+# pull the canonical YAML back after a manual change in the UI
+npx @lightdash/cli@latest download
+git add lightdash/ && git commit -m "..."
+git push origin main
+```
+
+### Service account
+
+Lightdash connects to BigQuery as `lightdash-reader@payments-512910.iam.gserviceaccount.com` with `roles/bigquery.jobUser` at the project level and `roles/bigquery.dataViewer` on the `marts` dataset only.
+
+### Airflow orchestration sequence (when added)
+
+Each Bronze refresh triggers this chain in order:
+
+1. `python -m bronze.main --write` -- write new events to the Bronze Iceberg tables
+2. `python scripts/register_bronze_bq.py --project payments-512910 --location us-east1 --connection fintech-bronze` -- re-point the BigQuery external tables at the new Iceberg metadata file (required after every Bronze write; without it dbt reads stale data)
+3. `dbt run --select marts` -- rebuild the mart tables from the updated source
+4. Lightdash dashboards update automatically on the next query
 
 ## Validating a run
 

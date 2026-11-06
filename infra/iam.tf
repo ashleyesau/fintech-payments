@@ -53,3 +53,26 @@ resource "google_service_account_iam_member" "admin_impersonates_cdc_consumer" {
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "user:${var.admin_user}"
 }
+
+# The Lightdash reader account. It runs queries against BigQuery on behalf of Lightdash Cloud.
+# bigquery.jobUser allows it to create query jobs at the project level; bigquery.dataViewer on
+# the marts dataset alone limits table reads to marts only. It authenticates via a service account
+# key file held by Lightdash Cloud (not impersonation).
+resource "google_service_account" "lightdash_reader" {
+  project      = var.project
+  account_id   = "lightdash-reader"
+  display_name = "Lightdash reader"
+}
+
+resource "google_project_iam_member" "lightdash_reader_bq_job_user" {
+  project = var.project
+  role    = "roles/bigquery.jobUser"
+  member  = google_service_account.lightdash_reader.member
+}
+
+resource "google_bigquery_dataset_iam_member" "lightdash_reader_marts_viewer" {
+  project    = var.project
+  dataset_id = "marts"
+  role       = "roles/bigquery.dataViewer"
+  member     = google_service_account.lightdash_reader.member
+}

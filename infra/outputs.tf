@@ -16,3 +16,8 @@ output "cdc_consumer_email" {
   description = "The service account the CDC consumer will run as, by impersonation (stage 6)."
   value       = google_service_account.cdc_consumer.email
 }
+
+output "lightdash_reader_email" {
+  description = "The service account Lightdash Cloud uses to query BigQuery marts."
+  value       = google_service_account.lightdash_reader.email
+}

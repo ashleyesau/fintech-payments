@@ -1,0 +1,66 @@
+config:
+  isAddFilterDisabled: false
+  isDateZoomDisabled: false
+  pinnedParameters: []
+contentType: dashboard
+description: ""
+filters:
+  dimensions: []
+  metrics: []
+  tableCalculations: []
+name: Merchant Health
+parameters: {}
+slug: merchant-health
+spaceSlug: shared
+tabs: []
+tiles:
+  - h: 9
+    properties:
+      chartName: Flagged Merchants Over Time
+      chartSlug: flagged-merchants-over-time
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: flagged-merchants-over-time
+    type: saved_chart
+    w: 15
+    x: 0
+    "y": 0
+  - h: 9
+    properties:
+      chartName: Avg Risk Score Over Time
+      chartSlug: avg-risk-score-over-time
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: avg-risk-score-over-time
+    type: saved_chart
+    w: 15
+    x: 15
+    "y": 0
+  - h: 9
+    properties:
+      chartName: GPV Declining Merchants Over Time
+      chartSlug: gpv-declining-merchants-over-time
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: gpv-declining-merchants-over-time
+    type: saved_chart
+    w: 15
+    x: 0
+    "y": 9
+  - h: 9
+    properties:
+      chartName: Risk Events and Blocks Over Time
+      chartSlug: risk-events-and-blocks-over-time
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: risk-events-and-blocks-over-time
+    type: saved_chart
+    w: 15
+    x: 15
+    "y": 9
+verification: null
+version: 1

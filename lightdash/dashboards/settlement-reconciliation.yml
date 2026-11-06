@@ -1,0 +1,66 @@
+config:
+  isAddFilterDisabled: false
+  isDateZoomDisabled: false
+  pinnedParameters: []
+contentType: dashboard
+description: ""
+filters:
+  dimensions: []
+  metrics: []
+  tableCalculations: []
+name: Settlement Reconciliation
+parameters: {}
+slug: settlement-reconciliation
+spaceSlug: shared
+tabs: []
+tiles:
+  - h: 9
+    properties:
+      chartName: Gross GPV vs Net Payout
+      chartSlug: gross-gpv-vs-net-payout
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: gross-gpv-vs-net-payout
+    type: saved_chart
+    w: 15
+    x: 0
+    "y": 0
+  - h: 9
+    properties:
+      chartName: Net Payout by Channel
+      chartSlug: net-payout-by-channel
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: net-payout-by-channel
+    type: saved_chart
+    w: 15
+    x: 15
+    "y": 0
+  - h: 9
+    properties:
+      chartName: Fee Breakdown Over Time
+      chartSlug: fee-breakdown-over-time
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: fee-breakdown-over-time
+    type: saved_chart
+    w: 15
+    x: 0
+    "y": 9
+  - h: 9
+    properties:
+      chartName: Acquirer Revenue by Month
+      chartSlug: acquirer-revenue-by-month
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: acquirer-revenue-by-month
+    type: saved_chart
+    w: 15
+    x: 15
+    "y": 9
+verification: null
+version: 1

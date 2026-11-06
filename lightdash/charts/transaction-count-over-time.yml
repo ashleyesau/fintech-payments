@@ -1,0 +1,52 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: fct_payments_daily_txn_date_month
+            yRef:
+              field: fct_payments_daily_total_transactions
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      xField: fct_payments_daily_txn_date_month
+      yField:
+        - fct_payments_daily_total_transactions
+  type: cartesian
+contentType: chart
+dashboardSlug: gpv-overview
+description: >-
+  Monthly transaction volume trends showing the distribution of transaction
+  counts across different months.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_payments_daily_txn_date_month
+  exploreName: fct_payments_daily
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - fct_payments_daily_total_transactions
+  sorts:
+    - descending: true
+      fieldId: fct_payments_daily_txn_date_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Transaction Count Over Time
+slug: transaction-count-over-time
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+    - fct_payments_daily_txn_date_month
+    - fct_payments_daily_total_transactions
+tableName: fct_payments_daily
+verification: null
+version: 1

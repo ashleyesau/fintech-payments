@@ -1,0 +1,74 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: fct_revenue_daily_revenue_date_month
+            yRef:
+              field: fct_revenue_daily_total_revenue
+              pivotValues:
+                - field: fct_revenue_daily_revenue_stream
+                  value: card_acquiring
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_revenue_daily_revenue_date_month
+            yRef:
+              field: fct_revenue_daily_total_revenue
+              pivotValues:
+                - field: fct_revenue_daily_revenue_stream
+                  value: loan_fees
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      stack: none
+      xField: fct_revenue_daily_revenue_date_month
+      yField:
+        - fct_revenue_daily_total_revenue
+  type: cartesian
+contentType: chart
+dashboardSlug: revenue
+description: >-
+  Monthly revenue trend line showing total revenue in ZAR over time to identify
+  seasonal patterns and growth trajectories.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_revenue_daily_revenue_date_month
+    - fct_revenue_daily_merchant_id
+    - fct_revenue_daily_revenue_stream
+  exploreName: fct_revenue_daily
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - fct_revenue_daily_total_revenue
+  sorts:
+    - descending: true
+      fieldId: fct_revenue_daily_total_revenue
+  tableCalculations: []
+  timezone: project_timezone
+name: Revenue by Stream Over Time
+pivotConfig:
+  columns:
+    - fct_revenue_daily_revenue_stream
+slug: revenue-by-stream-over-time
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+    - fct_revenue_daily_revenue_date_month
+    - fct_revenue_daily_merchant_id
+    - fct_revenue_daily_revenue_stream
+    - fct_revenue_daily_total_revenue
+tableName: fct_revenue_daily
+verification: null
+version: 1

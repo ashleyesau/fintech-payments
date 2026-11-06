@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "charts": {
+    "net-payout-by-channel": "2026-11-06T08:53:23.492Z",
+    "acquirer-revenue-by-month": "2026-11-06T08:53:23.492Z",
+    "gpv-declining-merchants-over-time": "2026-11-06T08:53:23.492Z",
+    "revenue-by-stream": "2026-11-06T08:53:23.492Z",
+    "revenue-by-month": "2026-11-06T08:53:23.492Z",
+    "revenue-by-stream-over-time": "2026-11-06T08:53:23.492Z",
+    "risk-events-and-blocks-over-time": "2026-11-06T08:53:23.492Z",
+    "flagged-merchants-over-time": "2026-11-06T08:53:23.492Z",
+    "avg-risk-score-over-time": "2026-11-06T08:53:23.492Z",
+    "par-balances-over-time": "2026-11-06T08:53:23.492Z",
+    "vintage-curves-by-cohort": "2026-11-06T08:53:23.492Z",
+    "portfolio-size-over-time": "2026-11-06T08:53:23.492Z",
+    "gross-gpv-vs-net-payout": "2026-11-06T08:53:23.492Z",
+    "fee-breakdown-over-time": "2026-11-06T08:53:23.492Z",
+    "par-rates-over-time": "2026-11-06T08:53:23.493Z",
+    "total-gpv-by-transaction-month": "2026-11-06T08:53:23.493Z",
+    "total-gpv-zar-by-transaction-month": "2026-11-06T08:53:23.493Z",
+    "take-rate-by-month": "2026-11-06T08:53:23.493Z",
+    "gpv-by-archetype": "2026-11-06T08:53:23.493Z",
+    "transaction-count-over-time": "2026-11-06T08:53:23.493Z"
+  },
+  "dashboards": {
+    "gpv-overview": "2026-11-06T08:53:24.412Z",
+    "portfolio-quality": "2026-11-06T08:53:24.412Z",
+    "settlement-reconciliation": "2026-11-06T08:53:24.412Z",
+    "revenue": "2026-11-06T08:53:24.412Z",
+    "merchant-health": "2026-11-06T08:53:24.412Z"
+  }
+}

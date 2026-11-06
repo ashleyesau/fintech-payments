@@ -1,0 +1,66 @@
+config:
+  isAddFilterDisabled: false
+  isDateZoomDisabled: false
+  pinnedParameters: []
+contentType: dashboard
+description: ""
+filters:
+  dimensions: []
+  metrics: []
+  tableCalculations: []
+name: GPV Overview
+parameters: {}
+slug: gpv-overview
+spaceSlug: shared
+tabs: []
+tiles:
+  - h: 9
+    properties:
+      chartName: GPV by Archetype
+      chartSlug: gpv-by-archetype
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: gpv-by-archetype
+    type: saved_chart
+    w: 20
+    x: 0
+    "y": 0
+  - h: 5
+    properties:
+      chartName: Take Rate by Month
+      chartSlug: take-rate-by-month
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: take-rate-by-month
+    type: saved_chart
+    w: 14
+    x: 20
+    "y": 0
+  - h: 4
+    properties:
+      chartName: Total GPV (ZAR) by Transaction Month
+      chartSlug: total-gpv-zar-by-transaction-month
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: total-gpv-zar-by-transaction-month
+    type: saved_chart
+    w: 14
+    x: 20
+    "y": 5
+  - h: 6
+    properties:
+      chartName: Transaction Count Over Time
+      chartSlug: transaction-count-over-time
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: transaction-count-over-time
+    type: saved_chart
+    w: 34
+    x: 0
+    "y": 9
+verification: null
+version: 1

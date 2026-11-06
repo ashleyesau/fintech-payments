@@ -1,0 +1,65 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: fct_loan_portfolio_daily_snapshot_date_month
+            yRef:
+              field: fct_loan_portfolio_daily_total_outstanding
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_loan_portfolio_daily_snapshot_date_month
+            yRef:
+              field: fct_loan_portfolio_daily_max_active_loans
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      stack: none
+      xField: fct_loan_portfolio_daily_snapshot_date_month
+      yField:
+        - fct_loan_portfolio_daily_total_outstanding
+        - fct_loan_portfolio_daily_max_active_loans
+  type: cartesian
+contentType: chart
+dashboardSlug: portfolio-quality
+description: >-
+  Tracks the monthly progression of total outstanding loan amounts in ZAR and
+  the latest count of active loans to identify growth patterns and portfolio
+  dynamics.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_loan_portfolio_daily_snapshot_date_month
+  exploreName: fct_loan_portfolio_daily
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - fct_loan_portfolio_daily_total_outstanding
+    - fct_loan_portfolio_daily_max_active_loans
+  sorts:
+    - descending: true
+      fieldId: fct_loan_portfolio_daily_snapshot_date_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Portfolio Size Over Time
+slug: portfolio-size-over-time
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+    - fct_loan_portfolio_daily_snapshot_date_month
+    - fct_loan_portfolio_daily_total_outstanding
+    - fct_loan_portfolio_daily_max_active_loans
+tableName: fct_loan_portfolio_daily
+verification: null
+version: 1

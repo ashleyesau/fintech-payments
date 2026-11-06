@@ -1,0 +1,53 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: fct_settlement_daily_settlement_date_month
+            yRef:
+              field: fct_settlement_daily_total_acquirer_revenue
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      stack: none
+      xField: fct_settlement_daily_settlement_date_month
+      yField:
+        - fct_settlement_daily_total_acquirer_revenue
+  type: cartesian
+contentType: chart
+dashboardSlug: settlement-reconciliation
+description: >-
+  Monthly breakdown of total acquirer revenue in ZAR, displayed as a bar chart
+  to identify revenue trends and seasonal patterns over time.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_settlement_daily_settlement_date_month
+  exploreName: fct_settlement_daily
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - fct_settlement_daily_total_acquirer_revenue
+  sorts:
+    - descending: true
+      fieldId: fct_settlement_daily_settlement_date_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Acquirer Revenue by Month
+slug: acquirer-revenue-by-month
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+    - fct_settlement_daily_settlement_date_month
+    - fct_settlement_daily_total_acquirer_revenue
+tableName: fct_settlement_daily
+verification: null
+version: 1

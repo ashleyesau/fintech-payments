@@ -1,0 +1,52 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: fct_revenue_daily_revenue_date_month
+            yRef:
+              field: fct_revenue_daily_total_revenue
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      xField: fct_revenue_daily_revenue_date_month
+      yField:
+        - fct_revenue_daily_total_revenue
+  type: cartesian
+contentType: chart
+dashboardSlug: revenue
+description: >-
+  Monthly revenue trends in ZAR, displayed as a bar chart to identify seasonal
+  patterns and revenue performance across time periods.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_revenue_daily_revenue_date_month
+  exploreName: fct_revenue_daily
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - fct_revenue_daily_total_revenue
+  sorts:
+    - descending: true
+      fieldId: fct_revenue_daily_revenue_date_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Revenue by Month
+slug: revenue-by-month
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+    - fct_revenue_daily_revenue_date_month
+    - fct_revenue_daily_total_revenue
+tableName: fct_revenue_daily
+verification: null
+version: 1

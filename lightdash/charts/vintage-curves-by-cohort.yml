@@ -1,0 +1,139 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: fct_vintage_curves_month_on_book
+            yRef:
+              field: fct_vintage_curves_avg_par30_rate_by_balance
+              pivotValues:
+                - field: fct_vintage_curves_vintage_month
+                  value: "2025-05-01"
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_vintage_curves_month_on_book
+            yRef:
+              field: fct_vintage_curves_avg_par30_rate_by_balance
+              pivotValues:
+                - field: fct_vintage_curves_vintage_month
+                  value: "2025-06-01"
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_vintage_curves_month_on_book
+            yRef:
+              field: fct_vintage_curves_avg_par30_rate_by_balance
+              pivotValues:
+                - field: fct_vintage_curves_vintage_month
+                  value: "2025-07-01"
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_vintage_curves_month_on_book
+            yRef:
+              field: fct_vintage_curves_avg_par30_rate_by_balance
+              pivotValues:
+                - field: fct_vintage_curves_vintage_month
+                  value: "2025-08-01"
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_vintage_curves_month_on_book
+            yRef:
+              field: fct_vintage_curves_avg_par30_rate_by_balance
+              pivotValues:
+                - field: fct_vintage_curves_vintage_month
+                  value: "2025-09-01"
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_vintage_curves_month_on_book
+            yRef:
+              field: fct_vintage_curves_avg_par30_rate_by_balance
+              pivotValues:
+                - field: fct_vintage_curves_vintage_month
+                  value: "2025-10-01"
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_vintage_curves_month_on_book
+            yRef:
+              field: fct_vintage_curves_avg_par30_rate_by_balance
+              pivotValues:
+                - field: fct_vintage_curves_vintage_month
+                  value: "2025-11-01"
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_vintage_curves_month_on_book
+            yRef:
+              field: fct_vintage_curves_avg_par30_rate_by_balance
+              pivotValues:
+                - field: fct_vintage_curves_vintage_month
+                  value: "2025-12-01"
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      stack: none
+      xField: fct_vintage_curves_month_on_book
+      yField:
+        - fct_vintage_curves_avg_par30_rate_by_balance
+  type: cartesian
+contentType: chart
+dashboardSlug: portfolio-quality
+description: >-
+  Tracks the progression of average PAR30 rates by balance as loans age,
+  comparing performance across eight vintage cohorts from May through December
+  2025 to identify delinquency trends by loan maturity.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_vintage_curves_month_on_book
+    - fct_vintage_curves_vintage_month
+  exploreName: fct_vintage_curves
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - fct_vintage_curves_avg_par30_rate_by_balance
+  sorts:
+    - descending: false
+      fieldId: fct_vintage_curves_month_on_book
+  tableCalculations: []
+  timezone: project_timezone
+name: Vintage Curves by Cohort
+pivotConfig:
+  columns:
+    - fct_vintage_curves_vintage_month
+slug: vintage-curves-by-cohort
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+    - fct_vintage_curves_month_on_book
+    - fct_vintage_curves_vintage_month
+    - fct_vintage_curves_avg_par30_rate_by_balance
+tableName: fct_vintage_curves
+verification: null
+version: 1

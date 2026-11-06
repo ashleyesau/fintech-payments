@@ -1,0 +1,75 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: fct_settlement_daily_channel
+            yRef:
+              field: fct_settlement_daily_total_gross_gpv
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_settlement_daily_channel
+            yRef:
+              field: fct_settlement_daily_total_net_payout
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_settlement_daily_channel
+            yRef:
+              field: fct_settlement_daily_total_acquirer_revenue
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      xField: fct_settlement_daily_channel
+      yField:
+        - fct_settlement_daily_total_gross_gpv
+        - fct_settlement_daily_total_net_payout
+        - fct_settlement_daily_total_acquirer_revenue
+  type: cartesian
+contentType: chart
+dashboardSlug: settlement-reconciliation
+description: >-
+  Compares Total Gross GPV, Total Net Payout, and Total Acquirer Revenue across
+  different payment channels to identify which channels generate the highest
+  transaction volumes, payouts, and revenue.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_settlement_daily_channel
+  exploreName: fct_settlement_daily
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - fct_settlement_daily_total_gross_gpv
+    - fct_settlement_daily_total_net_payout
+    - fct_settlement_daily_total_acquirer_revenue
+  sorts:
+    - descending: false
+      fieldId: fct_settlement_daily_channel
+  tableCalculations: []
+  timezone: project_timezone
+name: Net Payout by Channel
+slug: net-payout-by-channel
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+    - fct_settlement_daily_channel
+    - fct_settlement_daily_total_gross_gpv
+    - fct_settlement_daily_total_net_payout
+    - fct_settlement_daily_total_acquirer_revenue
+tableName: fct_settlement_daily
+verification: null
+version: 1

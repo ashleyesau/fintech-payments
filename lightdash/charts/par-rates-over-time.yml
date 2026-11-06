@@ -1,0 +1,76 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: fct_loan_portfolio_daily_snapshot_date_month
+            yRef:
+              field: fct_loan_portfolio_daily_avg_par30_rate
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_loan_portfolio_daily_snapshot_date_month
+            yRef:
+              field: fct_loan_portfolio_daily_avg_par60_rate
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_loan_portfolio_daily_snapshot_date_month
+            yRef:
+              field: fct_loan_portfolio_daily_avg_par90_rate
+          isFilteredOut: false
+          type: line
+          yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      stack: none
+      xField: fct_loan_portfolio_daily_snapshot_date_month
+      yField:
+        - fct_loan_portfolio_daily_avg_par30_rate
+        - fct_loan_portfolio_daily_avg_par60_rate
+        - fct_loan_portfolio_daily_avg_par90_rate
+  type: cartesian
+contentType: chart
+dashboardSlug: portfolio-quality
+description: >-
+  Tracks the average portfolio delinquency rates across three time horizons (30,
+  60, and 90+ days past due) to monitor loan portfolio health and payment
+  performance trends.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_loan_portfolio_daily_snapshot_date_month
+  exploreName: fct_loan_portfolio_daily
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - fct_loan_portfolio_daily_avg_par30_rate
+    - fct_loan_portfolio_daily_avg_par60_rate
+    - fct_loan_portfolio_daily_avg_par90_rate
+  sorts:
+    - descending: true
+      fieldId: fct_loan_portfolio_daily_snapshot_date_month
+  tableCalculations: []
+  timezone: project_timezone
+name: PAR Rates Over Time
+slug: par-rates-over-time
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+    - fct_loan_portfolio_daily_snapshot_date_month
+    - fct_loan_portfolio_daily_avg_par30_rate
+    - fct_loan_portfolio_daily_avg_par60_rate
+    - fct_loan_portfolio_daily_avg_par90_rate
+tableName: fct_loan_portfolio_daily
+verification: null
+version: 1

@@ -1,0 +1,50 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: fct_merchant_health_daily_snapshot_date_month
+            yRef:
+              field: fct_merchant_health_daily_gpv_declining_count
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      xField: fct_merchant_health_daily_snapshot_date_month
+      yField:
+        - fct_merchant_health_daily_gpv_declining_count
+  type: cartesian
+contentType: chart
+dashboardSlug: merchant-health
+description: ""
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_merchant_health_daily_snapshot_date_month
+  exploreName: fct_merchant_health_daily
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - fct_merchant_health_daily_gpv_declining_count
+  sorts:
+    - descending: true
+      fieldId: fct_merchant_health_daily_snapshot_date_month
+  tableCalculations: []
+  timezone: project_timezone
+name: GPV Declining Merchants Over Time
+slug: gpv-declining-merchants-over-time
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+    - fct_merchant_health_daily_snapshot_date_month
+    - fct_merchant_health_daily_gpv_declining_count
+tableName: fct_merchant_health_daily
+verification: null
+version: 1

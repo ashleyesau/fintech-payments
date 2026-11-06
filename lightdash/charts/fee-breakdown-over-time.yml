@@ -1,0 +1,63 @@
+chartConfig:
+  config:
+    conditionalFormattings: []
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: fct_settlement_daily_settlement_date_month
+            yRef:
+              field: fct_settlement_daily_total_merchant_fee
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
+        - encode:
+            xRef:
+              field: fct_settlement_daily_settlement_date_month
+            yRef:
+              field: fct_settlement_daily_total_refund_volume
+          isFilteredOut: false
+          type: bar
+          yAxisIndex: 0
+      showAxisTicks: false
+    layout:
+      flipAxes: false
+      showIncompletePeriod: true
+      xField: fct_settlement_daily_settlement_date_month
+      yField:
+        - fct_settlement_daily_total_merchant_fee
+        - fct_settlement_daily_total_refund_volume
+  type: cartesian
+contentType: chart
+dashboardSlug: settlement-reconciliation
+description: >-
+  Compares merchant fees and refund volumes across settlement periods to
+  identify trends in transaction costs and refund activity over time.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_settlement_daily_settlement_date_month
+  exploreName: fct_settlement_daily
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - fct_settlement_daily_total_merchant_fee
+    - fct_settlement_daily_total_refund_volume
+  sorts:
+    - descending: true
+      fieldId: fct_settlement_daily_settlement_date_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Fee Breakdown Over Time
+slug: fee-breakdown-over-time
+spaceSlug: shared
+tableConfig:
+  columnOrder:
+    - fct_settlement_daily_settlement_date_month
+    - fct_settlement_daily_total_merchant_fee
+    - fct_settlement_daily_total_refund_volume
+tableName: fct_settlement_daily
+verification: null
+version: 1

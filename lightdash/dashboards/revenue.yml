@@ -1,0 +1,54 @@
+config:
+  isAddFilterDisabled: false
+  isDateZoomDisabled: false
+  pinnedParameters: []
+contentType: dashboard
+description: ""
+filters:
+  dimensions: []
+  metrics: []
+  tableCalculations: []
+name: Revenue
+parameters: {}
+slug: revenue
+spaceSlug: shared
+tabs: []
+tiles:
+  - h: 9
+    properties:
+      chartName: Revenue by Month
+      chartSlug: revenue-by-month
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: revenue-by-month
+    type: saved_chart
+    w: 15
+    x: 0
+    "y": 0
+  - h: 9
+    properties:
+      chartName: Revenue by Stream
+      chartSlug: revenue-by-stream
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: revenue-by-stream
+    type: saved_chart
+    w: 15
+    x: 15
+    "y": 0
+  - h: 9
+    properties:
+      chartName: Revenue by Stream Over Time
+      chartSlug: revenue-by-stream-over-time
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: revenue-by-stream-over-time
+    type: saved_chart
+    w: 15
+    x: 0
+    "y": 1
+verification: null
+version: 1

@@ -1,0 +1,66 @@
+config:
+  isAddFilterDisabled: false
+  isDateZoomDisabled: false
+  pinnedParameters: []
+contentType: dashboard
+description: ""
+filters:
+  dimensions: []
+  metrics: []
+  tableCalculations: []
+name: Portfolio Quality
+parameters: {}
+slug: portfolio-quality
+spaceSlug: shared
+tabs: []
+tiles:
+  - h: 9
+    properties:
+      chartName: PAR Rates Over Time
+      chartSlug: par-rates-over-time
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: par-rates-over-time
+    type: saved_chart
+    w: 15
+    x: 0
+    "y": 0
+  - h: 9
+    properties:
+      chartName: PAR Balances Over Time
+      chartSlug: par-balances-over-time
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: par-balances-over-time
+    type: saved_chart
+    w: 15
+    x: 15
+    "y": 0
+  - h: 9
+    properties:
+      chartName: Portfolio Size Over Time
+      chartSlug: portfolio-size-over-time
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: portfolio-size-over-time
+    type: saved_chart
+    w: 15
+    x: 0
+    "y": 9
+  - h: 9
+    properties:
+      chartName: Vintage Curves by Cohort
+      chartSlug: vintage-curves-by-cohort
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: vintage-curves-by-cohort
+    type: saved_chart
+    w: 15
+    x: 15
+    "y": 9
+verification: null
+version: 1

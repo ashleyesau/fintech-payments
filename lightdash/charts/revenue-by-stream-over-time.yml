@@ -44,7 +44,6 @@ metricQuery:
   customDimensions: []
   dimensions:
     - fct_revenue_daily_revenue_date_month
-    - fct_revenue_daily_merchant_id
     - fct_revenue_daily_revenue_stream
   exploreName: fct_revenue_daily
   filters: {}
@@ -66,7 +65,6 @@ spaceSlug: shared
 tableConfig:
   columnOrder:
     - fct_revenue_daily_revenue_date_month
-    - fct_revenue_daily_merchant_id
     - fct_revenue_daily_revenue_stream
     - fct_revenue_daily_total_revenue
 tableName: fct_revenue_daily

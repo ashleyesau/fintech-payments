@@ -10,5 +10,6 @@ RUN python3 -m venv /opt/pipeline-venv && \
         pyiceberg==0.12.0 \
         pyiceberg-core==0.10.1 \
         pyarrow==26.0.0 \
-        "dbt-bigquery~=1.9.2"
+        "dbt-bigquery~=1.9.2" \
+        "sqlalchemy>=2.0.18,<3"
 USER airflow

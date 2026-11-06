@@ -1,0 +1,188 @@
+version: 1
+type: space
+name: "Merchant Monthly Statement"
+description: "Monthly GPV, net GPV, loan balance, collections, and acquirer revenue per merchant"
+isPrivate: false
+
+savedCharts:
+
+  - name: "Monthly GPV Over Time"
+    description: "Total gross payment volume (ZAR) aggregated by month across all merchants"
+    tableName: "fct_merchant_monthly_summary"
+    metricQuery:
+      dimensions:
+        - "fct_merchant_monthly_summary_month"
+      metrics:
+        - "fct_merchant_monthly_summary_total_gpv"
+      filters: {}
+      sorts:
+        - fieldId: "fct_merchant_monthly_summary_month"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_merchant_monthly_summary_month"
+          yField:
+            - "fct_merchant_monthly_summary_total_gpv"
+        eChartsConfig:
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_merchant_monthly_summary_month"
+                yRef:
+                  field: "fct_merchant_monthly_summary_total_gpv"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Net GPV vs Loan Balance by Month"
+    description: "Monthly net GPV and month-end loan balance (ZAR) compared over time"
+    tableName: "fct_merchant_monthly_summary"
+    metricQuery:
+      dimensions:
+        - "fct_merchant_monthly_summary_month"
+      metrics:
+        - "fct_merchant_monthly_summary_total_net_gpv"
+        - "fct_merchant_monthly_summary_total_loan_balance"
+      filters: {}
+      sorts:
+        - fieldId: "fct_merchant_monthly_summary_month"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_merchant_monthly_summary_month"
+          yField:
+            - "fct_merchant_monthly_summary_total_net_gpv"
+            - "fct_merchant_monthly_summary_total_loan_balance"
+        eChartsConfig:
+          series:
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_merchant_monthly_summary_month"
+                yRef:
+                  field: "fct_merchant_monthly_summary_total_net_gpv"
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_merchant_monthly_summary_month"
+                yRef:
+                  field: "fct_merchant_monthly_summary_total_loan_balance"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Collections Over Time"
+    description: "Total amount collected (ZAR) per month"
+    tableName: "fct_merchant_monthly_summary"
+    metricQuery:
+      dimensions:
+        - "fct_merchant_monthly_summary_month"
+      metrics:
+        - "fct_merchant_monthly_summary_total_collections"
+      filters: {}
+      sorts:
+        - fieldId: "fct_merchant_monthly_summary_month"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_merchant_monthly_summary_month"
+          yField:
+            - "fct_merchant_monthly_summary_total_collections"
+        eChartsConfig:
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_merchant_monthly_summary_month"
+                yRef:
+                  field: "fct_merchant_monthly_summary_total_collections"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Acquirer Revenue by Month"
+    description: "Total acquirer revenue (ZAR) per month"
+    tableName: "fct_merchant_monthly_summary"
+    metricQuery:
+      dimensions:
+        - "fct_merchant_monthly_summary_month"
+      metrics:
+        - "fct_merchant_monthly_summary_total_acquirer_revenue"
+      filters: {}
+      sorts:
+        - fieldId: "fct_merchant_monthly_summary_month"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_merchant_monthly_summary_month"
+          yField:
+            - "fct_merchant_monthly_summary_total_acquirer_revenue"
+        eChartsConfig:
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_merchant_monthly_summary_month"
+                yRef:
+                  field: "fct_merchant_monthly_summary_total_acquirer_revenue"
+    tableConfig:
+      columnOrder: []
+
+dashboards:
+  - name: "Merchant Monthly Statement"
+    description: "Monthly GPV, net GPV vs loan balance, collections, and acquirer revenue"
+    tiles:
+      - type: saved_chart
+        x: 0
+        y: 0
+        w: 12
+        h: 9
+        properties:
+          chartName: "Monthly GPV Over Time"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 0
+        y: 9
+        w: 12
+        h: 9
+        properties:
+          chartName: "Net GPV vs Loan Balance by Month"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 0
+        y: 18
+        w: 6
+        h: 9
+        properties:
+          chartName: "Collections Over Time"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 6
+        y: 18
+        w: 6
+        h: 9
+        properties:
+          chartName: "Acquirer Revenue by Month"
+          title: ""
+          hideTitle: false

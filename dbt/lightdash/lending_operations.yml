@@ -1,0 +1,240 @@
+version: 1
+type: space
+name: "Lending Operations"
+description: "Loan origination funnel, collections performance, and unit economics"
+isPrivate: false
+
+savedCharts:
+
+  - name: "Applications by Decision Over Time"
+    description: "Total loan applications grouped by decision (approved, declined, counter-offer) over time"
+    tableName: "fct_loan_applications_daily"
+    metricQuery:
+      dimensions:
+        - "fct_loan_applications_daily_event_date"
+        - "fct_loan_applications_daily_decision"
+      metrics:
+        - "fct_loan_applications_daily_total_applications"
+      filters: {}
+      sorts:
+        - fieldId: "fct_loan_applications_daily_event_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_loan_applications_daily_event_date"
+          yField:
+            - "fct_loan_applications_daily_total_applications"
+        eChartsConfig:
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_loan_applications_daily_event_date"
+                yRef:
+                  field: "fct_loan_applications_daily_total_applications"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Approval and Disbursement Rates"
+    description: "Gross approval rate and disbursement rate (%) over time"
+    tableName: "fct_loan_applications_daily"
+    metricQuery:
+      dimensions:
+        - "fct_loan_applications_daily_event_date"
+      metrics:
+        - "fct_loan_applications_daily_avg_gross_approval_rate"
+        - "fct_loan_applications_daily_avg_disbursement_rate"
+      filters: {}
+      sorts:
+        - fieldId: "fct_loan_applications_daily_event_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_loan_applications_daily_event_date"
+          yField:
+            - "fct_loan_applications_daily_avg_gross_approval_rate"
+            - "fct_loan_applications_daily_avg_disbursement_rate"
+        eChartsConfig:
+          series:
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_loan_applications_daily_event_date"
+                yRef:
+                  field: "fct_loan_applications_daily_avg_gross_approval_rate"
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_loan_applications_daily_event_date"
+                yRef:
+                  field: "fct_loan_applications_daily_avg_disbursement_rate"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Collection Attempts by Status"
+    description: "Total collection attempts grouped by collection status over time"
+    tableName: "fct_collections_performance_daily"
+    metricQuery:
+      dimensions:
+        - "fct_collections_performance_daily_event_date"
+        - "fct_collections_performance_daily_collection_status"
+      metrics:
+        - "fct_collections_performance_daily_total_attempts"
+      filters: {}
+      sorts:
+        - fieldId: "fct_collections_performance_daily_event_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_collections_performance_daily_event_date"
+          yField:
+            - "fct_collections_performance_daily_total_attempts"
+        eChartsConfig:
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_collections_performance_daily_event_date"
+                yRef:
+                  field: "fct_collections_performance_daily_total_attempts"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Fee Income vs Provision by Month"
+    description: "Total fee income and bad debt provision (ZAR) per fee month"
+    tableName: "fct_loan_unit_economics"
+    metricQuery:
+      dimensions:
+        - "fct_loan_unit_economics_fee_month"
+      metrics:
+        - "fct_loan_unit_economics_total_fee_income"
+        - "fct_loan_unit_economics_total_provision"
+      filters: {}
+      sorts:
+        - fieldId: "fct_loan_unit_economics_fee_month"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_loan_unit_economics_fee_month"
+          yField:
+            - "fct_loan_unit_economics_total_fee_income"
+            - "fct_loan_unit_economics_total_provision"
+        eChartsConfig:
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_loan_unit_economics_fee_month"
+                yRef:
+                  field: "fct_loan_unit_economics_total_fee_income"
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_loan_unit_economics_fee_month"
+                yRef:
+                  field: "fct_loan_unit_economics_total_provision"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Net Lending Margin Over Time"
+    description: "Total net lending margin (ZAR) per fee month (fee income minus bad debt provision)"
+    tableName: "fct_loan_unit_economics"
+    metricQuery:
+      dimensions:
+        - "fct_loan_unit_economics_fee_month"
+      metrics:
+        - "fct_loan_unit_economics_total_net_margin"
+      filters: {}
+      sorts:
+        - fieldId: "fct_loan_unit_economics_fee_month"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_loan_unit_economics_fee_month"
+          yField:
+            - "fct_loan_unit_economics_total_net_margin"
+        eChartsConfig:
+          series:
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_loan_unit_economics_fee_month"
+                yRef:
+                  field: "fct_loan_unit_economics_total_net_margin"
+    tableConfig:
+      columnOrder: []
+
+dashboards:
+  - name: "Lending Operations"
+    description: "Loan origination funnel (applications, approval and disbursement rates), collections by status, unit economics (fee income, provision, net margin)"
+    tiles:
+      - type: saved_chart
+        x: 0
+        y: 0
+        w: 6
+        h: 9
+        properties:
+          chartName: "Applications by Decision Over Time"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 6
+        y: 0
+        w: 6
+        h: 9
+        properties:
+          chartName: "Approval and Disbursement Rates"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 0
+        y: 9
+        w: 12
+        h: 9
+        properties:
+          chartName: "Collection Attempts by Status"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 0
+        y: 18
+        w: 6
+        h: 9
+        properties:
+          chartName: "Fee Income vs Provision by Month"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 6
+        y: 18
+        w: 6
+        h: 9
+        properties:
+          chartName: "Net Lending Margin Over Time"
+          title: ""
+          hideTitle: false

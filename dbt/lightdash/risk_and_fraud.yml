@@ -1,0 +1,147 @@
+version: 1
+type: space
+name: "Risk and Fraud"
+description: "Daily risk events by rule type, action breakdown (block vs flag), and merchants affected"
+isPrivate: false
+
+savedCharts:
+
+  - name: "Risk Events by Rule Type"
+    description: "Total risk events grouped by rule type (velocity, count, chargeback_accumulation, flag_review) over time"
+    tableName: "fct_risk_events_daily"
+    metricQuery:
+      dimensions:
+        - "fct_risk_events_daily_event_date"
+        - "fct_risk_events_daily_rule_type"
+      metrics:
+        - "fct_risk_events_daily_total_events"
+      filters: {}
+      sorts:
+        - fieldId: "fct_risk_events_daily_event_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_risk_events_daily_event_date"
+          yField:
+            - "fct_risk_events_daily_total_events"
+        eChartsConfig:
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_risk_events_daily_event_date"
+                yRef:
+                  field: "fct_risk_events_daily_total_events"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Blocked vs Flagged Actions Over Time"
+    description: "Total blocked and flagged-for-review actions per day"
+    tableName: "fct_risk_events_daily"
+    metricQuery:
+      dimensions:
+        - "fct_risk_events_daily_event_date"
+      metrics:
+        - "fct_risk_events_daily_total_blocks"
+        - "fct_risk_events_daily_total_flagged"
+      filters: {}
+      sorts:
+        - fieldId: "fct_risk_events_daily_event_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_risk_events_daily_event_date"
+          yField:
+            - "fct_risk_events_daily_total_blocks"
+            - "fct_risk_events_daily_total_flagged"
+        eChartsConfig:
+          series:
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_risk_events_daily_event_date"
+                yRef:
+                  field: "fct_risk_events_daily_total_blocks"
+            - type: bar
+              encode:
+                xRef:
+                  field: "fct_risk_events_daily_event_date"
+                yRef:
+                  field: "fct_risk_events_daily_total_flagged"
+    tableConfig:
+      columnOrder: []
+
+  - name: "Merchants Affected by Risk Events"
+    description: "Number of distinct merchants affected by risk events per day"
+    tableName: "fct_risk_events_daily"
+    metricQuery:
+      dimensions:
+        - "fct_risk_events_daily_event_date"
+      metrics:
+        - "fct_risk_events_daily_total_merchants_affected"
+      filters: {}
+      sorts:
+        - fieldId: "fct_risk_events_daily_event_date"
+          descending: false
+      limit: 500
+      tableCalculations: []
+      additionalMetrics: []
+    chartConfig:
+      type: cartesian
+      config:
+        layout:
+          xField: "fct_risk_events_daily_event_date"
+          yField:
+            - "fct_risk_events_daily_total_merchants_affected"
+        eChartsConfig:
+          series:
+            - type: line
+              encode:
+                xRef:
+                  field: "fct_risk_events_daily_event_date"
+                yRef:
+                  field: "fct_risk_events_daily_total_merchants_affected"
+    tableConfig:
+      columnOrder: []
+
+dashboards:
+  - name: "Risk and Fraud"
+    description: "Risk events by rule type, blocked vs flagged actions, and merchants affected"
+    tiles:
+      - type: saved_chart
+        x: 0
+        y: 0
+        w: 12
+        h: 9
+        properties:
+          chartName: "Risk Events by Rule Type"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 0
+        y: 9
+        w: 6
+        h: 9
+        properties:
+          chartName: "Blocked vs Flagged Actions Over Time"
+          title: ""
+          hideTitle: false
+      - type: saved_chart
+        x: 6
+        y: 9
+        w: 6
+        h: 9
+        properties:
+          chartName: "Merchants Affected by Risk Events"
+          title: ""
+          hideTitle: false

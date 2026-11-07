@@ -49,7 +49,7 @@ Five streams flow left to right. The CDC consumer and Bronze writer are separate
 | Metric | Figure |
 |---|---|
 | Largest simulation run | 1,185 merchants onboarded, 8,537,090 rows |
-| Bronze write (1,000-merchant run) | 8.5M events across 5 Iceberg tables, 124 min |
+| Bronze write (1,000-merchant run) | 8.5M events across 5 Iceberg tables |
 | BigQuery re-registration | 23 sec |
 | dbt marts rebuild (11 tables) | 65 sec |
 | fct_payments_daily | 161,500 rows |

@@ -15,8 +15,8 @@ All GCS figures come from Google Cloud Monitoring billing estimates and `scripts
 
 The consumer creates one object per table per event date.
 
-For the 100-merchant year (908 objects total):
-- **908 Class A** (one per object written)
+For the 1,000-merchant run (2,610 objects):
+- **2,610 Class A** (one per object written)
 - **Class B**: minimal (a `_runs/` listing per batch, reads for content-hash comparisons on collisions)
 
 A replay that finds all objects already present writes nothing and costs about 1 Class A.
@@ -25,13 +25,13 @@ The monthly 5,000 Class A limit matters for `--follow` mode. At the default 3,60
 
 ### Bronze write
 
-For the 100-merchant year (1,017,902 events):
-- **110 to 130 Class A**: one `_runs/` listing, one object per Parquet file, the run marker, and the catalog copy
-- **~908 Class B**: one read per NDJSON object in the landing
+For the 1,000-merchant run (8,537,090 events):
+- **~190 to 220 Class A**: one `_runs/` listing, one object per Parquet file, the run marker, and the catalog copy
+- **~2,610 Class B**: one read per NDJSON object in the landing
 
-The partition-by-month design keeps the Class A count low. Without it, a per-day partition would have produced about 857 objects instead of 65 data files.
+The partition-by-month design keeps the Class A count low. Without it, a per-day partition would produce roughly 10x more data files.
 
-A no-op write (all events already in Bronze) costs about 908 Class B plus one `_runs/` listing.
+A no-op write (all events already in Bronze) costs about 2,610 Class B plus one `_runs/` listing.
 
 ### `bronze.verify` (full proof)
 
@@ -51,7 +51,7 @@ By the end of the GCS phase (G0 to G5), the October billing month had used:
 - **~2,337 Class A** (46.7% of 5,000)
 - **~19,558 Class B** (39.1% of 50,000)
 
-This covered the G0 BigQuery compatibility probe, all check and verify runs, the full 100-merchant write, four verify runs, two crash-test bucket operations, and several measurement scripts.
+This covered the G0 BigQuery compatibility probe, all check and verify runs, the full Bronze write, four verify runs, two crash-test bucket operations, and several measurement scripts.
 
 ---
 
@@ -79,10 +79,10 @@ The 1,000-merchant run consumed 8.95 million changes in two runs (a WiFi interru
 
 | Run | Events | Objects read | Duration |
 |---|---|---|---|
-| 100-merchant year | 1,017,902 | 908 | ~6 min (bronze.check only) |
+| 1,000-merchant run | 8,537,090 | 2,610 | 124 min (Airflow bronze_write task) |
 | 1,000-merchant run | 8.5M | 2,610 | 124 min (full write, fresh bucket) |
 
-The 124-minute figure is for a full write from scratch. Bronze was reset before this run. A write that appends only new events on top of an existing Bronze table would be proportionally shorter.
+Bronze was reset before this run. A write that appends only new events on top of an existing Bronze table would be proportionally shorter.
 
 ### Airflow DAG (1,000-merchant run)
 
@@ -102,16 +102,16 @@ The Bronze tables are partitioned by `month(event_date)`.
 
 Day partitioning would produce up to 365 Parquet files per table per year (1,825 total for five tables). Month partitioning produces 12 per table per year (60 total). This reduces Class A costs by roughly 14x on the Bronze write.
 
-Measured: 65 Parquet data files for the 100-merchant year. Estimated for day partitioning: ~857 files.
+Measured on the 100-merchant development run: 65 Parquet data files. Estimated for day partitioning of the same run: ~857 files. At 1,000 merchants the file count scales proportionally.
 
 ### Two-pass streaming reader
 
 The Bronze writer reads the landing in two passes.
 
-- **Pass 1**: builds an in-memory index across all 908 objects (~253 to 261 MB above the starting process RSS on the Air). The index holds about 12 bytes per event.
+- **Pass 1**: builds an in-memory index across all 2,610 objects. The index holds about 12 bytes per event (~100 MB for 8.5M events).
 - **Pass 2**: reads each object again and converts events to Arrow.
 
-The alternative (single-pass with materialised rows) would have required 5.8 KB per row. For 1 million events, that is roughly 5 GB, which exceeds the MacBook Air's 8 GB.
+The alternative (single-pass with materialised rows) would have required 5.8 KB per row. For 8.5 million events, that is over 49 GB.
 
 ### Batch size (100,000 rows per commit)
 

@@ -136,7 +136,7 @@ These required custom solutions: the two-pass writer, `bronze.orphans`, and no s
 
 **Choice:** `month(event_date)` partitioning.
 
-**Why:** day partitioning would produce up to 365 Parquet files per table per year (1,825 total for five tables). Month partitioning produces 12 per table per year (60 total). The measured Bronze write for the 100-merchant year produced 65 data files vs an estimated 857 for day partitioning. See [Cost and performance](cost-and-performance.md).
+**Why:** day partitioning would produce up to 365 Parquet files per table per year (1,825 total for five tables). Month partitioning produces 12 per table per year (60 total). The measured Bronze write for the 100-merchant development run produced 65 data files vs an estimated 857 for day partitioning. See [Cost and performance](cost-and-performance.md).
 
 **Trade-off:** dbt can prune by month, not day. A query on a single day reads the whole month's partition. For the query patterns in the mart layer, this is acceptable.
 
@@ -162,9 +162,9 @@ These required custom solutions: the two-pass writer, `bronze.orphans`, and no s
 
 **Choice:** custom SQL model in `dbt/models/dimensions/merchants_scd.sql` using LAG window functions over all daily Bronze rows. Detects transitions in 9 merchant attribute columns and emits one SCD2 row per state-change event per merchant. Full historical transition history is built on the first run.
 
-**Why:** LAG over all rows is a single BigQuery scan. The result (431 rows on the 100-merchant dataset, average 3.7 SCD2 records per merchant) correctly captures the full attribute change history.
+**Why:** LAG over all rows is a single BigQuery scan. The result (4,991 rows on the 1,000-merchant dataset, average 4.2 SCD2 records per merchant) correctly captures the full attribute change history.
 
-**Trade-off:** the LAG model re-reads all Bronze merchant rows on each `dbt run --full-refresh`. At 1,000 merchants (200,000 rows), this remains fast. The dbt snapshot approach would have been cheaper incrementally, but it would not have produced the correct history.
+**Trade-off:** the LAG model re-reads all Bronze merchant rows on each `dbt run --full-refresh`. At 1,000 merchants (213,923 Bronze rows), this remains fast. The dbt snapshot approach would have been cheaper incrementally, but it would not have produced the correct history.
 
 ---
 

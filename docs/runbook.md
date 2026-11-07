@@ -90,9 +90,9 @@ Backfill advances one simulated day at a time and writes each day to Postgres in
 - `--resume` continues from `checkpoint.json`, using the start date, count and seed stored in it
 - A resume under different `ENABLE_RISK_EVENTS` or `ENABLE_LOAN_APPLICATIONS` values is refused
 
-**Reading the Churned count.** The Churned count looks high and is meant to. In a 100-merchant run (seed 42), 50 of 115 onboarded merchants end Churned, but 42 of those never transacted. About a third of signups never activate and are marked Churned 30 days after onboarding. Churned is terminal, so the count is a running total, not a rate. The comparable rate is churn after trading: about 1.4 to 2.2% a month. The run summary prints "never activated" and "churned after trading" separately.
+**Reading the Churned count.** The Churned count looks high and is meant to. In the 1,000-merchant run, 486 of 1,185 onboarded merchants ended Churned. About a third of signups never activate and are marked Churned 30 days after onboarding. Churned is terminal, so the count is a running total, not a rate. The comparable rate is churn after trading. The run summary prints "never activated" and "churned after trading" separately.
 
-**Timing:** 100 merchants over 365 days took 183 seconds in the sandbox and 476 seconds on a 2017 MacBook Air.
+**Timing:** 1,000 merchants over 455 days took 3,337 seconds (~56 min) on a 2017 MacBook Air. A 100-merchant year takes 183 seconds in the sandbox or 476 seconds on the Air.
 
 ---
 
@@ -234,7 +234,7 @@ Run `cdc.lag` before every large operation. A slot that has sat unread since cre
 
 ## Larger runs: chunking
 
-A 100-merchant year is ~1M changes. The 3 GB WAL cap is enough to run the generator and consumer alongside each other for this size without losing the slot.
+A 100-merchant year is ~1M changes: small enough to run the generator and consumer alongside each other without losing the slot. A 1,000-merchant run produces ~8.95M changes and needs chunking.
 
 For much larger runs (e.g., 1,000 merchants, ~11M transactions), run the generator in chunks and let the consumer drain between them:
 
@@ -297,14 +297,14 @@ CDC_DB=fintech_cdc CDC_SLOT_NAME=cdc_r01 python -m cdc.reconcile
 
 `--once` should say "nothing was waiting". Reconcile should end in `RECONCILED`.
 
-**Measured on a 2017 MacBook Air (seed 42, 100 merchants, 2025):**
+**Measured on the 1,000-merchant run:**
 
 | Step | Result |
 |---|---|
-| Generator | 663 s, 1,017,902 rows |
-| Consumer | Never >96 MB behind; caught up within 11 s of generator finishing |
-| Landed | 908 objects, 91.9 MB gzipped |
-| Reconcile | RECONCILED in 3 min 43 s: 908 objects, 1,017,902 events, 0 duplicates |
+| Generator | 3,337 s, 8,537,090 rows (213,923 merchant snapshots, 8,321,600 transactions, 293 loan applications (158 disbursed), 523 repayments, 593 risk events) |
+| Consumer | 8.95M changes across two runs (WiFi interruption mid-way); slot stayed healthy throughout |
+| Landed | 2,610 objects in gs://cdc_landing/cdc/cdc_r03/ |
+| Bronze write | 8.5M events written from scratch via Airflow, 124 min |
 
 A repeat run needs a new slot name (`cdc_r02`), a fresh database and a new checkpoint.
 
@@ -323,7 +323,7 @@ Reads every landed object, checks every event against the contract, and maps eve
 
 **Exit codes:** 0 (all events valid), 2 (contract stop, with the object and field named), 3 (bucket failure), 1 (other).
 
-**Cost (100-merchant year):** ~1 Class A + ~908 Class B. With `--roundtrip`: ~2 Class A + ~1,816 Class B.
+**Cost (1,000-merchant run):** ~1 Class A + ~2,610 Class B. With `--roundtrip`: ~2 Class A + ~5,220 Class B.
 
 ---
 
@@ -352,7 +352,7 @@ A second `--write` over the same landing writes nothing. A failure mid-way leave
 
 **Exit codes:** 0 (done or nothing to do), 2 (contract stop), 3 (bucket failed), 130 (Ctrl-C). Every non-zero exit prints one `error:` line.
 
-**Cost (first write, 100-merchant year):** 110 to 130 Class A + ~908 Class B.
+**Cost (first write, 1,000-merchant run):** ~190 to 220 Class A + ~2,610 Class B.
 
 ---
 
@@ -374,7 +374,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/bronze_credentials.json python -m bronze
 
 **Exit codes:** 0 (verified), 2 (mismatch or source changed during check), 3 (bucket failure or source unreachable), 1 (other).
 
-**Cost (100-merchant year):** ~1 Class A + ~908 Class B (landing) + ~290 Class B (Bronze table reads).
+**Cost (1,000-merchant run):** ~1 Class A + ~2,610 Class B (landing) + Bronze table reads.
 
 **G4/G5 evidence (2026-10-31):** `python -m bronze.verify` passed four times on the real bucket with identical ten-way digests. All nine GCS phase acceptance criteria are met on evidence.
 
@@ -438,17 +438,17 @@ The list is printed before anything is deleted. Read it first. **Soft delete is 
 
 5,000 Class A (writes, listings) and 50,000 Class B (reads) per billing month in `us-east1`. Usage pools across buckets in the project.
 
-**Approximate cost per command (100-merchant year):**
+**Approximate cost per command (1,000-merchant run, 2,610 objects):**
 
 | Command | Class A | Class B |
 |---|---|---|
-| `bronze.verify` | ~1 | ~1,200 |
-| `bronze.verify --landing-only` | ~1 | ~908 |
-| `bronze.check` | ~1 | ~908 |
-| `bronze.check --roundtrip` | ~2 | ~1,816 |
+| `bronze.verify` | ~1 | ~3,500 |
+| `bronze.verify --landing-only` | ~1 | ~2,610 |
+| `bronze.check` | ~1 | ~2,610 |
+| `bronze.check --roundtrip` | ~2 | ~5,220 |
 | `bronze.orphans` | ~1 | ~20 to 50 |
-| `bronze.main` (plan or no-op) | ~3 | ~908 |
-| `bronze.main --write` (first write) | 110 to 130 | ~908 |
+| `bronze.main` (plan or no-op) | ~3 | ~2,610 |
+| `bronze.main --write` (first write) | ~190 to 220 | ~2,610 |
 | `bronze.main --rebuild-catalog` | ~1 | ~300 |
 
 **Check the month's standing:**
@@ -540,7 +540,7 @@ psql -h localhost -U sim -d fintech -f validate.sql
 `validate.sql` holds the reconciliation queries. Each returns a value next to its Validation Targets band.
 
 **Notes:**
-- A 100-merchant run is too noisy to hold a band; read results across several seeds and larger runs
+- Results vary by seed and run size. Read across several seeds and larger runs for stable figures.
 - PAR is computed two ways: from recorded `days_past_due` (generator-consistent) and from instalment age (what a table query alone gives). The instalment-age measure runs ahead between monthly arrears cycles
 - For lending checks, use `scripts/boosted_backfill.py` (default 5x application propensity over 24 months)
 - `tests/test_reconcile.py` asserts the seven failure modes and plants each fault to confirm the query fires

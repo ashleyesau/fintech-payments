@@ -151,6 +151,16 @@ Five Iceberg tables managed by PyIceberg 0.12.0, backed by Parquet files. The Ic
 
 The five Bronze tables mirror their OLTP sources. Each row gains `op` and `ingested_at` from the envelope, and `event_date` as the partition column.
 
+**Row counts (1,000-merchant run):**
+
+| Table | Rows | Notes |
+|---|---|---|
+| `merchants` | 213,923 | Daily snapshots across all merchants |
+| `merchant_transactions` | 8,321,600 | |
+| `loan_applications` | 451 | 293 inserts + 158 disbursement updates |
+| `loan_repayments` | 523 | |
+| `risk_events` | 593 | |
+
 ---
 
 ## Layer 4: BigQuery (staging, intermediate, marts)
@@ -170,26 +180,26 @@ Five views. Each selects from the corresponding `bronze.*` external table, appli
 
 Three tables in the `marts` dataset:
 
-| Model | Rows (100-merchant) | Notes |
+| Model | Rows (1,000-merchant) | Notes |
 |---|---|---|
-| `merchants_scd` | 431 | SCD2 history via LAG window functions. Avg 3.7 records per merchant. |
-| `dim_merchants` | 115 | Current state only. `WHERE dbt_is_current = TRUE`. |
+| `merchants_scd` | 4,991 | SCD2 history via LAG window functions. Avg 4.2 records per merchant. |
+| `dim_merchants` | 1,185 | Current state only. `WHERE dbt_is_current = TRUE`. |
 | `dim_date` | 730 | Date spine 2025-01-01 to 2026-12-31. Built with `dbt_utils.date_spine`. Includes `is_sa_holiday`, `is_business_day`, `is_payday_period`. |
 
 ### Intermediate tables
 
 Eight tables in the `staging` dataset:
 
-| Model | Rows (100-merchant) | Notes |
+| Model | Rows (1,000-merchant) | Notes |
 |---|---|---|
-| `int_payments__transaction_enriched` | 997,600 | Joins transactions to `merchants_scd` on SCD2 date range |
-| `int_payments__merchant_daily_gpv` | 15,600 | Daily GPV per merchant |
-| `int_payments__merchant_gpv_rolling` | 15,600 | 30d and 60d rolling GPV windows |
-| `int_lending__loan_daily_snapshot` | 5,800 | Date spine per loan via `GENERATE_DATE_ARRAY` |
-| `int_lending__loan_fee_schedule` | 156 | Monthly fee amortisation per loan |
+| `int_payments__transaction_enriched` | 8,321,600 | Joins transactions to `merchants_scd` on SCD2 date range |
+| `int_payments__merchant_daily_gpv` | 161,460 | Daily GPV per merchant |
+| `int_payments__merchant_gpv_rolling` | 161,460 | 30d and 60d rolling GPV windows |
+| `int_lending__loan_daily_snapshot` | 45,279 | Date spine per loan via `GENERATE_DATE_ARRAY` |
+| `int_lending__loan_fee_schedule` | 1,182 | Monthly fee amortisation per loan |
 | `int_lending__portfolio_par` | ephemeral | PAR30/60/90 rates and balances |
 | `int_lending__vintage_cohorts` | ephemeral | Month-end cohort snapshots |
-| `int_risk__merchant_risk_daily` | 15,600 | Daily risk profile per merchant |
+| `int_risk__merchant_risk_daily` | 161,460 | Daily risk profile per merchant |
 
 ### Mart fact tables
 
@@ -209,7 +219,7 @@ Eleven incremental tables in the `marts` dataset. All use `insert_overwrite` or 
 | `fct_risk_events_daily` | 563 | event_date + rule_type + archetype | block count, flag count |
 | `fct_merchant_monthly_summary` | 6,300 | merchant + month | monthly GPV, loan balance, collections |
 
-Row counts from the 1,000-merchant run (session 38, 2026-11-07).
+Row counts verified on the 1,000-merchant run (session 38, 2026-11-07).
 
 ### Seeds
 

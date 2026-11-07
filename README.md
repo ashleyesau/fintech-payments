@@ -1,6 +1,6 @@
 # fintech-payments
 
-A synthetic-data pipeline for a South African SME payments and lending business, built end to end: from a stateful event generator writing to Postgres, through a custom CDC consumer landing changes in GCS, into Apache Iceberg Bronze tables, up through BigQuery and dbt mart models, and out to Lightdash dashboards. Airflow orchestrates the full write-transform-serve cycle on a schedule.
+A synthetic-data pipeline for a South African SME payments and lending business, built end to end: from a stateful event generator writing to Postgres, through a custom CDC consumer landing changes in GCS, into Apache Iceberg Bronze tables, up through BigQuery and dbt mart models, and out to Lightdash dashboards. Airflow orchestrates the full write-transform-serve cycle.
 
 ---
 
@@ -35,12 +35,12 @@ flowchart LR
     bronze -->|Parquet / Iceberg| gcs_bronze[("GCS\nfintech_bronze")]
     gcs_bronze -->|CREATE EXTERNAL TABLE| bq[("BigQuery\nbronze.*")]
     bq --> dbt["dbt\nstaging / intermediate / marts"]
-    dbt -->|11 mart tables| bq_marts[("BigQuery\nmaarts.*")]
+    dbt -->|11 mart tables| bq_marts[("BigQuery\nmarts.*")]
     bq_marts --> lightdash["Lightdash Cloud\n8 dashboards"]
     airflow["Airflow 2.9.3\nfintech_pipeline"] -.->|bronze_write >> register_bq >> dbt_marts| gcs_land
 ```
 
-Five streams flow left to right. The CDC consumer and Bronze writer are separate processes; Airflow joins them on a daily schedule. The generator runs independently to load new data.
+Five streams flow left to right. The CDC consumer and Bronze writer are separate processes; Airflow joins them on a manual trigger (schedule disabled by default). The generator runs independently to load new data.
 
 ---
 
@@ -82,7 +82,7 @@ The arc from getting a pipeline to run to caring about what the numbers represen
 | Tool | Role |
 |---|---|
 | BigQuery | Data warehouse. Hosts external Iceberg tables and dbt mart output. |
-| Apache Airflow 2.9.3 | Orchestrates the pipeline on a daily schedule (LocalExecutor, Docker Compose). |
+| Apache Airflow 2.9.3 | Orchestrates the pipeline (LocalExecutor, Docker Compose). Manual trigger by default; cron schedule is configurable. |
 | dbt (dbt-bigquery 1.9.2) | Transforms Bronze sources into 11 mart fact tables via staging and intermediate layers. |
 | Python 3.13 | Generator, CDC consumer, Bronze writer, all scripts. |
 | Google Cloud Platform | Cloud host (project `payments-512910`, `us-east1`). |

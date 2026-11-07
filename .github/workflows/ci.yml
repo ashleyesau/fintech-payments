@@ -16,8 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Same flags as docker-compose.yml. A service container cannot take server flags, and
-      # the CDC tests need wal_level=logical (they fail without it). The wait uses -h
+      # docker-compose.yml uses 16 GB, but CI only tests the CDC decoder and round-trip logic,
+      # not large-scale backfills, so 3 GB is sufficient here and faster to allocate.
+      # A service container cannot take server flags, so Postgres is started with docker run.
+      # The CDC tests need wal_level=logical (they fail without it). The wait uses -h
       # localhost because the image's start-up runs a temporary server on the socket only.
       - name: Start Postgres with logical decoding
         run: |

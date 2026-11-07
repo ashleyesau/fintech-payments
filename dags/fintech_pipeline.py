@@ -18,9 +18,10 @@ register_bq
     login).
 
 dbt_marts
-    dbt deps && dbt run --select marts
-    Rebuilds all 11 mart fact tables from the updated Bronze sources. dbt deps runs
-    first so dbt_utils is present on a fresh container. Runs with ADC.
+    dbt deps && dbt run --full-refresh
+    Rebuilds all dbt models from scratch (staging, dimensions, intermediate, marts).
+    --full-refresh is used so no layer is ever stale after a Bronze write. dbt deps
+    runs first so dbt_utils is present on a fresh container. Runs with ADC.
 
 Lightdash
     No step needed. Lightdash queries BigQuery directly and picks up the new mart data

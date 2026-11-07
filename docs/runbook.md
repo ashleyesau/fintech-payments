@@ -510,7 +510,7 @@ Each Bronze refresh triggers this chain in order:
 
 1. `python -m bronze.main --write` -- write new events to the Bronze Iceberg tables
 2. `python scripts/register_bronze_bq.py --project payments-512910 --location us-east1 --connection fintech-bronze` -- re-point the BigQuery external tables at the new Iceberg metadata file (required after every Bronze write; without it dbt reads stale data)
-3. `dbt run --select marts` -- rebuild the mart tables from the updated source
+3. `dbt run --full-refresh` -- rebuild all dbt models from scratch
 4. Lightdash dashboards update automatically on the next query
 
 ## Orchestration (Airflow)

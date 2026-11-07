@@ -36,6 +36,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-changeme_in_env}
     AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
+    CDC_SLOT_NAME: ${CDC_SLOT_NAME:-cdc_r01}
   volumes:
     - ../dags:/opt/airflow/dags
     - ..:/opt/repo

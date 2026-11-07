@@ -48,7 +48,7 @@ CREDS_ADC = "/opt/credentials/adc.json"
 with DAG(
     dag_id="fintech_pipeline",
     description="Bronze write, BQ re-registration, dbt marts rebuild",
-    schedule="0 6 * * *",
+    schedule=None,
     start_date=datetime(2026, 11, 6, tzinfo=timezone.utc),
     catchup=False,
     tags=["fintech", "bronze", "dbt"],

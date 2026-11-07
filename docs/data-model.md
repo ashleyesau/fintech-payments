@@ -1,18 +1,18 @@
 # Data model
 
-The pipeline has four distinct schema layers: the OLTP source in Postgres, the change-event envelope in the CDC landing, the Bronze Iceberg tables on GCS, and the dbt-transformed tables in BigQuery. Each layer has its own contract. This document describes each schema, the key design choices, and the lineage from source to mart.
+The pipeline has four distinct schema layers: the OLTP source in Postgres, the CDC landing envelope, the Bronze Iceberg tables on GCS, and the dbt-transformed tables in BigQuery. Each layer has its own contract.
 
 ---
 
 ## Layer 1: OLTP source (Postgres `fintech_cdc`)
 
-Five tables in the `public` schema. Created by three migrations in `migrations/`.
+Five tables in the `public` schema, created by three migrations in `migrations/`.
 
-**Key conventions across all tables:**
-- `TEXT` for UUIDs (not native UUID type, for V1 simplicity)
+**Conventions across all tables:**
+- `TEXT` for UUIDs (not native UUID type)
 - `BIGINT` for all amounts, in ZAR cents (minor units)
 - `TIMESTAMPTZ` for timestamps
-- `TEXT` with `CHECK` constraints for enum columns (no Postgres enum type)
+- `TEXT` with `CHECK` constraints for enum columns
 - No foreign keys on `merchant_id` (the composite PK on `merchants` makes an FK column-reference impossible)
 
 ### `merchants`
@@ -21,31 +21,51 @@ Five tables in the `public` schema. Created by three migrations in `migrations/`
 |---|---|---|
 | `merchant_id` | TEXT | Part of composite PK |
 | `snapshot_at` | TIMESTAMPTZ | Part of composite PK. 23:59 SAST each day. |
-| `archetype` | TEXT | One of 11 archetypes (spaza_shop, restaurant, ...) |
+| `archetype` | TEXT | One of 11 archetypes |
 | `province` | TEXT | SA province |
 | `is_metro` | BOOLEAN | |
-| `merchant_state` | TEXT | Enum: New, Growing, Stable, Stressed, Delinquent, Churned |
+| `merchant_state` | TEXT | New, Growing, Stable, Stressed, Delinquent, Churned |
 | `risk_score` | INT | Defaults to 10. Floor 80 on write-off. |
 | `loan_count` | INT | |
 | `has_active_loan` | BOOLEAN | |
 | `onboarded_at` | TIMESTAMPTZ | |
 | `first_transaction_at` | TIMESTAMPTZ | NULL until first payment |
 
-INSERT-only daily snapshot at 23:59 SAST. Snapshots stop 30 days after a merchant becomes Churned unless a loan is active.
+INSERT-only daily snapshot at 23:59 SAST. Snapshots stop 30 days after a merchant becomes Churned, unless a loan is active.
 
 ### `merchant_transactions`
 
 32 columns. INSERT-only. PK `transaction_id`.
 
-Key columns: `merchant_id`, `event_type` (payment, refund, chargeback), `channel` (card_present, card_ecom, instant_eft, payshap, payment_link), `gross_amount_minor` (BIGINT), `net_amount_minor`, `acquirer_markup_minor`, `created_at`, `settlement_date`, `status`, `correlation_id` (nullable; on refund and chargeback rows, holds the original `transaction_id`).
+Key columns:
+
+| Column | Notes |
+|---|---|
+| `event_type` | payment, refund, chargeback |
+| `channel` | card_present, card_ecom, instant_eft, payshap, payment_link |
+| `gross_amount_minor` | BIGINT, ZAR cents |
+| `settlement_date` | DATE |
+| `status` | completed, declined, failed, etc. |
+| `correlation_id` | Nullable. On refund and chargeback rows, holds the original `transaction_id`. |
 
 ### `loan_applications`
 
 24 columns. PK `application_id`. One INSERT at decision, one UPDATE at disbursement.
 
-The disbursement UPDATE sets `disbursed_at` and `disbursement_amount_minor`. The CDC consumer captures both the `c` (insert) and `u` (update) events. `REPLICA IDENTITY FULL` is set on this table (migration 003) so the update carries the full old row.
+The disbursement UPDATE sets `disbursed_at` and `disbursement_amount_minor`. `REPLICA IDENTITY FULL` is set on this table (migration 003), so the update carries the full old row.
 
-Key columns: `application_id`, `merchant_id`, `decision` (approved, declined, counter_offer), `actioned_by` (automated_engine, manual_review), `approved_amount_minor`, `disbursement_amount_minor` (NULL at insert), `disbursed_at` (NULL at insert), `approved_term_months`, `total_cost_percent` (NUMERIC(5,4)), `decline_reasons` (TEXT[]).
+Key columns:
+
+| Column | Notes |
+|---|---|
+| `decision` | approved, declined, counter_offer |
+| `actioned_by` | automated_engine, manual_review |
+| `approved_amount_minor` | BIGINT |
+| `disbursement_amount_minor` | NULL at insert |
+| `disbursed_at` | NULL at insert |
+| `approved_term_months` | INT |
+| `total_cost_percent` | NUMERIC(5,4) |
+| `decline_reasons` | TEXT[] |
 
 ### `loan_repayments`
 
@@ -53,13 +73,34 @@ Key columns: `application_id`, `merchant_id`, `decision` (approved, declined, co
 
 One row per collection attempt. Retries, cures and write-offs are new rows.
 
-Key columns: `loan_id`, `installment_number`, `retry_attempt`, `days_past_due`, `par_bucket` (current, 1-30, 31-60, 61-90, 90+), `collection_status`, `payment_ts` (nullable for unpaid attempts; fall back to `due_date`), `outstanding_before_minor`, `outstanding_after_minor`, `is_cured`, `write_off_flag`.
+Key columns:
+
+| Column | Notes |
+|---|---|
+| `installment_number` | INT |
+| `retry_attempt` | INT |
+| `days_past_due` | INT |
+| `par_bucket` | current, 1-30, 31-60, 61-90, 90+ |
+| `collection_status` | success, unpaid_nsf, disputed, reversed, etc. |
+| `payment_ts` | Nullable. Unpaid attempts have no payment time; fall back to `due_date`. |
+| `outstanding_before_minor` | BIGINT |
+| `outstanding_after_minor` | BIGINT |
+| `is_cured` | BOOLEAN |
+| `write_off_flag` | BOOLEAN |
 
 ### `risk_events`
 
 13 columns. INSERT-only. PK `alert_id`.
 
-Key columns: `merchant_id`, `entity_id` (polymorphic: `transaction_id` for transaction-linked rules, `merchant_id` for merchant-level rules), `rule_type`, `action` (allow, flag_review, block), `risk_score` (merchant score after the delta), `action_ts`, `resolved_ts` (always NULL in V1).
+Key columns:
+
+| Column | Notes |
+|---|---|
+| `entity_id` | Polymorphic. `transaction_id` for transaction-linked rules, `merchant_id` for merchant-level rules. |
+| `rule_type` | velocity_breach, refund_spike, chargeback_accumulation, etc. |
+| `action` | allow, flag_review, block |
+| `risk_score` | Merchant score after the delta |
+| `resolved_ts` | Always NULL in V1 |
 
 ---
 
@@ -67,7 +108,7 @@ Key columns: `merchant_id`, `entity_id` (polymorphic: `transaction_id` for trans
 
 Each change event is one JSON line. The envelope wraps the row data with source metadata.
 
-**Envelope fields (all events):**
+**Envelope fields:**
 
 | Field | Type | Notes |
 |---|---|---|
@@ -87,36 +128,41 @@ Each change event is one JSON line. The envelope wraps the row data with source 
 | `ingested_at` | string | ISO timestamp at landing |
 | `envelope_version` | int | Always 1 in V1 |
 
-**Object naming:** `cdc/<slot_name>/<table>/<event_date>/part-<seq>-<commit_lsn>.ndjson.gz`. One object per table per event date. Dedup key: `(source.commit_lsn, transaction.position)`.
+**Object naming:** `cdc/<slot_name>/<table>/<event_date>/part-<seq>-<commit_lsn>.ndjson.gz`
+
+One object per table per event date. Dedup key: `(source.commit_lsn, transaction.position)`.
 
 ---
 
 ## Layer 3: Bronze Iceberg tables (GCS `gs://fintech_bronze`)
 
-Five Iceberg tables managed by PyIceberg 0.12.0, backed by Parquet files. The Iceberg table format adds a transaction log (snapshot history, schema metadata, manifest files) on top of the Parquet data files.
+Five Iceberg tables managed by PyIceberg 0.12.0, backed by Parquet files. The Iceberg layer adds a transaction log (snapshot history, schema metadata, manifest files) on top of the Parquet data files.
 
-**Partition:** `month(event_date)`. Each month's data lands in one or more Parquet files under `bronze/<table>/data/event_date_month=YYYY-MM/`.
+**Partition:** `month(event_date)`. Each month's data lands under `bronze/<table>/data/event_date_month=YYYY-MM/`.
 
 **Key design choices:**
-- Append-only Bronze. The Bronze writer appends new events; it never updates or deletes.
-- `loan_applications` keeps both the `c` and `u` rows. The Silver/staging layer deduplicates to the latest per `application_id`.
-- Each column maps from the Postgres type to a Parquet type via a width table in `bronze/schema.py`. BIGINT stays INT64. NUMERIC(5,4) becomes FLOAT64. TEXT[] (the `decline_reasons` array) becomes a Parquet list of strings.
+- Append-only. The Bronze writer never updates or deletes.
+- `loan_applications` keeps both `c` and `u` rows. Staging deduplicates to the latest per `application_id`.
+- Column type mapping in `bronze/schema.py`: BIGINT stays INT64, NUMERIC(5,4) becomes FLOAT64, TEXT[] becomes a Parquet list of strings.
 
-**Run marker:** after each write, the writer creates a JSON marker object under `gs://fintech_bronze/_runs/<timestamp>Z.json`. The marker records the Iceberg metadata file path for each table, the row counts added, and the slot name. The catalog (`_catalog/catalog.db`) is a SQLite copy rebuilt from this marker; it is a cache, not the source of truth.
+**Run marker.** After each write, the writer creates a JSON marker under `gs://fintech_bronze/_runs/<timestamp>Z.json`. It records the Iceberg metadata file path for each table, the row counts added, and the slot name.
 
-**Bronze table schemas** (defined in `bronze/schema.py`, derived from the Postgres migrations):
+**Catalog.** The SQLite file at `_catalog/catalog.db` is a cache rebuilt from the run marker. It is not the source of truth. If lost, `--rebuild-catalog` reconstructs it without reading any landed objects.
 
-The five tables mirror their OLTP sources. The Bronze envelope adds `op` and `ingested_at` to each row. `event_date` (pre-computed SAST date) is the partition column.
+The five Bronze tables mirror their OLTP sources. Each row gains `op` and `ingested_at` from the envelope, and `event_date` as the partition column.
 
 ---
 
 ## Layer 4: BigQuery (staging, intermediate, marts)
 
-BigQuery holds the external Bronze tables (dataset `bronze`), the dbt-managed staging views and intermediate tables (dataset `staging`), and the mart fact tables (dataset `marts`). All in project `payments-512910`, `us-east1`.
+Three datasets in project `payments-512910`, `us-east1`:
+- `bronze`: external Iceberg tables pointing at the Bronze GCS files
+- `staging`: dbt views and intermediate tables
+- `marts`: dbt mart fact tables
 
 ### Staging views
 
-Five views. Each selects from the corresponding `bronze.*` external table, applies `WHERE op = 'c'` for insert-only streams, deduplicates where needed, drops envelope columns, and renames fields to match dbt conventions.
+Five views. Each selects from the corresponding `bronze.*` external table, applies `WHERE op = 'c'` for insert-only streams, deduplicates where needed, and drops envelope columns.
 
 `stg_loan_applications` deduplicates to the latest row per `application_id` by `(commit_lsn DESC, transaction_position DESC)` and drops all `before_*` columns.
 
@@ -124,9 +170,11 @@ Five views. Each selects from the corresponding `bronze.*` external table, appli
 
 Three tables in the `marts` dataset:
 
-- `merchants_scd`: SCD2 history. Built by `dbt/models/dimensions/merchants_scd.sql` using LAG window functions over all daily Bronze rows to detect attribute changes. 431 rows on the 100-merchant dataset (average 3.7 SCD2 records per merchant).
-- `dim_merchants`: current-state view. `WHERE dbt_is_current = TRUE`. One row per active merchant.
-- `dim_date`: date spine from 2025-01-01 to 2026-12-31 (730 rows). Built with `dbt_utils.date_spine`. Columns include `is_sa_holiday` (26 SA public holidays from the `sa_public_holidays` seed), `is_business_day`, `is_payday_period` (days 2-4 and 25-27), `is_month_end`, `is_quarter_end`.
+| Model | Rows (100-merchant) | Notes |
+|---|---|---|
+| `merchants_scd` | 431 | SCD2 history via LAG window functions. Avg 3.7 records per merchant. |
+| `dim_merchants` | 115 | Current state only. `WHERE dbt_is_current = TRUE`. |
+| `dim_date` | 730 | Date spine 2025-01-01 to 2026-12-31. Built with `dbt_utils.date_spine`. Includes `is_sa_holiday`, `is_business_day`, `is_payday_period`. |
 
 ### Intermediate tables
 
@@ -136,7 +184,7 @@ Eight tables in the `staging` dataset:
 |---|---|---|
 | `int_payments__transaction_enriched` | 997,600 | Joins transactions to `merchants_scd` on SCD2 date range |
 | `int_payments__merchant_daily_gpv` | 15,600 | Daily GPV per merchant |
-| `int_payments__merchant_gpv_rolling` | 15,600 | 30d and 60d rolling GPV windows (table, not materialized view: see [Design decisions](design-decisions.md)) |
+| `int_payments__merchant_gpv_rolling` | 15,600 | 30d and 60d rolling GPV windows |
 | `int_lending__loan_daily_snapshot` | 5,800 | Date spine per loan via `GENERATE_DATE_ARRAY` |
 | `int_lending__loan_fee_schedule` | 156 | Monthly fee amortisation per loan |
 | `int_lending__portfolio_par` | ephemeral | PAR30/60/90 rates and balances |
@@ -145,7 +193,7 @@ Eight tables in the `staging` dataset:
 
 ### Mart fact tables
 
-Eleven incremental tables in the `marts` dataset. All use `insert_overwrite` or `merge` incremental strategies with explicit lookback windows. `dbt run --full-refresh` rebuilds from scratch; used in the Airflow DAG.
+Eleven incremental tables in the `marts` dataset. All use `insert_overwrite` or `merge` strategies with explicit lookback windows. `dbt run --full-refresh` rebuilds from scratch; used in the Airflow DAG.
 
 | Table | Rows (1,000-merchant) | Grain | Key metrics |
 |---|---|---|---|
@@ -165,9 +213,10 @@ Row counts from the 1,000-merchant run (session 38, 2026-11-07).
 
 ### Seeds
 
-Two CSV seeds in `dbt/seeds/`:
-- `sa_public_holidays.csv`: 26 South African public holidays for 2025-2026, used in `dim_date`.
-- `provision_rates.csv`: CALC-5 loan loss provision rates by PAR bucket (current 2%, 1-30 10%, 31-60 30%, 61-90 60%, 90+ 100%), used in `fct_loan_unit_economics`.
+| File | Used in | Contents |
+|---|---|---|
+| `sa_public_holidays.csv` | `dim_date` | 26 SA public holidays for 2025-2026 |
+| `provision_rates.csv` | `fct_loan_unit_economics` | Loan loss provision rates by PAR bucket |
 
 ---
 

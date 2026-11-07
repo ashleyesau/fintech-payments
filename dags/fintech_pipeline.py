@@ -78,7 +78,7 @@ with DAG(
 
     dbt_marts = BashOperator(
         task_id="dbt_marts",
-        bash_command=f"cd {REPO}/dbt && {VENV}/dbt deps && {VENV}/dbt run",
+        bash_command=f"cd {REPO}/dbt && {VENV}/dbt deps && {VENV}/dbt run --full-refresh",
         env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_ADC},
         append_env=True,
     )

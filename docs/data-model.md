@@ -151,7 +151,7 @@ Eleven incremental tables in the `marts` dataset. All use `insert_overwrite` or 
 |---|---|---|---|
 | `fct_payments_daily` | 161,500 | merchant + txn_date | gross_gpv, net_gpv, take_rate |
 | `fct_settlement_daily` | 396,100 | merchant + settlement_date + batch_id + channel | gross_gpv, net_payout, acquirer_revenue |
-| `fct_revenue_daily` | - | revenue_date + revenue_stream + merchant | card_acquiring UNION loan_fees |
+| `fct_revenue_daily` | 158,975 | revenue_date + revenue_stream + merchant | card_acquiring UNION loan_fees |
 | `fct_merchant_health_daily` | 161,500 | merchant + snapshot_date | risk_score, is_flagged, is_gpv_declining |
 | `fct_loan_portfolio_daily` | 601 | snapshot_date | PAR30/60/90 rates and balances |
 | `fct_loan_applications_daily` | 37 | event_date + decision + channel | approval rate, disbursement rate |

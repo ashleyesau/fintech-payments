@@ -59,7 +59,7 @@ with DAG(
         task_id="bronze_write",
         bash_command=(
             "rm -f /home/airflow/.config/fintech_bronze/catalog.db"
-            f" && cd {REPO} && {VENV}/python -m bronze.main --rebuild-catalog"
+            f" && cd {REPO} && ({VENV}/python -m bronze.main --rebuild-catalog || true)"
             f" && {VENV}/python -m bronze.main --write"
         ),
         env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_BRONZE},

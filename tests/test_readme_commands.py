@@ -1,8 +1,8 @@
-"""tests/test_readme_commands.py: the README table "Commands and their optional flags" cannot rot.
+"""tests/test_readme_commands.py: the commands table "Commands and their optional flags" cannot rot.
 
 Why it exists (Ashley, 2026-10-30): a flag that is not written down is forgotten. The test reads every command and every
-flag out of the code, with `ast` and no imports (so no Google, Postgres or click is needed to run it), and the README
-table out of its section, and fails when they disagree:
+flag out of the code, with `ast` and no imports (so no Google, Postgres or click is needed to run it), and the
+docs/runbook.md table out of its section, and fails when they disagree:
 
   * a command (a module under cdc/, bronze/, simulator/ or scripts/ with an `if __name__ == "__main__"` guard, or a `__main__.py`) has no row;
   * a row names a command that does not exist;
@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
+COMMANDS_DOC = ROOT / "docs" / "runbook.md"
 COMMAND_FOLDERS = ("cdc", "bronze", "simulator", "scripts")
 SECTION = "## Commands and their optional flags"
 FLAG = re.compile(r"--[a-z0-9][a-z0-9-]*")
@@ -140,8 +141,8 @@ def problems_between(root: Path, readme: str) -> list[str]:
 # ---- the real repo -----------------------------------------------------------------------------------------------
 
 def test_every_command_and_flag_in_the_code_is_in_the_readme_table_and_nothing_else():
-    problems = problems_between(ROOT, (ROOT / "README.md").read_text(encoding="utf-8"))
-    assert problems == [], "README table and code disagree:\n" + "\n".join(problems)
+    problems = problems_between(ROOT, COMMANDS_DOC.read_text(encoding="utf-8"))
+    assert problems == [], "commands table and code disagree:\n" + "\n".join(problems)
 
 
 def test_the_scanner_sees_the_real_flags():
@@ -158,7 +159,7 @@ def test_the_scanner_sees_the_real_flags():
 
 
 def test_the_readme_table_parses_to_one_row_per_command():
-    rows, problems = readme_rows((ROOT / "README.md").read_text(encoding="utf-8"))
+    rows, problems = readme_rows(COMMANDS_DOC.read_text(encoding="utf-8"))
     commands, _ = code_commands(ROOT)
     assert problems == []
     assert set(rows) == set(commands)

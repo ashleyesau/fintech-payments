@@ -22,60 +22,34 @@ python -m simulator.main --mode backfill --start-date 2025-01-01 --end-date 2026
 
 ---
 
-## Commands reference
+## Commands and their optional flags
 
 Run all commands from the repo root with the venv active. `python -m ...` commands are the project's own. `scripts/...` tools run as `PYTHONPATH=. python scripts/NAME.py`. Google-facing commands read credentials from `GOOGLE_APPLICATION_CREDENTIALS`.
 
-A test (`tests/test_readme_commands.py`) fails if any flag in the code is missing from this table, or if a flag listed here is not in the code.
+A test (`tests/test_readme_commands.py`) fails if any flag in the code is missing from this table, or if a flag listed here is not in the code. Every command also answers `--help`.
 
-### Generator
-
-| Command | Default behaviour | Key flags |
-|---|---|---|
-| `python -m simulator.main` | Requires `--mode` | `--mode` (backfill or stream), `--start-date`, `--end-date`, `--merchant-count`, `--seed`, `--checkpoint`, `--resume`, `--speed-factor`, `--duration-days` |
-| `python -m simulator.validation` | Runs all checks in `validate.sql` against `POSTGRES_DB` | `--only TEXT` (repeatable, filters by check name), `--dsn` |
-
-**simulator.main flag notes:**
-- `--merchant-count` is merchants onboarded, not active
-- `--end-date` is exclusive; backfill only
-- `--duration-days` and `--speed-factor` are stream only
-- `--resume` reads start date, count and seed from the checkpoint; refused if run flags changed
-- A fresh run refuses a non-empty `merchants` table or an existing checkpoint
-
-### CDC consumer
-
-| Command | Default behaviour | Key flags |
-|---|---|---|
-| `python -m cdc.main` | Requires exactly one of `--once` or `--follow` | `--once` (drain and exit), `--follow` (drain then poll every `CDC_POLL_INTERVAL_SECONDS`) |
-| `python -m cdc.reconcile` | Reads every landed object and checks it against the source database | `--directory DIR` (read from local directory instead of bucket), `--workers N` |
-| `python -m cdc.lag` | Prints one slot report | `--watch N` (prints one line every N seconds) |
-| `python -m cdc.permissions` | Signs in as the credentials file's account and checks bucket permissions | `--landing-bucket`, `--bronze-bucket`, `--project` |
-
-**`--follow` against a stream is for short demos only.** At 3,600x speed, the consumer lands ~315 objects an hour. That exhausts the monthly 5,000 Class A GCS budget in about 16 hours.
-
-### Bronze
-
-| Command | Default behaviour | Key flags |
-|---|---|---|
-| `python -m bronze.check` | Reads every landed object, checks every event, maps to Bronze rows. **Writes nothing.** Proves events are valid; does not prove Arrow conversion. | `--roundtrip` (second pass proves Arrow conversion; ~2x the GCS cost) |
-| `python -m bronze.main` | **Plan only**: reads and checks everything, prints what a write would do. | `--write` (does the work), `--rebuild-catalog` (rebuilds lost local catalog from GCS marker; cannot combine with `--write`) |
-| `python -m bronze.verify` | **Full proof**: Bronze against landed objects and against the source database. Reads only. | `--landing-only` (**NOT full proof**; skips source comparison; only for machines with no Postgres) |
-| `python -m bronze.orphans` | **Lists only**: orphaned files in the Bronze bucket, missing files, marker/catalog agreement. | `--delete` (**deletes files permanently; soft delete is off**), `--min-age-hours N` (default 24) |
-
-### Scripts
-
-| Script | What it does |
-|---|---|
-| `scripts/register_bronze_bq.py` | Reads the newest run marker and executes `CREATE OR REPLACE EXTERNAL TABLE` for all five tables in BigQuery. Required flags: `--connection`. Optional: `--project`, `--location`, `--dry-run`. Run with your own login (ADC), not `bronze-writer`. |
-| `scripts/boosted_backfill.py` | Backfill with application propensity multiplied (default 5x) for lending checks. Flags: `--db`, `--seed`, `--merchants`, `--start-date`, `--end-date`, `--boost`, `--checkpoint`. |
-| `scripts/portfolio_check.py` | Runs 120 merchants for 540 days in memory and prints portfolio quality. Flags: `--merchants`, `--days`, `--boost`, `--seed`. |
-| `scripts/storage_request_counts.py` | Counts the month's GCS Class A and B operations from Cloud Monitoring. Run with your own login, `GOOGLE_APPLICATION_CREDENTIALS` unset. |
-| `scripts/measure_decode_speed.py` | Times the CDC decoder on a slot without consuming it. Flags: `--slot`, `--changes`, `--repeat`. |
-| `scripts/measure_upload_latency.py` | Uploads 30 objects to the landing bucket, reads 5 back and deletes them. Run with your own login (cdc-consumer cannot delete). Costs ~61 Class A. |
-| `scripts/measure_bronze_scale.py` | Runs the Bronze write over a local 11M-event landing. Requires `--work DIR`. Flags: `--transactions`, `--batch-rows`, `--sample-seconds`. |
-| `scripts/rehearse_bronze.py` | Full end-to-end sandbox rehearsal. Requires `--work`, `--database`, `--slot`. |
-| `scripts/capture_pgoutput_fixtures.py` | Rewrites `tests/fixtures/pgoutput.json` from a real slot. No flags. Run only when fixtures need to change. |
-| `scripts/cloud_crash_run.py` | Crash and recovery tests against the throwaway bucket. Requires `--work`. **Never run with `BRONZE_BUCKET=fintech_bronze`.** |
+| Command | With no flag | Optional flags | Notes |
+|---|---|---|---|
+| `python -m simulator.main` | Requires `--mode` | `--mode` (required), `--start-date`, `--end-date`, `--duration-days`, `--merchant-count`, `--seed`, `--checkpoint`, `--resume`, `--speed-factor` | `--mode backfill` or `stream`. `--merchant-count` is onboarded, not active. `--end-date` exclusive, backfill only. `--resume` reads start date, count and seed from the checkpoint. |
+| `python -m simulator.validation` | Runs all checks in `validate.sql` against `POSTGRES_DB` | `--only`, `--dsn` | `--only par` filters by check name (repeatable). `--dsn` points at another database. Reads only. |
+| `python -m cdc.main` | Requires `--once` or `--follow` | `--once`, `--follow` | `--once` drains and exits. `--follow` polls every `CDC_POLL_INTERVAL_SECONDS`. Each object is one Class A operation: `--follow` against a stream is for short demos only. |
+| `python -m cdc.reconcile` | Reads every landed object and checks it against the source database | `--directory`, `--workers` | `--directory DIR` reads from a local directory (no GCS cost). `--workers` controls parallel reads (default 8). |
+| `python -m cdc.lag` | Prints one slot report | `--watch` | `--watch N` prints one line every N seconds. Asks Postgres only; no GCS cost. |
+| `python -m cdc.permissions` | Signs in as the credentials file's account and checks bucket permissions | `--landing-bucket`, `--bronze-bucket`, `--project` | Defaults to the CDC settings. Metadata call only; writes nothing. |
+| `python -m bronze.check` | Reads every landed object, checks every event, maps to Bronze rows. Writes nothing. **Proves events are valid; does not prove Arrow conversion.** | `--roundtrip` | **`--roundtrip` also proves the Arrow conversion.** ~2x the GCS cost. |
+| `python -m bronze.main` | **Plan only**: reads and checks everything, prints what a write would do. | `--write`, `--rebuild-catalog` | **`--write` does the work.** `--rebuild-catalog` reconstructs a lost local catalog from the GCS run marker; cannot combine with `--write`. |
+| `python -m bronze.verify` | **Full proof**: Bronze against landed objects and against the source database. Reads only. | `--landing-only` | **`--landing-only` skips the source comparison and is NOT full proof.** Use only on a machine with no Postgres. |
+| `python -m bronze.orphans` | **Lists only**: orphaned files, missing files, marker/catalog agreement. | `--delete`, `--min-age-hours` | **`--delete` removes files permanently; soft delete is off.** Default `--min-age-hours` is 24. `--min-age-hours 0` deletes however young: only when nothing is writing. |
+| `scripts/register_bronze_bq.py` | Reads the newest run marker and executes `CREATE OR REPLACE EXTERNAL TABLE` for all five tables | `--connection`, `--project`, `--location`, `--dry-run` | `--connection` is required. **`--dry-run` prints DDL without executing.** Run with your own login (ADC), not `bronze-writer`. |
+| `scripts/boosted_backfill.py` | 300-merchant backfill, 2025-01-01 to 2027-01-01, application propensity x5, into `POSTGRES_DB` | `--db`, `--seed`, `--merchants`, `--start-date`, `--end-date`, `--boost`, `--checkpoint` | `--db` keeps it away from `fintech`. For lending checks, not a demo scenario. |
+| `scripts/capture_pgoutput_fixtures.py` | Captures raw pgoutput messages and rewrites `tests/fixtures/pgoutput.json` | none | Run only when fixtures need to change. Needs `wal_level=logical`. |
+| `scripts/measure_bronze_scale.py` | Requires `--work` | `--work`, `--transactions`, `--batch-rows`, `--sample-seconds` | Local warehouse and landing only; no GCS. ~80 min at the default 11M-event size. |
+| `scripts/measure_decode_speed.py` | Times the CDC decoder on the slot without consuming it | `--slot`, `--changes`, `--repeat` | Nothing is written or consumed. The slot must hold at least `--changes` messages. |
+| `scripts/measure_upload_latency.py` | Uploads 30 objects to the landing bucket, reads 5 back and deletes them | `--bucket`, `--prefix`, `--objects`, `--workers`, `--reads`, `--project` | Run with your own login (cdc-consumer cannot delete). ~61 Class A at the default. |
+| `scripts/portfolio_check.py` | Runs 120 merchants for 540 days in memory and prints portfolio quality | `--merchants`, `--days`, `--boost`, `--seed` | Takes minutes. Writes no database. |
+| `scripts/rehearse_bronze.py` | Requires `--work` | `--work`, `--database`, `--slot`, `--merchants`, `--seed` | Full end-to-end sandbox rehearsal. All three `--work`, `--database` and `--slot` must be new names. |
+| `scripts/storage_request_counts.py` | Counts the month's GCS Class A and B operations from Cloud Monitoring | `--project`, `--start`, `--first-end`, `--end`, `--planned-a` | Run with your own login, `GOOGLE_APPLICATION_CREDENTIALS` unset. Read only. **`--planned-a N`** shows headroom after N more Class A operations. |
+| `scripts/cloud_crash_run.py` | Requires `--work`; also refuses if `BRONZE_BUCKET` is `fintech_bronze` | `--work` | G4 crash tests against the throwaway bucket. **Never run with `BRONZE_BUCKET=fintech_bronze`.** |
 
 ---
 

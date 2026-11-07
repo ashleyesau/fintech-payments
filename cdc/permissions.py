@@ -115,7 +115,10 @@ def resolve_identity() -> str:
 
     credentials, _ = google.auth.default(scopes=[SCOPE])
     credentials.refresh(Request())
-    return getattr(credentials, "service_account_email", "") or ""
+    email = getattr(credentials, "service_account_email", "") or ""
+    if not email:
+        email = getattr(credentials, "target_principal", "") or ""
+    return email
 
 
 def make_client(project: str):

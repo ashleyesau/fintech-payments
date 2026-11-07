@@ -54,9 +54,12 @@ Five streams flow left to right. The CDC consumer and Bronze writer are separate
 | dbt marts rebuild (11 tables) | 65 sec |
 | fct_payments_daily | 161,500 rows |
 | fct_settlement_daily | 396,100 rows |
+| Total transactions | 8,321,600 |
+| Completed payments | 7,657,428 |
+| Gross GPV | R1,051,946,625 |
 | Test suite | 3,853 tests, 0 skips |
 
-Row counts verified on the 1,000-merchant run, session 38 (2026-11-07).
+Row counts and totals verified on the 1,000-merchant run, session 38 (2026-11-07).
 
 ---
 

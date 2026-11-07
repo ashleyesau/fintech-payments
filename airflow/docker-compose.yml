@@ -41,7 +41,7 @@ x-airflow-common: &airflow-common
     - ../dags:/opt/airflow/dags
     - ..:/opt/repo
     - ${BRONZE_WRITER_CREDS_PATH}:/opt/credentials/bronze_writer.json:ro
-    - ${ADC_CREDS_PATH}:/opt/credentials/adc.json:ro
+    - ${PIPELINE_CREDS_PATH}:/opt/credentials/pipeline_runner.json:ro
     - ${DBT_PROFILES_DIR}:/home/airflow/.dbt:ro
     - airflow_logs:/opt/airflow/logs
   depends_on:

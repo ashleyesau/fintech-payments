@@ -76,3 +76,46 @@ resource "google_bigquery_dataset_iam_member" "lightdash_reader_marts_viewer" {
   role       = "roles/bigquery.dataViewer"
   member     = google_service_account.lightdash_reader.member
 }
+
+# pipeline-runner: runs register_bronze_bq.py, dbt run and dbt test inside the Airflow DAG.
+# bigquery.jobUser allows query jobs at the project level.
+# dataEditor on bronze allows CREATE OR REPLACE EXTERNAL TABLE (register_bq step).
+# dataEditor on staging and marts allows dbt to create and update all model layers.
+resource "google_service_account" "pipeline_runner" {
+  project      = var.project
+  account_id   = "pipeline-runner"
+  display_name = "Pipeline runner (register_bq + dbt)"
+}
+
+resource "google_project_iam_member" "pipeline_runner_bq_job_user" {
+  project = var.project
+  role    = "roles/bigquery.jobUser"
+  member  = google_service_account.pipeline_runner.member
+}
+
+resource "google_bigquery_dataset_iam_member" "pipeline_runner_bronze_editor" {
+  project    = var.project
+  dataset_id = "bronze"
+  role       = "roles/bigquery.dataEditor"
+  member     = google_service_account.pipeline_runner.member
+}
+
+resource "google_bigquery_dataset_iam_member" "pipeline_runner_staging_editor" {
+  project    = var.project
+  dataset_id = "staging"
+  role       = "roles/bigquery.dataEditor"
+  member     = google_service_account.pipeline_runner.member
+}
+
+resource "google_bigquery_dataset_iam_member" "pipeline_runner_marts_editor" {
+  project    = var.project
+  dataset_id = "marts"
+  role       = "roles/bigquery.dataEditor"
+  member     = google_service_account.pipeline_runner.member
+}
+
+resource "google_service_account_iam_member" "admin_impersonates_pipeline_runner" {
+  service_account_id = google_service_account.pipeline_runner.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "user:${var.admin_user}"
+}

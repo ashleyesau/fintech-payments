@@ -6,10 +6,10 @@ The pipeline uses Apache Airflow 2.9.3 on Docker Compose with a LocalExecutor. T
 
 ## Overview
 
-The DAG `fintech_pipeline` has three tasks:
+The DAG `fintech_pipeline` has five tasks:
 
 ```
-bronze_write  >>  register_bq  >>  dbt_marts
+bronze_write >> bronze_verify >> register_bq >> dbt_marts >> dbt_test
 ```
 
 Each task is a `BashOperator`. Each depends on the previous one succeeding. If a task fails, the DAG run stops and downstream tasks do not execute.
@@ -66,7 +66,23 @@ Runs with `GOOGLE_APPLICATION_CREDENTIALS` set to the bind-mounted `bronze_write
 
 ---
 
-## Task 2: register_bq
+## Task 2: bronze_verify
+
+```bash
+python -m bronze.verify --landing-only
+```
+
+Proves every landed event maps correctly to its Bronze row and no key is held twice. Runs before `register_bq` so a corrupt Bronze write fails the pipeline before anything downstream reads it.
+
+`--landing-only` is used here because `fintech_cdc` is not accessible from inside the Airflow container network. The source comparison is not run. Run `python -m bronze.verify` manually (without the flag) for the full proof.
+
+Runs with the same `bronze_writer.json` credentials as `bronze_write`.
+
+**What can go wrong:** a contract violation in the landing (bad event shape, duplicate key) exits 2 and stops the pipeline. A bucket failure exits 3.
+
+---
+
+## Task 3: register_bq
 
 ```bash
 python scripts/register_bronze_bq.py \
@@ -85,7 +101,7 @@ Runs with the bind-mounted `adc.json` (Application Default Credentials), used fo
 
 ---
 
-## Task 3: dbt_marts
+## Task 4: dbt_marts
 
 ```bash
 cd /opt/repo/dbt && dbt deps && dbt run --full-refresh
@@ -95,9 +111,23 @@ Installs dbt packages (`dbt_utils` from dbt Hub) then rebuilds all models with `
 
 `--full-refresh` is used because the Bronze source is append-only. Without it, an incremental run after a Bronze reset would add new rows on top of rows from the previous dataset.
 
-Runs with the `adc.json` credentials.
+Runs with `pipeline_runner.json` credentials.
 
 **What can go wrong:** a dbt model compilation error or a BigQuery query failure stops the run. `dbt deps` failure (network issue reaching dbt Hub) would prevent packages from resolving, though they were already installed in the container image.
+
+---
+
+## Task 5: dbt_test
+
+```bash
+cd /opt/repo/dbt && dbt test
+```
+
+Runs all dbt schema tests across every layer: 42 staging tests, 42 intermediate tests, 27 dimension tests and 54 mart tests. A model that builds without error but returns bad data fails here.
+
+Runs with `pipeline_runner.json` credentials.
+
+**What can go wrong:** any failing assertion exits non-zero and stops the DAG run. Check the Airflow task logs for the specific test name and table.
 
 ---
 
@@ -111,13 +141,13 @@ The solution: an isolated virtualenv at `/opt/pipeline-venv`, built during the D
 
 ## Credentials and bind mounts
 
-Three paths are bind-mounted from the host into every container:
+Two paths are bind-mounted from the host into every container:
 
 | `airflow/.env` variable | Mounted at | Used by |
 |---|---|---|
-| `BRONZE_WRITER_CREDS_PATH` | `/opt/credentials/bronze_writer.json` | `bronze_write` task |
-| `ADC_CREDS_PATH` | `/opt/credentials/adc.json` | `register_bq` and `dbt_marts` tasks |
-| `DBT_PROFILES_DIR` | `/home/airflow/.dbt/` | `dbt_marts` task |
+| `BRONZE_WRITER_CREDS_PATH` | `/opt/credentials/bronze_writer.json` | `bronze_write` and `bronze_verify` tasks |
+| `PIPELINE_CREDS_PATH` | `/opt/credentials/pipeline_runner.json` | `register_bq`, `dbt_marts` and `dbt_test` tasks |
+| `DBT_PROFILES_DIR` | `/home/airflow/.dbt/` | `dbt_marts` and `dbt_test` tasks |
 
 `airflow/.env` is gitignored. Copy `airflow/.env.example` and fill in the three absolute host paths before starting the stack.
 
@@ -157,8 +187,10 @@ Each step is idempotent. A re-trigger after the problem is fixed will:
 | Task | Behaviour on re-trigger |
 |---|---|
 | `bronze_write` | Skips events already written (content-hash idempotency). Writes any new ones. |
+| `bronze_verify` | Re-reads the landing and re-checks. |
 | `register_bq` | Re-points all five external tables to the current Bronze state. |
 | `dbt_marts` | Rebuilds all 11 mart tables with `--full-refresh`. |
+| `dbt_test` | Re-runs all schema tests. |
 
 **Lightdash** requires no Airflow step. It queries BigQuery directly and picks up new mart data on the next dashboard load.
 

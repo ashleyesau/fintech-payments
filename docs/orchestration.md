@@ -125,6 +125,8 @@ cd /opt/repo/dbt && dbt test
 
 Runs all dbt schema tests across every layer: 42 staging tests, 42 intermediate tests, 27 dimension tests and 54 mart tests. A model that builds without error but returns bad data fails here.
 
+**Limitation:** `dbt_test` runs after `dbt_marts`, which means the mart tables are already built and Lightdash can read them before the tests confirm they are correct. A stricter gate would split the run: test staging, build intermediate, test intermediate, build marts, test marts. The current order catches failures before the next DAG run, not before the current one's output reaches dashboards.
+
 Runs with `pipeline_runner.json` credentials.
 
 **What can go wrong:** any failing assertion exits non-zero and stops the DAG run. Check the Airflow task logs for the specific test name and table.
@@ -141,7 +143,7 @@ The solution: an isolated virtualenv at `/opt/pipeline-venv`, built during the D
 
 ## Credentials and bind mounts
 
-Two paths are bind-mounted from the host into every container:
+Three paths are bind-mounted from the host into every container:
 
 | `airflow/.env` variable | Mounted at | Used by |
 |---|---|---|
@@ -150,6 +152,8 @@ Two paths are bind-mounted from the host into every container:
 | `DBT_PROFILES_DIR` | `/home/airflow/.dbt/` | `dbt_marts` and `dbt_test` tasks |
 
 `airflow/.env` is gitignored. Copy `airflow/.env.example` and fill in the three absolute host paths before starting the stack.
+
+**Auth note.** Both credential files use `gcloud auth application-default login --impersonate-service-account`, which stores a refresh token for your personal login that is then used to impersonate the service account. This is least-privilege but it is not unattended: the underlying personal login session must remain valid. For fully unattended operation, replace the impersonated credentials with a service account key file or Workload Identity Federation.
 
 ---
 

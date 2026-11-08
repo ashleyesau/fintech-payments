@@ -125,3 +125,13 @@ resource "google_storage_bucket_iam_member" "pipeline_runner_reads_bronze" {
   role   = "roles/storage.objectViewer"
   member = google_service_account.pipeline_runner.member
 }
+
+# bigquery.connectionUser grants bigquery.connections.delegate, which pipeline-runner
+# needs to execute CREATE OR REPLACE EXTERNAL TABLE ... WITH CONNECTION ...
+resource "google_bigquery_connection_iam_member" "pipeline_runner_connection_user" {
+  project       = var.project
+  location      = "us-east1"
+  connection_id = "fintech-bronze"
+  role          = "roles/bigquery.connectionUser"
+  member        = google_service_account.pipeline_runner.member
+}

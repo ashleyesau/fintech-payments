@@ -126,12 +126,21 @@ resource "google_storage_bucket_iam_member" "pipeline_runner_reads_bronze" {
   member = google_service_account.pipeline_runner.member
 }
 
-# bigquery.connectionUser grants bigquery.connections.delegate, which pipeline-runner
-# needs to execute CREATE OR REPLACE EXTERNAL TABLE ... WITH CONNECTION ...
-# Granted at project level because connection-level bindings do not reliably propagate
-# in time for the CREATE EXTERNAL TABLE DDL check.
-resource "google_project_iam_member" "pipeline_runner_connection_user" {
-  project = var.project
-  role    = "roles/bigquery.connectionUser"
-  member  = google_service_account.pipeline_runner.member
+# bigquery.connections.delegate is required to execute CREATE OR REPLACE EXTERNAL TABLE
+# ... WITH CONNECTION ... It is NOT included in bigquery.connectionUser. A custom role
+# scoped to the specific connection is the least-privilege solution.
+resource "google_project_iam_custom_role" "bigquery_connection_delegate" {
+  project     = var.project
+  role_id     = "bigqueryConnectionDelegate"
+  title       = "BigQuery Connection Delegate"
+  description = "Grants bigquery.connections.delegate only. Used by pipeline-runner for external table DDL."
+  permissions = ["bigquery.connections.delegate"]
+}
+
+resource "google_bigquery_connection_iam_member" "pipeline_runner_connection_delegate" {
+  project       = var.project
+  location      = "us-east1"
+  connection_id = "fintech-bronze"
+  role          = google_project_iam_custom_role.bigquery_connection_delegate.id
+  member        = google_service_account.pipeline_runner.member
 }

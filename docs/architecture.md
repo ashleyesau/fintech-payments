@@ -21,7 +21,7 @@ Lightdash Cloud
   |-- queries BigQuery directly
 ```
 
-Airflow (DAG `fintech_pipeline`) runs the last three steps in sequence: `bronze_write >> register_bq >> dbt_marts`. The generator and CDC consumer run independently before Airflow is triggered.
+Airflow (DAG `fintech_pipeline`) runs the last five steps in sequence: `bronze_write >> bronze_verify >> register_bq >> dbt_marts >> dbt_test`. The generator and CDC consumer run independently before Airflow is triggered.
 
 ---
 
@@ -139,10 +139,10 @@ Eight dashboards: GPV Overview, Portfolio Quality, Settlement Reconciliation, Re
 
 Airflow 2.9.3 on Docker Compose with LocalExecutor. Three services: a Postgres container for Airflow metadata, the webserver, and the scheduler.
 
-The DAG `fintech_pipeline` runs three tasks in sequence:
+The DAG `fintech_pipeline` runs five tasks in sequence:
 
 ```
-bronze_write >> register_bq >> dbt_marts
+bronze_write >> bronze_verify >> register_bq >> dbt_marts >> dbt_test
 ```
 
 Each task is a `BashOperator` running inside an isolated Python virtualenv (`/opt/pipeline-venv`). This isolates the pipeline from a SQLAlchemy version conflict between Airflow (1.4.x) and PyIceberg (requires 2.x). Credential files are bind-mounted into the container at paths set in `airflow/.env`.

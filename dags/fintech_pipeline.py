@@ -29,9 +29,10 @@ dbt_marts
     runs first so dbt_utils is present on a fresh container. Runs as pipeline-runner.
 
 dbt_test
-    dbt test
+    dbt deps && dbt test
     Runs all dbt schema tests across every layer. A model that builds without error
-    but returns bad data fails here. Runs as pipeline-runner.
+    but returns bad data fails here. dbt deps runs first so packages are present even
+    if this task is re-run standalone after a container restart. Runs as pipeline-runner.
 
 Lightdash
     No step needed. Lightdash queries BigQuery directly and picks up the new mart data
@@ -111,7 +112,7 @@ with DAG(
 
     dbt_test = BashOperator(
         task_id="dbt_test",
-        bash_command=f"cd {REPO}/dbt && {VENV}/dbt test",
+        bash_command=f"cd {REPO}/dbt && {VENV}/dbt deps && {VENV}/dbt test",
         env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_PIPELINE},
         append_env=True,
     )

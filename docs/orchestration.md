@@ -95,7 +95,7 @@ Reads the newest run marker from `gs://fintech_bronze/_runs/`. Extracts the Iceb
 
 This step is required after every Bronze write. BigQuery external Iceberg tables point at a specific metadata file. They are not updated automatically when the Iceberg table changes. Without this step, dbt reads the previous Bronze snapshot.
 
-Runs with the bind-mounted `adc.json` (Application Default Credentials), used for BigQuery operations that `bronze-writer` cannot perform.
+Runs with the bind-mounted `pipeline_runner.json` credentials.
 
 **What can go wrong:** a BigQuery metadata API failure on one table leaves the others registered and that table pointing at the old snapshot. The task exits non-zero and `dbt_marts` does not run.
 
@@ -135,7 +135,7 @@ Runs with `pipeline_runner.json` credentials.
 
 Airflow 2.9.3 uses SQLAlchemy 1.4.x. PyIceberg 0.12.0 requires SQLAlchemy 2.x. These two cannot coexist in the same Python environment.
 
-The solution: an isolated virtualenv at `/opt/pipeline-venv`, built during the Docker image build from `airflow/requirements-pipeline.txt`. It contains PyIceberg, PyArrow, and dbt-bigquery, independent of Airflow's base packages. All three tasks call `${VENV}/python` and `${VENV}/dbt` directly, where `VENV=/opt/pipeline-venv/bin`.
+The solution: an isolated virtualenv at `/opt/pipeline-venv`, built during the Docker image build from `airflow/requirements-pipeline.txt`. It contains PyIceberg, PyArrow, and dbt-bigquery, independent of Airflow's base packages. All five tasks call `${VENV}/python` and `${VENV}/dbt` directly, where `VENV=/opt/pipeline-venv/bin`.
 
 ---
 

@@ -37,7 +37,7 @@ flowchart LR
     bq --> dbt["dbt\nstaging / intermediate / marts"]
     dbt -->|11 mart tables| bq_marts[("BigQuery\nmarts.*")]
     bq_marts --> lightdash["Lightdash Cloud\n8 dashboards"]
-    airflow["Airflow 2.9.3\nfintech_pipeline"] -.->|bronze_write >> register_bq >> dbt_marts| gcs_land
+    airflow["Airflow 2.9.3\nfintech_pipeline"] -.->|bronze_write >> ... >> dbt_test| gcs_land
 ```
 
 Five streams flow left to right. The CDC consumer and Bronze writer are separate processes; Airflow joins them on a manual trigger (schedule disabled by default). The generator runs independently to load new data.

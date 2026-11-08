@@ -69,16 +69,16 @@ Runs with `GOOGLE_APPLICATION_CREDENTIALS` set to the bind-mounted `bronze_write
 ## Task 2: bronze_verify
 
 ```bash
-python -m bronze.verify --landing-only
+python -m bronze.check
 ```
 
-Proves every landed event maps correctly to its Bronze row and no key is held twice. Runs before `register_bq` so a corrupt Bronze write fails the pipeline before anything downstream reads it.
+Reads every landed object, validates every event against the change-event contract, and proves each one maps correctly to its Bronze row. Writes nothing. Never reads the Bronze tables, so it stays within container memory limits at any dataset size.
 
-`--landing-only` is used here because `fintech_cdc` is not accessible from inside the Airflow container network. The source comparison is not run. Run `python -m bronze.verify` manually (without the flag) for the full proof.
+`bronze.verify` (run manually outside the DAG) performs the full digest comparison between Bronze and the landing. That is not done here because PyIceberg loads the full Bronze tables into memory: at 8.3M rows in `merchant_transactions` alone, the process is killed by the OS before it finishes inside a container.
 
-Runs with the same `bronze_writer.json` credentials as `bronze_write`.
+Runs with `bronze_writer.json` credentials.
 
-**What can go wrong:** a contract violation in the landing (bad event shape, duplicate key) exits 2 and stops the pipeline. A bucket failure exits 3.
+**What can go wrong:** a contract violation in a landing event (bad shape, unmappable value) exits 2 and stops the pipeline. A bucket failure exits 3.
 
 ---
 

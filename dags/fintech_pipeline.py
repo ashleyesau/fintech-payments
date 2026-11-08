@@ -10,11 +10,12 @@ bronze_write
     Iceberg tables in gs://fintech_bronze. Runs as the bronze-writer service account.
 
 bronze_verify
-    python -m bronze.verify --landing-only
-    Proves every landed event maps to a valid Bronze row and no key is held twice.
-    --landing-only is used because fintech_cdc is not accessible from inside the
-    Airflow container network. Run python -m bronze.verify (without the flag) manually
-    for the full source comparison. Runs as the bronze-writer service account.
+    python -m bronze.check
+    Reads every landed object, validates every event against the change-event contract
+    and proves each one maps correctly to its Bronze row. Writes nothing and never reads
+    the Bronze tables, so it stays within container memory limits at any dataset size.
+    bronze.verify (run manually outside the DAG) performs the full digest comparison
+    between Bronze and the landing. Runs as the bronze-writer service account.
 
 register_bq
     python scripts/register_bronze_bq.py --project ... --location ... --connection ...
@@ -86,7 +87,7 @@ with DAG(
 
     bronze_verify = BashOperator(
         task_id="bronze_verify",
-        bash_command=f"cd {REPO} && {VENV}/python -m bronze.verify --landing-only",
+        bash_command=f"cd {REPO} && {VENV}/python -m bronze.check",
         env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_BRONZE},
         append_env=True,
     )

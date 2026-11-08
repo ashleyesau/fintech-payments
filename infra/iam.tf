@@ -119,3 +119,9 @@ resource "google_service_account_iam_member" "admin_impersonates_pipeline_runner
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "user:${var.admin_user}"
 }
+
+resource "google_storage_bucket_iam_member" "pipeline_runner_reads_bronze" {
+  bucket = google_storage_bucket.fintech_bronze.name
+  role   = "roles/storage.objectViewer"
+  member = google_service_account.pipeline_runner.member
+}

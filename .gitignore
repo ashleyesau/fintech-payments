@@ -24,3 +24,4 @@ crash.log
 
 # Lightdash
 dbt/lightdash/.lightdash-metadata.json
+logs/

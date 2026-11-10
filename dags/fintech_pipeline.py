@@ -48,7 +48,7 @@ Pipeline virtualenv: /opt/pipeline-venv
 
 Credentials:
     bronze_write and bronze_verify use bronze_writer.json (bronze-writer service account).
-    register_bq, dbt_marts and dbt_test use pipeline_runner.json (pipeline-runner service
+    register_bq, check_bq_schema and the dbt_build_* tasks use pipeline_runner.json (pipeline-runner service
     account). Create that account via Terraform (infra/iam.tf) and set PIPELINE_CREDS_PATH
     in airflow/.env. Until it is set up, PIPELINE_CREDS_PATH can point to your ADC file
     as a temporary fallback.

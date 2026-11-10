@@ -4,6 +4,8 @@ The pipeline runs on GCP's Always Free tier for GCS: 5 GB storage, 5,000 Class A
 
 All GCS figures come from Google Cloud Monitoring billing estimates and `scripts/storage_request_counts.py`.
 
+BigQuery costs for the dbt layers come from dbt run results and BigQuery job statistics. They are summarised in [BigQuery cost (dbt layers)](#bigquery-cost-dbt-layers) below and measured in full in the [warehouse cost study](warehouse-cost-study.md). The BigQuery free tier is 1 TiB of queries and 10 GiB of storage per month.
+
 - **Class A**: writes, listings, object creates
 - **Class B**: reads
 
@@ -33,13 +35,13 @@ The partition-by-month design keeps the Class A count low. Without it, a per-day
 
 A no-op write (all events already in Bronze) costs about 2,610 Class B plus one `_runs/` listing.
 
+On 10 November 2026 a failed and a passing `bronze_write` attempt together raised the month's Class B count by about 3,600, which is consistent with that figure for the passing run.
+
 ### `bronze.verify` (full proof)
 
 Each run:
 - **~1 Class A** (the `_runs/` listing)
-- **~908 Class B** (one read per landed object, plus Bronze metadata reads)
-
-The 1,000-merchant run with ~2,610 objects costs roughly 2,610 Class B.
+- **One Class B per landed object, plus Bronze metadata reads.** The 1,000-merchant landing has 2,610 objects, so a run costs roughly 2,610 Class B. A smaller earlier run with 908 landed objects cost about 908.
 
 ### `register_bronze_bq.py`
 
@@ -52,6 +54,14 @@ By the end of the GCS phase (G0 to G5), the October billing month had used:
 - **~19,558 Class B** (39.1% of 50,000)
 
 This covered the G0 BigQuery compatibility probe, all check and verify runs, the full Bronze write, four verify runs, two crash-test bucket operations, and several measurement scripts.
+
+### Month totals (November 2026, to the 10th)
+
+By the 10th of November, before the first end-to-end Airflow run, the month had used:
+- **~3,350 to 3,560 Class A** (67% to 71% of 5,000)
+- **~32,300 to 35,700 Class B** (65% to 72% of 50,000)
+
+`cdc_landing` is the largest source (about 23,000 Class B, almost all object reads). The script's cumulative counts shifted slightly between runs, so these are ranges. They are request counts, not invoice amounts.
 
 ---
 
@@ -79,18 +89,59 @@ The 1,000-merchant run consumed 8.95 million changes in two runs (a WiFi interru
 
 | Run | Events | Objects read | Duration |
 |---|---|---|---|
-| 1,000-merchant run | 8,537,090 | 2,610 | 124 min (Airflow bronze_write task) |
-| 1,000-merchant run | 8.5M | 2,610 | 124 min (full write, fresh bucket) |
+| 1,000-merchant run, fresh bucket (Airflow `bronze_write` task) | 8,537,090 | 2,610 | 124 min |
+| Same Bronze, nothing to append (Airflow, 10 November 2026) | 0 new | about 2,610 (one pass) | about 40 min |
+| Local scaling run (warehouse cost study, section 8) | 1.1M | not recorded | 6.2 min |
+| Local scaling run | 3.3M | not recorded | 18.5 min |
+| Local scaling run | 11.0M | not recorded | 55.8 min |
 
-Bronze was reset before this run. A write that appends only new events on top of an existing Bronze table would be proportionally shorter.
+Bronze was reset before the 124-minute run. A rerun that appends nothing is not free: it still reads every landed object. In Airflow it took about 40 minutes, about a third of the fresh write. The local scaling runs found 47% to 53%.
 
-### Airflow DAG (1,000-merchant run)
+The 124-minute run (about 1,150 events per second) and the local 11.0M-event run (about 3,300 events per second) have not been reconciled. They differ in run, environment (Airflow in Docker against the host) and size.
+
+### Airflow DAG
+
+Before 10 November 2026 (1,000-merchant run, one `dbt_marts` task running `dbt run --full-refresh`; the separate `dbt_test` step was not timed):
 
 | Task | Duration |
 |---|---|
 | `bronze_write` | 124 min |
 | `register_bq` | 23 sec |
 | `dbt_marts` | 65 sec |
+
+After the DAG became a layered, test-gated build. Each task was run on its own with `airflow tasks test` on 10 November 2026. Durations come from task-log timestamps and are approximate:
+
+| Task | Duration |
+|---|---|
+| `bronze_write` | about 40 min (nothing to append) |
+| `register_bq` | 19 sec |
+| `check_bq_schema` | about 11 sec |
+| `dbt_build_staging` | about 87 sec (5 views, 42 tests) |
+| `dbt_build_dimensions` | about 50 sec (3 tables, 29 tests) |
+| `dbt_build_intermediate` | about 56 sec (2 incremental models, 4 tables, 43 tests) |
+| `dbt_build_marts` | about 70 sec (11 incremental models, 54 tests) |
+| `bronze_verify` | not yet measured |
+
+The four dbt layers total about 4.4 minutes. That includes about 168 data tests and a `dbt deps` per task, so it is not comparable with the 65 seconds for `dbt run --full-refresh` alone.
+
+---
+
+## BigQuery cost (dbt layers)
+
+Measured on synthetic data at 1,000 merchants (8.3M transactions). Bytes billed is the cost metric; BigQuery bills at least 10 MiB per table queried. The full method, estimates and limitations are in the [warehouse cost study](warehouse-cost-study.md). Every figure is a single run.
+
+- A full rebuild of the 25-model graph billed 5.115 GB (38.2 s wall clock). Four models account for 94% of it.
+- The two large intermediates and two large marts were then made incremental, partitioned and bounded by a literal date. Output was checked identical against copies of the old tables.
+
+| Model | Full refresh (before) | Steady-state incremental | Recovery of 30 deleted days |
+|---|--:|--:|--:|
+| `int_payments__transaction_enriched` | 2,533 MB | 453 MB (-82%) | 1,253 MB (-51%) |
+| `int_payments__merchant_daily_gpv` | 840 MB | 73 MB (-91%) | 188 MB (-78%) |
+| `fct_settlement_daily` | 991 MB | not attributed | 223 MB (-77%) |
+| `fct_revenue_daily` | 459 MB | not attributed | 105 MB (-77%) |
+
+- A whole run of the four dbt layers in Airflow, models and tests together, billed 4.379 GB across 200 jobs, about 0.4% of the monthly free allowance. A model-only estimate is about 1.2 GB. The rest is probably the roughly 168 data tests, each of which bills at least 10 MiB, but the split has not been measured.
+- The enriched model cost about three times its dry-run estimate. The cause has not been investigated.
 
 ---
 
@@ -129,6 +180,10 @@ SQLAlchemy 1.4.x (Airflow) and SQLAlchemy 2.x (PyIceberg) cannot coexist. Rather
 
 The initial cap of 3 GB was too small. The 1,000-merchant backfill produced roughly 11 GB of WAL and invalidated slot `cdc_r02` mid-run. The cap was raised to 16 GB (commit `6c50189`). At 750 bytes per row, 16 GB is roughly 21 million rows of headroom.
 
+### Incremental intermediates with literal date bounds
+
+`int_payments__transaction_enriched` and `int_payments__merchant_daily_gpv` are incremental, partitioned by `event_date`, with a 9-day lookback (a 6-day maximum settlement lag plus the 3-day mart lookback). The cutoff is a literal date, computed with `run_query` on the target table, because BigQuery prunes partitions for a literal bound but not for a `MAX(...)` subquery. It is not based on the current date, because the synthetic event dates are 311 to 673 days old. The lag bound is a synthetic-data figure; dbt tests assert it (see the study, section 7.5).
+
 ---
 
 ## Free tier headroom
@@ -137,6 +192,10 @@ The billing cycle was not exhausted in any month where careful operation was mai
 
 The key constraint is Class A operations, dominated by the CDC consumer in `--follow` mode. The main rule: use `--once` for a production backfill. Reserve `--follow` for short streaming demos only.
 
+In November the constraint to watch is Class B. `bronze_write` and `bronze_verify` each read every landed object, about 2,610 reads apiece, so one full DAG run costs roughly 5,000 Class B (an estimate). With the month already at about 72% of Class B by the 10th, that leaves room for only a few more full runs.
+
+BigQuery has plenty of room: about 0.09 TiB of the 1 TiB allowance was used by the 10th of November, and one run of the dbt layers bills about 4.4 GB.
+
 ---
 
-*For the DAG that runs these steps, see [Orchestration](orchestration.md). For the data layout that determines how many files are written, see [Data model](data-model.md).*
+*For the DAG that runs these steps, see [Orchestration](orchestration.md). For the data layout that determines how many files are written, see [Data model](data-model.md). For the BigQuery measurements, see the [warehouse cost study](warehouse-cost-study.md).*

@@ -37,7 +37,7 @@ flowchart LR
     bq --> dbt["dbt\nstaging / intermediate / marts"]
     dbt -->|11 mart tables| bq_marts[("BigQuery\nmarts.*")]
     bq_marts --> lightdash["Lightdash Cloud\n8 dashboards"]
-    airflow["Airflow 2.9.3\nfintech_pipeline"] -.->|bronze_write >> ... >> dbt_test| gcs_land
+    airflow["Airflow 2.9.3\nfintech_pipeline"] -.->|bronze_write >> ... >> dbt_build_marts| gcs_land
 ```
 
 Five streams flow left to right. The CDC consumer and Bronze writer are separate processes; Airflow joins them on a manual trigger (schedule disabled by default). The generator runs independently to load new data.
@@ -134,7 +134,8 @@ The full operational runbook, including CDC setup, Bronze write, BigQuery regist
 - [Architecture](docs/architecture.md): components and data flow
 - [Data model](docs/data-model.md): schemas, layers, key tables, lineage
 - [Orchestration](docs/orchestration.md): DAG design, scheduling, failure handling
-- [Cost and performance](docs/cost-and-performance.md): GCS operations, timing, optimisations
+- [Cost and performance](docs/cost-and-performance.md): GCS operations, timing, optimisations, BigQuery cost
+- [Warehouse cost study](docs/warehouse-cost-study.md): measured BigQuery cost of the dbt layers and the changes made to cut it
 - [Design decisions](docs/design-decisions.md): trade-offs and what went wrong first
 
 ---

@@ -117,7 +117,7 @@ with DAG(
             task_id=f"dbt_build_{layer}",
             bash_command=(
                 f"cd {REPO}/dbt && {VENV}/dbt deps"
-                f" && {VENV}/dbt build --select path:models/{layer} {FULL_REFRESH}"
+                f" && {VENV}/dbt build --select path:models/{layer} --exclude tag:periodic {FULL_REFRESH}"
             ),
             env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_PIPELINE},
             append_env=True,

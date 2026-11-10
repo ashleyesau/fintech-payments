@@ -2,7 +2,8 @@
 fintech_pipeline: orchestrates the full fintech data pipeline end to end.
 
 Task order:
-    bronze_write >> bronze_verify >> register_bq >> dbt_marts >> dbt_test
+    bronze_write >> bronze_verify >> register_bq >> dbt_build_staging
+        >> dbt_build_dimensions >> dbt_build_intermediate >> dbt_build_marts
 
 bronze_write
     python -m bronze.main --write
@@ -22,17 +23,13 @@ register_bq
     Re-points the five BigQuery external Iceberg tables at the metadata file written
     by bronze_write. Runs as the pipeline-runner service account.
 
-dbt_marts
-    dbt deps && dbt run --full-refresh
-    Rebuilds all dbt models from scratch (staging, dimensions, intermediate, marts).
-    --full-refresh is used so no layer is ever stale after a Bronze write. dbt deps
-    runs first so dbt_utils is present on a fresh container. Runs as pipeline-runner.
-
-dbt_test
-    dbt deps && dbt test
-    Runs all dbt schema tests across every layer. A model that builds without error
-    but returns bad data fails here. dbt deps runs first so packages are present even
-    if this task is re-run standalone after a container restart. Runs as pipeline-runner.
+dbt_build_staging, dbt_build_dimensions, dbt_build_intermediate, dbt_build_marts
+    dbt deps && dbt build --select path:models/<layer>
+    Builds one layer at a time. dbt build runs each model and its tests together, so a
+    failing test stops every layer after it. --full-refresh is NOT passed by default.
+    Trigger the DAG with the full_refresh param set to true for a controlled rebuild.
+    dbt deps runs first so packages are present on a fresh container. Runs as
+    pipeline-runner.
 
 Lightdash
     No step needed. Lightdash queries BigQuery directly and picks up the new mart data
@@ -55,9 +52,10 @@ unpause from the UI or:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from airflow import DAG
+from airflow.models.param import Param
 from airflow.operators.bash import BashOperator
 
 REPO = "/opt/repo"
@@ -73,10 +71,19 @@ with DAG(
     catchup=False,
     tags=["fintech", "bronze", "dbt"],
     doc_md=__doc__,
+    default_args={"retries": 2, "retry_delay": timedelta(minutes=5)},
+    params={
+        "full_refresh": Param(
+            False,
+            type="boolean",
+            description="Controlled rebuild only. Passes --full-refresh to every dbt layer.",
+        )
+    },
 ) as dag:
 
     bronze_write = BashOperator(
         task_id="bronze_write",
+        retries=0,
         bash_command=(
             "rm -f /home/airflow/.config/fintech_bronze/catalog.db"
             f" && cd {REPO} && ({VENV}/python -m bronze.main --rebuild-catalog || true)"
@@ -103,18 +110,30 @@ with DAG(
         append_env=True,
     )
 
-    dbt_marts = BashOperator(
-        task_id="dbt_marts",
-        bash_command=f"cd {REPO}/dbt && {VENV}/dbt deps && {VENV}/dbt run --full-refresh",
-        env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_PIPELINE},
-        append_env=True,
-    )
+    FULL_REFRESH = "{{ '--full-refresh' if params.full_refresh else '' }}"
 
-    dbt_test = BashOperator(
-        task_id="dbt_test",
-        bash_command=f"cd {REPO}/dbt && {VENV}/dbt deps && {VENV}/dbt test",
-        env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_PIPELINE},
-        append_env=True,
-    )
+    def dbt_layer(layer: str) -> BashOperator:
+        return BashOperator(
+            task_id=f"dbt_build_{layer}",
+            bash_command=(
+                f"cd {REPO}/dbt && {VENV}/dbt deps"
+                f" && {VENV}/dbt build --select path:models/{layer} {FULL_REFRESH}"
+            ),
+            env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_PIPELINE},
+            append_env=True,
+        )
 
-    bronze_write >> bronze_verify >> register_bq >> dbt_marts >> dbt_test
+    build_staging = dbt_layer("staging")
+    build_dimensions = dbt_layer("dimensions")
+    build_intermediate = dbt_layer("intermediate")
+    build_marts = dbt_layer("marts")
+
+    (
+        bronze_write
+        >> bronze_verify
+        >> register_bq
+        >> build_staging
+        >> build_dimensions
+        >> build_intermediate
+        >> build_marts
+    )

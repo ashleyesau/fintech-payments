@@ -104,6 +104,10 @@ jobs:
         working-directory: dbt
         run: dbt deps
 
+      - name: dbt parse
+        working-directory: dbt
+        run: dbt parse
+
   # Checks the Terraform in infra/ without touching Google Cloud: formatting, a provider install from the
   # committed lock file (which must already hold hashes for this runner, or init fails), and validate.
   # No credentials, no backend and no plan: a plan needs the state bucket, and an apply never runs in CI.

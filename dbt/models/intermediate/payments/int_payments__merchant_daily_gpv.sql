@@ -1,5 +1,9 @@
 {{
-    config(materialized='table')
+    config(
+        materialized='incremental',
+        partition_by={'field': 'txn_date', 'data_type': 'date'},
+        incremental_strategy='insert_overwrite'
+    )
 }}
 
 -- Daily per-merchant aggregation of payment volume and fees.
@@ -66,4 +70,8 @@ SELECT
     )                                                                   AS total_fee_minor
 
 FROM {{ ref('stg_merchant_transactions') }}
+{% if is_incremental() %}
+-- 9 days = 6-day maximum settlement lag + 3-day mart lookback
+WHERE event_date >= {{ incremental_cutoff(this, 'txn_date', 9) }}
+{% endif %}
 GROUP BY merchant_id, event_date

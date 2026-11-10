@@ -12,6 +12,24 @@
 --   'loan_fees'      -- posts on the first day of each fee month; amount = straight-line fee.
 -- The two streams are independent: a merchant can have both on the same date.
 
+{% if is_incremental() %}
+{% set cutoff_sql %}
+    SELECT DATE_SUB(
+        LEAST(
+            COALESCE(MAX(IF(revenue_stream = 'card_acquiring', revenue_date, NULL)), DATE '1970-01-01'),
+            COALESCE(MAX(IF(revenue_stream = 'loan_fees', revenue_date, NULL)), DATE '1970-01-01')
+        ),
+        INTERVAL 3 DAY
+    )
+    FROM {{ this }}
+{% endset %}
+{% if execute %}
+{% set cutoff = "DATE '" ~ run_query(cutoff_sql).columns[0].values()[0] ~ "'" %}
+{% else %}
+{% set cutoff = "DATE '1970-01-01'" %}
+{% endif %}
+{% endif %}
+
 WITH card_revenue AS (
     SELECT
         merchant_id,
@@ -20,6 +38,9 @@ WITH card_revenue AS (
         SUM(acquirer_markup_minor)                                  AS revenue_minor
     FROM {{ ref('int_payments__transaction_enriched') }}
     WHERE is_gpv
+    {% if is_incremental() %}
+    AND event_date >= {{ cutoff }}
+    {% endif %}
     GROUP BY merchant_id, event_date
 ),
 
@@ -43,7 +64,5 @@ combined AS (
 SELECT * FROM combined
 
 {% if is_incremental() %}
-WHERE revenue_date >= (
-    SELECT DATE_SUB(MAX(revenue_date), INTERVAL 3 DAY) FROM {{ this }}
-)
+WHERE revenue_date >= {{ cutoff }}
 {% endif %}

@@ -44,9 +44,9 @@ FROM {{ ref('int_payments__transaction_enriched') }}
 WHERE settlement_date IS NOT NULL
 
 {% if is_incremental() %}
-AND settlement_date >= (
-    SELECT DATE_SUB(MAX(settlement_date), INTERVAL 3 DAY) FROM {{ this }}
-)
+-- event_date bound prunes the partitioned intermediate: 9 = 6-day max settlement lag + 3-day lookback
+AND event_date >= {{ incremental_cutoff(this, 'settlement_date', 9) }}
+AND settlement_date >= {{ incremental_cutoff(this, 'settlement_date', 3) }}
 {% endif %}
 
 GROUP BY merchant_id, settlement_date, batch_id, channel

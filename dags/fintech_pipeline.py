@@ -2,7 +2,8 @@
 fintech_pipeline: orchestrates the full fintech data pipeline end to end.
 
 Task order:
-    bronze_write >> bronze_verify >> register_bq >> dbt_build_staging
+    bronze_write >> bronze_verify >> register_bq >> check_bq_schema
+        >> dbt_build_staging
         >> dbt_build_dimensions >> dbt_build_intermediate >> dbt_build_marts
 
 bronze_write
@@ -22,6 +23,12 @@ register_bq
     python scripts/register_bronze_bq.py --project ... --location ... --connection ...
     Re-points the five BigQuery external Iceberg tables at the metadata file written
     by bronze_write. Runs as the pipeline-runner service account.
+
+check_bq_schema
+    python scripts/check_bq_schema.py
+    Fails if a BigQuery external Bronze table's columns differ from the Bronze contract
+    (bronze.schema.build_schema), so a stale registration stops the run before dbt.
+    Runs as pipeline-runner.
 
 dbt_build_staging, dbt_build_dimensions, dbt_build_intermediate, dbt_build_marts
     dbt deps && dbt build --select path:models/<layer>
@@ -110,6 +117,16 @@ with DAG(
         append_env=True,
     )
 
+    check_bq_schema = BashOperator(
+        task_id="check_bq_schema",
+        bash_command=(
+            f"cd {REPO} && PYTHONPATH={REPO} {VENV}/python scripts/check_bq_schema.py"
+            " --project payments-512910 --location us-east1"
+        ),
+        env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_PIPELINE},
+        append_env=True,
+    )
+
     FULL_REFRESH = "{{ '--full-refresh' if params.full_refresh else '' }}"
 
     def dbt_layer(layer: str) -> BashOperator:
@@ -132,6 +149,7 @@ with DAG(
         bronze_write
         >> bronze_verify
         >> register_bq
+        >> check_bq_schema
         >> build_staging
         >> build_dimensions
         >> build_intermediate

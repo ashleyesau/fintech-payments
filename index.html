@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fintech-payments: a payments data platform you can prove</title>
+<meta name="description" content="A synthetic South African fintech platform: Postgres, change data capture, Iceberg on GCS and BigQuery, with verification at every layer and a cost study of the warehouse.">
+<meta name="theme-color" content="#f0ebd8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0d1321;
+    --deep: #1d2d44;
+    --slate: #3e5c76;
+    --denim: #748cab;
+    --egg: #f0ebd8;
+    --panel: color-mix(in srgb, #748cab 16%, #f0ebd8);
+    --rule: color-mix(in srgb, #748cab 55%, #f0ebd8);
+    --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    --body: "Public Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --measure: 66ch;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--egg); color: var(--ink); font: 400 1.0625rem/1.65 var(--body); -webkit-font-smoothing: antialiased; }
+  a { color: var(--slate); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  a:hover { color: var(--ink); }
+  :focus-visible { outline: 3px solid var(--slate); outline-offset: 3px; border-radius: 2px; }
+  .wrap { width: min(1120px, 100% - 3rem); margin-inline: auto; }
+
+  /* top bar */
+  .bar { padding: 1.25rem 0; border-bottom: 1px solid var(--rule); }
+  .bar .wrap { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+  .brand { font: 700 1.125rem var(--display); letter-spacing: -0.01em; color: var(--ink); text-decoration: none; }
+  .bar nav { display: flex; gap: 1.5rem; font-size: 0.95rem; flex-wrap: wrap; }
+  .bar nav a { color: var(--deep); text-decoration: none; }
+  .bar nav a:hover { text-decoration: underline; }
+
+  /* hero */
+  .hero { padding: clamp(3rem, 8vw, 6.5rem) 0 clamp(2.5rem, 5vw, 4rem); }
+  h1 { font: 700 clamp(2.4rem, 6vw, 4.6rem)/1.04 var(--display); letter-spacing: -0.03em; margin: 0 0 1.5rem; max-width: 17ch; text-wrap: balance; }
+  .lede { font-size: clamp(1.1rem, 2vw, 1.3rem); line-height: 1.55; color: var(--deep); max-width: 52ch; margin: 0 0 2rem; }
+  .actions { display: flex; gap: 0.875rem; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 0.8rem 1.35rem; border-radius: 4px; font: 600 0.975rem var(--body); text-decoration: none; border: 2px solid var(--ink); }
+  .btn.primary { background: var(--ink); color: var(--egg); }
+  .btn.primary:hover { background: var(--deep); border-color: var(--deep); color: var(--egg); }
+
+  /* pipeline */
+  .pipeline-section { padding: 1rem 0 clamp(3rem, 6vw, 5rem); }
+  .pipeline-title { font: 500 1rem var(--body); color: var(--slate); margin: 0 0 1.5rem; max-width: var(--measure); }
+  .pipeline { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 0; position: relative; }
+  .stage { position: relative; padding: 2.25rem 0.75rem 0 0; }
+  .stage::before { content: ""; position: absolute; top: 0.6rem; left: 0; right: 0; height: 3px; background: var(--slate); }
+  .stage::after { content: ""; position: absolute; top: 0; left: 0; width: 1.1rem; height: 1.1rem; border-radius: 50%; background: var(--ink); border: 3px solid var(--egg); box-shadow: 0 0 0 2px var(--ink); }
+  .stage.next::before { background: none; border-top: 3px dashed var(--denim); height: 0; top: 0.6rem; }
+  .stage.next::after { background: var(--egg); box-shadow: 0 0 0 2px var(--denim); border-color: var(--egg); }
+  .stage:last-child::before { right: 50%; }
+  .stage h3 { font: 700 1.05rem/1.2 var(--display); margin: 0 0 0.35rem; letter-spacing: -0.01em; }
+  .stage p { margin: 0 0 0.6rem; font-size: 0.9rem; line-height: 1.45; color: var(--deep); }
+  .stage .proof { font: 500 0.78rem/1.4 var(--mono); color: var(--slate); margin: 0; }
+  .stage.next h3, .stage.next p { color: var(--slate); }
+  .stage .state { display: block; font: 600 0.8rem var(--body); margin-bottom: 0.35rem; color: var(--ink); }
+  .stage.next .state { color: var(--slate); }
+  .legend { margin: 1.75rem 0 0; font-size: 0.9rem; color: var(--slate); display: flex; gap: 1.75rem; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 0.5rem; }
+  .legend i { display: inline-block; width: 1.5rem; height: 0; border-top: 3px solid var(--slate); }
+  .legend i.dash { border-top: 3px dashed var(--denim); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .stage { opacity: 0; transform: translateY(8px); animation: rise 0.6s ease forwards; }
+    .stage:nth-child(1) { animation-delay: 0.1s; } .stage:nth-child(2) { animation-delay: 0.22s; }
+    .stage:nth-child(3) { animation-delay: 0.34s; } .stage:nth-child(4) { animation-delay: 0.46s; }
+    .stage:nth-child(5) { animation-delay: 0.58s; } .stage:nth-child(6) { animation-delay: 0.7s; }
+    .stage:nth-child(7) { animation-delay: 0.82s; }
+    @keyframes rise { to { opacity: 1; transform: none; } }
+  }
+
+  /* sections */
+  section.block { padding: clamp(2.5rem, 6vw, 4.5rem) 0; border-top: 1px solid var(--rule); }
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: clamp(1.5rem, 5vw, 4rem); }
+  h2 { font: 700 clamp(1.5rem, 3vw, 2.1rem)/1.15 var(--display); letter-spacing: -0.02em; margin: 0; max-width: 16ch; text-wrap: balance; }
+  .prose p { max-width: var(--measure); margin: 0 0 1.1rem; }
+  .prose p:last-child { margin-bottom: 0; }
+  .prose strong { font-weight: 600; }
+  .note { color: var(--deep); font-size: 0.97rem; max-width: var(--measure); margin: 1.25rem 0 0; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.975rem; }
+  caption { text-align: left; color: var(--slate); font-size: 0.9rem; padding-bottom: 0.75rem; }
+  th, td { text-align: left; padding: 0.85rem 1rem 0.85rem 0; border-top: 1px solid var(--rule); vertical-align: top; }
+  tr:last-child td, tr:last-child th { border-bottom: 1px solid var(--rule); }
+  th { font-weight: 600; width: 52%; }
+  td.n { font-family: var(--mono); font-size: 0.92rem; }
+  .tablewrap { overflow-x: auto; }
+
+  .decisions { list-style: none; margin: 0; padding: 0; display: grid; }
+  .decisions li { padding: 1.15rem 0; border-top: 1px solid var(--rule); display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 0.5rem 2rem; }
+  .decisions li:last-child { border-bottom: 1px solid var(--rule); }
+  .decisions h3 { font: 700 1.05rem/1.3 var(--display); margin: 0; letter-spacing: -0.01em; }
+  .decisions p { margin: 0; max-width: 58ch; color: var(--deep); }
+  code { font: 500 0.88em var(--mono); background: var(--panel); padding: 0.1em 0.35em; border-radius: 3px; }
+
+  .status { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(1.25rem, 3vw, 2.5rem); }
+  .status h3 { font: 700 1.1rem var(--display); margin: 0 0 0.75rem; padding-top: 0.75rem; border-top: 3px solid var(--ink); }
+  .status .soon h3 { border-top: 3px dashed var(--denim); color: var(--slate); }
+  .status ul { margin: 0; padding-left: 1.1rem; color: var(--deep); }
+  .status li { margin-bottom: 0.4rem; }
+
+  footer { padding: 2.5rem 0 3.5rem; border-top: 1px solid var(--rule); color: var(--deep); font-size: 0.95rem; }
+  footer .wrap { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+
+  @media (max-width: 960px) {
+    .pipeline { grid-template-columns: 1fr; }
+    .stage { padding: 0 0 1.75rem 2.25rem; }
+    .stage::before { top: 0.6rem; bottom: -0.6rem; left: 0.5rem; right: auto; width: 3px; height: auto; }
+    .stage.next::before { border-top: 0; border-left: 3px dashed var(--denim); width: 0; height: auto; top: 0.6rem; bottom: -0.6rem; left: 0.5rem; }
+    .stage:last-child::before { display: none; }
+    .stage::after { top: 0; left: 0; }
+    .cols { grid-template-columns: 1fr; }
+    .status { grid-template-columns: 1fr; }
+    .decisions li { grid-template-columns: 1fr; }
+    th { width: auto; }
+  }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="#top">fintech-payments</a>
+    <nav aria-label="Page sections">
+      <a href="#proof">Results</a>
+      <a href="#cost">Cost study</a>
+      <a href="#decisions">Design choices</a>
+      <a href="#status">What’s included</a>
+      <a href="https://github.com/ashleyesau/fintech-payments">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap">
+    <section class="hero">
+      <h1>Every row in the warehouse can be traced back to the database it came from.</h1>
+      <p class="lede">fintech-payments is a synthetic data platform for a South African SME lender and card acquirer. It simulates the business, captures every change as it happens, and checks that what reaches the lake matches the source.</p>
+      <div class="actions">
+        <a class="btn primary" href="https://github.com/ashleyesau/fintech-payments">View the code on GitHub</a>
+      </div>
+    </section>
+
+    <section class="pipeline-section" aria-labelledby="pipeline-h">
+      <p class="pipeline-title" id="pipeline-h">How data moves, from the source database to dashboards. Every GCP resource is managed with Terraform.</p>
+      <ol class="pipeline">
+        <li class="stage">
+          <span class="state">Built</span>
+          <h3>Postgres</h3>
+          <p>Simulated merchants, payments, loans and repayments, written one day at a time.</p>
+          <p class="proof">11.0M transactions, over R1bn</p>
+        </li>
+        <li class="stage">
+          <span class="state">Built</span>
+          <h3>Change capture</h3>
+          <p>A logical replication consumer reads the write-ahead log.</p>
+          <p class="proof">at-least-once, replay-safe</p>
+        </li>
+        <li class="stage">
+          <span class="state">Built</span>
+          <h3>GCS landing</h3>
+          <p>Immutable gzipped NDJSON, one object per table and day.</p>
+          <p class="proof">never updated or deleted</p>
+        </li>
+        <li class="stage">
+          <span class="state">Built</span>
+          <h3>Iceberg Bronze</h3>
+          <p>Validated Apache Iceberg tables, with every event mapped to a typed row.</p>
+          <p class="proof">11M events in a local test</p>
+        </li>
+        <li class="stage">
+          <span class="state">Built</span>
+          <h3>BigQuery</h3>
+          <p>External tables over the newest Bronze snapshot.</p>
+          <p class="proof">5 tables registered</p>
+        </li>
+        <li class="stage">
+          <span class="state">Built</span>
+          <h3>dbt models</h3>
+          <p>Incremental, partitioned intermediates and two marts, with tests.</p>
+          <p class="proof">test-gated build</p>
+        </li>
+        <li class="stage">
+          <span class="state">Built</span>
+          <h3>Lightdash</h3>
+          <p>A semantic layer and BI metrics on top of the marts.</p>
+          <p class="proof">metrics on the marts</p>
+        </li>
+      </ol>
+    </section>
+  </div>
+
+  <section class="block" id="what">
+    <div class="wrap cols">
+      <h2>What the project is</h2>
+      <div class="prose">
+        <p><strong>A realistic source of truth.</strong> The generator models merchant lifecycles, seasonal trading, card and instant EFT payments, and term loans collected through DebiCheck. Events depend on each other the way they do in a real book: a repayment needs a loan, a risk event points at a transaction. It is not real data, and parameters without a source document are marked illustrative in <code>config/</code>.</p>
+        <p><strong>A pipeline that treats loss as the failure to avoid.</strong> Change capture confirms its position in the database only after the objects have landed. A crash replays the batch, and the replay is checked against what already exists rather than overwriting it.</p>
+        <p><strong>Proof at each layer.</strong> Bronze is compared to the landed objects, and then replayed into a blank database and compared to the source, table by table.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="proof">
+    <div class="wrap cols">
+      <h2>What has been measured</h2>
+      <div>
+        <div class="tablewrap">
+          <table>
+            <caption>One 1,000-merchant run over 455 simulated days.</caption>
+            <tbody>
+              <tr><th scope="row">Value of transactions processed</th><td class="n">just over R1 billion</td></tr>
+              <tr><th scope="row">Merchants onboarded, including replacements for churn</th><td class="n">1,251</td></tr>
+              <tr><th scope="row">Merchants still active at the end</th><td class="n">about 700</td></tr>
+              <tr><th scope="row">Payment transactions generated</th><td class="n">11.0 million</td></tr>
+              <tr><th scope="row">Merchant snapshot rows</th><td class="n">279,000</td></tr>
+              <tr><th scope="row">Generator time, with a checkpoint after every simulated day</th><td class="n">56 minutes</td></tr>
+              <tr><th scope="row">Bronze write of 11 million events in 11,000 objects, local warehouse</th><td class="n">31 minutes</td></tr>
+              <tr><th scope="row">Memory above its starting point during that write</th><td class="n">under 1,000 MB</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">The 1,000-merchant run is too large for the Cloud Storage free tier, so the end-to-end cloud proof (capture, landing, Bronze, then a replay compared with the source) was run on a 100-merchant year, and the 1,000-merchant write was measured locally.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="cost">
+    <div class="wrap cols">
+      <h2>A cost study of the warehouse</h2>
+      <div class="prose">
+        <p>I ran a warehouse cost and performance study on this platform to see what the pipeline costs to run in BigQuery and Cloud Storage, and where that cost can be cut. The experiments were chosen to fit inside the free tiers, so the study cost nothing to run.</p>
+        <p>The recommendations went back into the project:</p>
+        <ul>
+          <li>Incremental, partitioned intermediate models in dbt.</li>
+          <li>Literal date bounds on the two marts, so queries scan less.</li>
+          <li>A layered, test-gated build with retries and a full-refresh option.</li>
+          <li>Lag, slowly changing dimension and completeness tests, a BigQuery schema check, and <code>dbt parse</code> in CI.</li>
+        </ul>
+        <p>Cloud Storage use is counted per command: the project used 47% of the month’s Class A operations across all of its verification runs.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="decisions">
+    <div class="wrap cols">
+      <h2>Choices worth a closer look</h2>
+      <ul class="decisions">
+        <li>
+          <h3>Verification never skips quietly</h3>
+          <p><code>bronze.verify</code> fails if the source database is unreachable. The one flag that skips the source comparison prints that the result is not full proof.</p>
+        </li>
+        <li>
+          <h3>Least-privilege service accounts</h3>
+          <p>The CDC consumer can create and read landed objects but never update or delete one. The Bronze writer cannot write to the landing bucket.</p>
+        </li>
+        <li>
+          <h3>Crash behaviour is tested, not assumed</h3>
+          <p>Fault injection at each commit step, a SIGKILL test, late and overlapping objects, and a lost catalog rebuilt from the bucket all reach the same digests as a clean run.</p>
+        </li>
+        <li>
+          <h3>Costs are counted before they are spent</h3>
+          <p>Every command lists its Cloud Storage operations, and runs stop if actual use exceeds the estimate.</p>
+        </li>
+        <li>
+          <h3>Documentation that fails the build</h3>
+          <p>A test fails if a command-line flag exists in the code but not in the README table, or the reverse.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" id="status">
+    <div class="wrap cols">
+      <h2>What’s in the repo</h2>
+      <div class="prose">
+        <p>The pipeline is complete, from the source database to dashboards:</p>
+        <ul>
+          <li>A stateful simulator with backfill and streaming modes</li>
+          <li>A CDC consumer with reconciliation against the source</li>
+          <li>Iceberg Bronze write, verify and orphan check</li>
+          <li>BigQuery external tables</li>
+          <li>dbt models with tests and a test-gated build</li>
+          <li>A Lightdash semantic layer and BI metrics</li>
+          <li>Terraform for the GCP resources</li>
+          <li>CI on GitHub Actions</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Built by Ashley Esau, data engineer.</span>
+    <a href="https://github.com/ashleyesau/fintech-payments">github.com/ashleyesau/fintech-payments</a>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -13,12 +13,18 @@ bronze_write
     marker it reads no object and finishes in seconds. Runs as the bronze-writer service account.
 
 bronze_verify
-    python -m bronze.check
+    scripts/verify_unless_unchanged.sh, which runs python -m bronze.check
     Reads every landed object, validates every event against the change-event contract
     and proves each one maps correctly to its Bronze row. Writes nothing and never reads
     the Bronze tables, so it stays within container memory limits at any dataset size.
-    bronze.verify (run manually outside the DAG) performs the full digest comparison
-    between Bronze and the landing. Runs as the bronze-writer service account.
+    It is the slow step (about an hour), so it is skipped when the landing has not changed
+    since a run marker that already passed it: the Airflow Variable
+    bronze_last_verified_marker holds the id of the last marker that passed, and the
+    task is skipped (not failed) when the newest marker is that one. A passing check
+    records the newest marker. Trigger the DAG with the force_verify param set to true to
+    check the whole landing again whatever is recorded. register_bq runs when this task
+    is skipped. bronze.verify (run manually outside the DAG) performs the full digest
+    comparison between Bronze and the landing. Runs as the bronze-writer service account.
 
 register_bq
     python scripts/register_bronze_bq.py --project ... --location ... --connection ...
@@ -65,6 +71,7 @@ from datetime import datetime, timedelta, timezone
 from airflow import DAG
 from airflow.models.param import Param
 from airflow.operators.bash import BashOperator
+from airflow.utils.trigger_rule import TriggerRule
 
 REPO = "/opt/repo"
 VENV = "/opt/pipeline-venv/bin"
@@ -85,7 +92,13 @@ with DAG(
             False,
             type="boolean",
             description="Controlled rebuild only. Passes --full-refresh to every dbt layer.",
-        )
+        ),
+        "force_verify": Param(
+            False,
+            type="boolean",
+            description="Check every landed object in bronze_verify even if the landing has not changed since "
+                        "the last verified run marker.",
+        ),
     },
 ) as dag:
 
@@ -103,13 +116,19 @@ with DAG(
 
     bronze_verify = BashOperator(
         task_id="bronze_verify",
-        bash_command=f"cd {REPO} && {VENV}/python -m bronze.check",
-        env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_BRONZE},
+        # the trailing space matters: a bash_command that ends in ".sh" is read by Airflow as a template file
+        bash_command=f"bash {REPO}/scripts/verify_unless_unchanged.sh ",
+        env={
+            "GOOGLE_APPLICATION_CREDENTIALS": CREDS_BRONZE,
+            "LAST_VERIFIED": "{{ var.value.get('bronze_last_verified_marker', '') }}",
+            "FORCE_VERIFY": "{{ '1' if params.force_verify else '0' }}",
+        },
         append_env=True,
     )
 
     register_bq = BashOperator(
         task_id="register_bq",
+        trigger_rule=TriggerRule.NONE_FAILED,          # bronze_verify may be skipped; a failure still stops here
         bash_command=(
             f"cd {REPO} && {VENV}/python scripts/register_bronze_bq.py"
             " --project payments-512910 --location us-east1 --connection fintech-bronze"

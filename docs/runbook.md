@@ -36,7 +36,7 @@ A test (`tests/test_readme_commands.py`) fails if any flag in the code is missin
 | `python -m cdc.reconcile` | Reads every landed object and checks it against the source database | `--directory`, `--workers` | `--directory DIR` reads from a local directory (no GCS cost). `--workers` controls parallel reads (default 8). |
 | `python -m cdc.lag` | Prints one slot report | `--watch` | `--watch N` prints one line every N seconds. Asks Postgres only; no GCS cost. |
 | `python -m cdc.permissions` | Signs in as the credentials file's account and checks bucket permissions | `--landing-bucket`, `--bronze-bucket`, `--project` | Defaults to the CDC settings. Metadata call only; writes nothing. |
-| `python -m bronze.check` | Reads every landed object, checks every event, maps to Bronze rows. Writes nothing. **Proves events are valid; does not prove Arrow conversion.** | `--roundtrip` | **`--roundtrip` also proves the Arrow conversion.** ~2x the GCS cost. |
+| `python -m bronze.check` | Reads every landed object, checks every event, maps to Bronze rows. Writes nothing. **Proves events are valid; does not prove Arrow conversion.** | `--roundtrip`, `--newest-marker` | **`--roundtrip` also proves the Arrow conversion.** ~2x the GCS cost. `--newest-marker` prints the newest run marker's id and stops (one listing, one read, no landed object); the DAG uses it to skip a check the landing does not need. Cannot combine with `--roundtrip`. |
 | `python -m bronze.main` | **Plan only**: reads and checks everything, prints what a write would do. | `--write`, `--rebuild-catalog` | **`--write` does the work.** `--rebuild-catalog` reconstructs a lost local catalog from the GCS run marker; cannot combine with `--write`. |
 | `python -m bronze.verify` | **Full proof**: Bronze against landed objects and against the source database. Reads only. | `--landing-only` | **`--landing-only` skips the source comparison and is NOT full proof.** Use only on a machine with no Postgres. |
 | `python -m bronze.orphans` | **Lists only**: orphaned files, missing files, marker/catalog agreement. | `--delete`, `--min-age-hours` | **`--delete` removes files permanently; soft delete is off.** Default `--min-age-hours` is 24. `--min-age-hours 0` deletes however young: only when nothing is writing. |
@@ -428,6 +428,8 @@ The list is printed before anything is deleted. Read it first. **Soft delete is 
 | `bronze.main --rebuild-catalog` | ~1 | ~300 |
 
 A `--write` run skips reading the landing when nothing is new: the tables are at the newest run marker's snapshots, the listing holds the marker's number of objects, and the highest `last_lsn` in the object names is the marker's `highest_commit_lsn`. It trusts that landed objects are never overwritten. Any doubt (a count or LSN that differs, a table ahead of the marker) does the full run. A plan (no `--write`) and `bronze.check` always read and check every object, so use them when you want the full proof.
+
+In the DAG, `bronze_verify` runs `bronze.check` only when the newest run marker has not already passed it (`scripts/verify_unless_unchanged.sh`, the Airflow Variable `bronze_last_verified_marker`). Otherwise the task is skipped and reads no landed object. `python -m bronze.check --newest-marker` prints the newest marker's id for one listing and one read. Trigger the DAG with `force_verify` set to true to check every object whatever is recorded.
 
 **Check the month's standing:**
 ```bash

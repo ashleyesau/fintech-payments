@@ -8,6 +8,11 @@ object once, checks every event, and prints what is there. It writes nothing, an
 G1's done-when is shown on the real bucket: object and event counts, per table and per operation,
 duplicates, incomplete transactions, how long it took and how much memory it needed.
 
+With --newest-marker it prints the run id of the newest run marker in the Bronze bucket (nothing when there is none)
+and stops: one listing of _runs/ and one read of that marker. It reads no landed object and writes nothing. The DAG's
+bronze_verify step uses it to tell whether the landing has changed since the last marker that passed this check
+(scripts/verify_unless_unchanged.sh).
+
 With --roundtrip, after pass 1 has passed, it reads every object a second time and converts every event exactly as
 pass 2 will (the Arrow row in the table's real schema), reads it back out and maps it back: each event must equal the
 original. It prints the events and a payload digest per table (what the events say about the rows, without the LSNs,
@@ -47,7 +52,8 @@ from bronze.landing import LandingReader, open_landing
 from cdc.errors import SinkError
 
 if TYPE_CHECKING:
-    from bronze.replay import RoundTrip      # imported only when --roundtrip is used: it pulls in PyIceberg and Arrow
+    from bronze.replay import RoundTrip
+    from bronze.store import Store      # imported only when --roundtrip is used: it pulls in PyIceberg and Arrow
 
 EXIT_OK, EXIT_ERROR, EXIT_CONTRACT, EXIT_BUCKET, EXIT_INTERRUPTED = 0, 1, 2, 3, 130
 PROGRESS_EVERY = 100
@@ -176,13 +182,44 @@ def execute(settings: BronzeSettings, *, do_roundtrip: bool = False,
     return EXIT_OK
 
 
+def print_newest_marker(settings: BronzeSettings, *,
+                        store_factory: Optional[Callable[[BronzeSettings, Optional[dict]], "Store"]] = None,
+                        environ: Optional[dict] = None,
+                        out: Optional[TextIO] = None, err: Optional[TextIO] = None) -> int:
+    """Print the newest run marker's id, alone on one line, or nothing when there is no marker yet. It costs one
+    listing of _runs/ and one read, reads no landed object and writes nothing. Exit codes as for a check."""
+    out, err = out or sys.stdout, err or sys.stderr
+    try:
+        require_credentials(environ)
+        from bronze.marker import newest_marker       # imported only here: it pulls in PyIceberg
+        from bronze.store import open_store
+        marker = newest_marker((store_factory or open_store)(settings, environ))
+    except BaseException as error:           # every way out becomes an exit code and one line
+        if isinstance(error, SystemExit):
+            raise
+        print(f"error: {reason(error)}", file=err, flush=True)
+        if exit_code(error) == EXIT_ERROR and not isinstance(error, (BronzeError, SinkError)):
+            traceback.print_exception(error, file=err)
+        return exit_code(error)
+    if marker is not None:
+        print(marker.run_id, file=out, flush=True)
+    return EXIT_OK
+
+
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--roundtrip", "do_roundtrip", is_flag=True,
               help="Also convert every event as pass 2 will and map it back, and print a payload digest per table "
                    "(reads every object a second time).")
-def cli(do_roundtrip: bool) -> None:
+@click.option("--newest-marker", "newest", is_flag=True,
+              help="Print the run id of the newest run marker (nothing if there is none) and stop. Reads no "
+                   "landed object.")
+def cli(do_roundtrip: bool, newest: bool) -> None:
     """Read every landed object once and print what is there. Writes nothing. Needs
     GOOGLE_APPLICATION_CREDENTIALS set to the bronze-writer credentials file."""
+    if newest and do_roundtrip:
+        raise click.UsageError("--newest-marker and --roundtrip cannot be used together")
+    if newest:
+        sys.exit(print_newest_marker(BronzeSettings()))
     sys.exit(execute(BronzeSettings(), do_roundtrip=do_roundtrip))
 
 

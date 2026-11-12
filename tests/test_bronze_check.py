@@ -8,6 +8,7 @@ import io
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,11 +17,12 @@ import pytest
 import bronze.check as check
 from bronze.check import (
     EXIT_BUCKET, EXIT_CONTRACT, EXIT_ERROR, EXIT_INTERRUPTED, EXIT_OK, exit_code, execute, machine_memory_bytes, main,
-    peak_memory_bytes, reason, render,
+    peak_memory_bytes, print_newest_marker, reason, render,
 )
 from bronze.config import CREDENTIALS_VARIABLE, BronzeSettings
 from bronze.errors import ConfigError, DisagreementError, EventError, IncompleteTransactions, LandingError
 from bronze.index import IndexSummary, build_index
+from bronze.marker import TABLES, TableMark, build_marker, encode
 from cdc.errors import ObjectMismatch, SinkError
 from tests.bronze_synth import DAY, SOURCE_DB, Landing, event
 from tests.fakes import MemorySink
@@ -316,3 +318,87 @@ def test_a_usage_error_is_exit_1_because_2_means_a_contract_stop(capsys):
 def test_help_exits_zero(capsys):
     assert main(["--help"]) == EXIT_OK
     assert "GOOGLE_APPLICATION_CREDENTIALS" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# --newest-marker: the DAG's "has the landing changed since the last verified run" lookup
+# ---------------------------------------------------------------------------
+
+def put_marker(store, stamp):
+    when = datetime.strptime(stamp, "%Y%m%dT%H%M%S%fZ").replace(tzinfo=timezone.utc)
+    tables = {name: TableMark(1 + i, 7, f"gs://fintech_bronze/bronze/{name}/metadata/00001-x.metadata.json")
+              for i, name in enumerate(TABLES)}
+    marker = build_marker(when, landed_objects=908, highest_commit_lsn=1, tables=tables)
+    assert store.put_if_absent(marker.key, encode(marker)) is True
+    return marker
+
+
+def lookup(store, environ):
+    out, err = io.StringIO(), io.StringIO()
+    code = print_newest_marker(BronzeSettings(_env_file=None), store_factory=lambda s, e: store, environ=environ,
+                               out=out, err=err)
+    return code, out.getvalue(), err.getvalue()
+
+
+def test_newest_marker_prints_the_newest_run_id_alone_with_one_listing_and_one_read(creds):
+    environ, _ = creds
+    store = MemorySink()
+    put_marker(store, "20261107T170724234344Z")
+    put_marker(store, "20261112T180000000000Z")
+    code, out, err = lookup(store, environ)
+    assert (code, out, err) == (EXIT_OK, "20261112T180000000000Z\n", "")
+    assert store.listings == 1 and store.reads == 1
+
+
+def test_newest_marker_prints_nothing_when_there_is_no_marker(creds):
+    environ, _ = creds
+    store = MemorySink()
+    assert lookup(store, environ) == (EXIT_OK, "", "")
+    assert store.reads == 0
+
+
+def test_newest_marker_stops_on_an_object_under_runs_that_is_not_a_marker(creds):
+    environ, _ = creds
+    store = MemorySink()
+    put_marker(store, "20261107T170724234344Z")
+    store.objects["_runs/notes.txt"] = b"hello"
+    code, out, err = lookup(store, environ)
+    assert code != EXIT_OK and out == "" and err.startswith("error: ") and "_runs/notes.txt" in err
+
+
+def test_newest_marker_stops_on_a_newest_marker_that_does_not_parse(creds):
+    environ, _ = creds
+    store = MemorySink()
+    put_marker(store, "20261107T170724234344Z")
+    store.objects["_runs/20270101T000000000000Z.json"] = b"{broken"
+    code, out, err = lookup(store, environ)
+    assert code != EXIT_OK and out == "" and "20270101T000000000000Z" in err
+
+
+def test_newest_marker_reports_a_bucket_failure_as_exit_3(creds):
+    environ, _ = creds
+
+    class Down:
+        def list_keys(self, prefix):
+            raise SinkError("the bucket did not answer")
+
+    code, out, err = lookup(Down(), environ)
+    assert code == EXIT_BUCKET and out == "" and "the bucket did not answer" in err
+
+
+def test_newest_marker_refuses_to_start_without_credentials():
+    code, out, err = lookup(MemorySink(), {})
+    assert code != EXIT_OK and out == "" and "GOOGLE_APPLICATION_CREDENTIALS" in err
+
+
+def test_newest_marker_cannot_be_combined_with_roundtrip(capsys):
+    assert main(["--newest-marker", "--roundtrip"]) == EXIT_ERROR
+    assert "cannot be used together" in capsys.readouterr().err
+
+
+def test_newest_marker_as_a_subprocess_refuses_without_credentials_and_prints_nothing():
+    env = {k: v for k, v in os.environ.items() if k != CREDENTIALS_VARIABLE}
+    result = subprocess.run([sys.executable, "-W", "ignore", "-m", "bronze.check", "--newest-marker"], cwd=ROOT,
+                            env={**env, "PYTHONPATH": "."}, capture_output=True, text=True, timeout=60)
+    assert result.returncode == EXIT_ERROR and result.stdout == ""
+    assert result.stderr.startswith("error: GOOGLE_APPLICATION_CREDENTIALS is not set")

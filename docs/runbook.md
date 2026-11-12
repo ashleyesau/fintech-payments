@@ -422,9 +422,12 @@ The list is printed before anything is deleted. Read it first. **Soft delete is 
 | `bronze.check` | ~1 | ~2,610 |
 | `bronze.check --roundtrip` | ~2 | ~5,220 |
 | `bronze.orphans` | ~1 | ~20 to 50 |
-| `bronze.main` (plan or no-op) | ~3 | ~2,610 |
-| `bronze.main --write` (first write) | ~190 to 220 | ~2,610 |
+| `bronze.main` (plan) | ~3 | ~2,610 |
+| `bronze.main --write`, nothing new since the newest run marker | ~3 | ~1 to 10 (marker and table metadata; no landed object is read) |
+| `bronze.main --write` (new data to append) | ~190 to 220 | ~2,610 (pass 1) plus the new objects again (pass 2) |
 | `bronze.main --rebuild-catalog` | ~1 | ~300 |
+
+A `--write` run skips reading the landing when nothing is new: the tables are at the newest run marker's snapshots, the listing holds the marker's number of objects, and the highest `last_lsn` in the object names is the marker's `highest_commit_lsn`. It trusts that landed objects are never overwritten. Any doubt (a count or LSN that differs, a table ahead of the marker) does the full run. A plan (no `--write`) and `bronze.check` always read and check every object, so use them when you want the full proof.
 
 **Check the month's standing:**
 ```bash

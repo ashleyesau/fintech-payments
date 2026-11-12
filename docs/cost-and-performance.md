@@ -33,7 +33,7 @@ For the 1,000-merchant run (8,537,090 events):
 
 The partition-by-month design keeps the Class A count low. Without it, a per-day partition would produce roughly 10x more data files.
 
-A no-op write (all events already in Bronze) costs about 2,610 Class B plus one `_runs/` listing.
+A no-op write (all events already in Bronze) cost about 2,610 Class B plus one `_runs/` listing. Since 12 November 2026 a write run that finds nothing new since the newest run marker reads no landed object (see below); the figures in this document for a no-op run were measured before that change.
 
 On 10 November 2026 a failed and a passing `bronze_write` attempt together raised the month's Class B count by about 3,600, which is consistent with that figure for the passing run.
 
@@ -95,7 +95,9 @@ The 1,000-merchant run consumed 8.95 million changes in two runs (a WiFi interru
 | Local scaling run | 3.3M | not recorded | 18.5 min |
 | Local scaling run | 11.0M | not recorded | 55.8 min |
 
-Bronze was reset before the 124-minute run. A rerun that appends nothing is not free: it still reads every landed object. In Airflow it took about 40 minutes, about a third of the fresh write. The local scaling runs found 47% to 53%.
+Bronze was reset before the 124-minute run. Before 12 November 2026 a rerun that appended nothing still read every landed object (pass 1). In Airflow it took about 40 minutes, about a third of the fresh write. The local scaling runs found 47% to 53%. That matches the per-event cost of pass 1 measured on the Air (about 271 microseconds an event, 8.54M events, about 39 minutes).
+
+A write run now skips pass 1 when the landing is unchanged since the newest run marker (tables at the marker's snapshots, the marker's object count, the marker's highest LSN). It lists the landing once and reads the marker, so it should take well under a minute and about 1 to 10 Class B. This has been tested on the local warehouse only; the time on the real bucket has not been measured. A run with new data still does the full two passes.
 
 The 124-minute run (about 1,150 events per second) and the local 11.0M-event run (about 3,300 events per second) have not been reconciled. They differ in run, environment (Airflow in Docker against the host) and size.
 

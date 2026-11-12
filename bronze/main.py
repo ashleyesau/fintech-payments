@@ -200,7 +200,10 @@ def execute(settings: BronzeSettings, *, write: bool = False, rebuild: bool = Fa
             traceback.print_exception(error, file=err)       # an unexpected failure is a bug: show where
         return exit_code(error)
 
-    say(render(report.summary))
+    if report.index_skipped:
+        say(f"landing unchanged since run marker {report.marker.newest}: no object was read, the index was skipped")
+    else:
+        say(render(report.summary))
     say("")
     say(render_tables(report))
     say("")

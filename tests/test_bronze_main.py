@@ -183,6 +183,17 @@ def test_a_second_write_says_there_is_nothing_to_append_and_changes_nothing(comm
     assert env.files() == files and env.snapshots() == snapshots and env.store.objects == objects
 
 
+def test_a_second_write_says_it_skipped_the_index_and_a_plan_still_checks_everything(command, env):
+    command(write=True)
+    marker = newest_marker(env.store)
+    code, out, err = command(write=True)
+    assert code == 0 and errors(err) == []
+    assert f"landing unchanged since run marker {marker.run_id}: no object was read, the index was skipped" in out
+    assert "objects read" not in out and "read " not in err                  # no pass 1, so no progress lines
+    code, out, err = command(write=False)                                    # a plan is the full check
+    assert code == 0 and "index was skipped" not in out and "landing unchanged" not in out
+
+
 def test_a_write_over_an_empty_landing_creates_the_tables_and_says_so(env, creds, monkeypatch):
     command = Command(env, Landing(), creds, settings_for(env, monkeypatch))
     code, out, _ = command(write=True)

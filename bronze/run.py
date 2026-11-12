@@ -13,6 +13,9 @@ The order of a run (G3 questions 1 to 3, decided 2026-10-29):
      Then the newest run marker is read (one listing of _runs/ and one read) and the catalog is checked against it
      (bronze.marker.check_against_marker): a catalog that lacks a table the marker names, or its snapshot, stops the
      run here, before any object is read, because creating the tables again would write them beside the old ones.
+  1b. A WRITE run with nothing new since the newest marker stops here, having read no object: the tables are at the
+     marker's snapshots, the listing holds the marker's number of objects and its highest last_lsn is the marker's
+     highest_commit_lsn (_unchanged_since_marker). A plan never takes this path: it always checks everything.
   2. Pass 1 (bronze.index.build_index): every landed object is read once, checked and mapped; the index must be
      complete. Anything wrong stops the run here, with no table created and nothing written.
   3. For every existing table, the keys Bronze holds are read (bronze.present) and compared with the index.
@@ -68,7 +71,7 @@ from bronze.catalog_copy import copy_catalog
 from bronze.errors import ConfigError, LandingChanged
 from bronze.index import Index, IndexSummary, build_index
 from bronze.landing import LandedObject, LandingReader
-from bronze.marker import TableMark, build_marker, check_against_marker, describes, newest_marker, write_marker
+from bronze.marker import Marker, TableMark, build_marker, check_against_marker, describes, newest_marker, write_marker
 from bronze.present import PresentKeys, read_present_keys
 from bronze.schema import build_partition_spec, build_schema, table_properties
 from bronze.store import Store
@@ -121,9 +124,10 @@ class MarkerReport:
 @dataclass(frozen=True, slots=True)
 class RunReport:
     write: bool
-    summary: IndexSummary
+    summary: Optional[IndexSummary]   # None when the index was skipped (index_skipped)
     tables: dict            # table -> TableReport, in TABLE_ORDER
     marker: MarkerReport
+    index_skipped: bool = False       # a write run found the landing unchanged since the newest marker and read no object
 
 
 @dataclass(slots=True)
@@ -147,6 +151,43 @@ def _load(catalog: Catalog, name: str) -> Optional[Table]:
 def _snapshot_id(table: Optional[Table]) -> Optional[int]:
     snapshot = table.current_snapshot() if table is not None else None
     return snapshot.snapshot_id if snapshot is not None else None
+
+
+def _unchanged_since_marker(reader: LandingReader, marker: Marker, existing: dict) -> Optional[list]:
+    """The landed objects, if nothing new has landed since `marker`; otherwise None (do the full run).
+
+    Nothing new means all of: the five tables exist and sit exactly at the marker's snapshots (not ahead of them,
+    which is a run that crashed before its marker), the listing holds exactly as many objects as the marker's run
+    indexed, and the highest last_lsn in the object names is the marker's highest_commit_lsn. Objects are never
+    overwritten (put_if_absent) and the Bronze writer cannot write or delete in the landing, so the same count and
+    the same highest LSN mean the same objects. That is a trust the full run does not need; bronze.check is the
+    full proof. Any doubt gives None. The listing is one Class A operation per 1,000 names and every name is
+    still checked against the object-name contract (LandingError).
+    """
+    if len(existing) != len(TABLE_ORDER):
+        return None
+    if not describes(marker, {name: _snapshot_id(table) for name, table in existing.items()}):
+        return None
+    listed = reader.list_keys()
+    if len(listed) != marker.landed_objects:
+        return None
+    if max((obj.last_lsn for obj in listed), default=None) != marker.highest_commit_lsn:
+        return None
+    return listed
+
+
+def _skipped_report(marker: Marker, existing: dict) -> RunReport:
+    """The report of a write run that read nothing: the marker's row counts are the landing's, because a marker is
+    written only when every table holds every key the landing holds."""
+    tables = {}
+    for name in TABLE_ORDER:
+        table, rows = existing[name], marker.tables[name].rows
+        tables[name] = TableReport(
+            table=name, existed=True, created=False, landed=rows, rows_before=rows, to_append=0,
+            objects_to_read=0, batches=0, rows_appended=0, snapshot_before=_snapshot_id(table),
+            snapshot_after=_snapshot_id(table), metadata_location=table.metadata_location)
+    return RunReport(write=True, summary=None, tables=tables,
+                     marker=MarkerReport(marker.run_id, True, None, False), index_skipped=True)
 
 
 def _plan(name: str, bronze: Optional[Table], index: Index, landed: int, *,
@@ -292,6 +333,10 @@ def run(reader: LandingReader, catalog: Catalog, store: Store, *, catalog_file: 
     marker_before = newest_marker(store)
     if marker_before is not None:
         check_against_marker(marker_before, existing)
+
+    # 1b. a write run with nothing new in the landing reads no object (a plan always does the full check)
+    if write and marker_before is not None and _unchanged_since_marker(reader, marker_before, existing) is not None:
+        return _skipped_report(marker_before, existing)
 
     # 2. pass 1
     index = build_index(reader, workers, progress, source_db=source_db)

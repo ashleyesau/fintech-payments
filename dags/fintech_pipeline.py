@@ -9,7 +9,8 @@ Task order:
 bronze_write
     python -m bronze.main --write
     Reads new CDC events from gs://cdc_landing and appends them to the five Bronze
-    Iceberg tables in gs://fintech_bronze. Runs as the bronze-writer service account.
+    Iceberg tables in gs://fintech_bronze. When nothing new has landed since the newest run
+    marker it reads no object and finishes in seconds. Runs as the bronze-writer service account.
 
 bronze_verify
     python -m bronze.check

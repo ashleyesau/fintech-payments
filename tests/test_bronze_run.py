@@ -29,7 +29,7 @@ from pyiceberg.table import Table
 from bronze.batches import arrow_schema_of, events_to_arrow
 from bronze.catalog_copy import catalog_bytes
 from bronze.check import exit_code
-from bronze.errors import (ConfigError, ContractError, DuplicateBronzeKeys, EventError, IncompleteTransactions,
+from bronze.errors import (BronzeError, ConfigError, ContractError, DuplicateBronzeKeys, EventError, IncompleteTransactions,
                            LandingChanged, LandingError, MappingError, MarkerError, TableDriftError,
                            UnknownBronzeKeys)
 from bronze.marker import encode as encode_marker
@@ -174,15 +174,102 @@ def test_a_second_run_creates_no_snapshot_no_table_and_changes_no_file(env):
         assert t.snapshot_before == t.snapshot_after == snapshots[name][-1]
 
 
-def test_a_second_run_reads_each_object_once_and_a_first_run_twice(env):
+def test_a_first_run_reads_every_object_twice(env):
     land = busy_landing()
     spy = Spy(land.sink)
-    objects = len(land.sink.objects)
     env.run(spy.reader())
-    assert spy.listings == 1 and len(spy.reads) == 2 * objects
+    assert spy.listings == 1 and len(spy.reads) == 2 * len(land.sink.objects)
+
+
+# ---------------------------------------------------------------------------
+# a write run with nothing new skips the index (bronze/run.py step 1b)
+# ---------------------------------------------------------------------------
+def test_a_second_write_run_with_nothing_new_lists_once_and_reads_no_object(env):
+    land = busy_landing()
+    spy = Spy(land.sink)
+    env.run(spy.reader(), clock=ticking())
+    marker = newest_marker(env.store)
     spy.reads.clear()
-    env.run(spy.reader())
-    assert spy.listings == 2 and len(spy.reads) == objects
+    report = env.run(spy.reader(), clock=ticking(T0 + timedelta(days=1)))
+    assert spy.listings == 2 and spy.reads == []                       # the first run's listing and this run's
+    assert report.index_skipped is True and report.summary is None
+    assert newest_marker(env.store) == marker and markers(env) == [marker.key]
+    assert (report.marker.newest, report.marker.current, report.marker.written, report.marker.catalog_copied) == (
+        marker.run_id, True, None, False)
+
+
+def test_a_skipped_run_reports_the_row_counts_and_snapshots_the_tables_really_have(env):
+    land = busy_landing()
+    env.run(land.reader())
+    snapshots, files, digest = env.snapshots(), env.files(), env.catalog_digest()
+    report = env.run(land.reader())
+    assert report.index_skipped is True
+    assert (env.snapshots(), env.files(), env.catalog_digest()) == (snapshots, files, digest)
+    for name in TABLE_ORDER:
+        t, table = report.tables[name], env.table(name)
+        assert t.existed and not t.created
+        assert t.landed == t.rows_before == len(env.rows(name))
+        assert (t.to_append, t.objects_to_read, t.batches, t.rows_appended) == (0, 0, 0, 0)
+        assert t.snapshot_before == t.snapshot_after == table.current_snapshot().snapshot_id
+        assert t.metadata_location == table.metadata_location
+
+
+def test_a_plan_never_skips_the_index_even_when_nothing_is_new(env):
+    land = busy_landing()
+    env.run(land.reader())
+    spy = Spy(land.sink)
+    report = env.run(spy.reader(), write=False)
+    assert report.index_skipped is False and report.summary is not None
+    assert len(spy.reads) == len(land.sink.objects)
+
+
+def test_a_write_run_with_a_new_object_does_the_full_run(env):
+    land = busy_landing()
+    env.run(land.reader())
+    land.transaction(("merchants", "c"), date="2025-05-05")
+    land.flush()
+    spy = Spy(land.sink)
+    report = env.run(spy.reader())
+    assert report.index_skipped is False and report.summary is not None
+    assert len(spy.reads) > len(land.sink.objects) - 1                  # pass 1 read every object
+    assert report.tables["merchants"].rows_appended == 1
+
+
+def test_a_write_run_with_the_same_count_but_a_higher_last_lsn_does_the_full_run(env):
+    land = busy_landing()
+    env.run(land.reader())
+    marker = newest_marker(env.store)
+    # one object swapped for another with a higher LSN: the count is the marker's, the highest LSN is not
+    victim = next(k for k in land.sink.objects if "merchants/" in k)
+    del land.sink.objects[victim]
+    land.transaction(("merchants", "c"), date="2025-05-05")
+    land.flush()
+    assert len(land.sink.objects) == marker.landed_objects
+    spy = Spy(land.sink)
+    with pytest.raises(BronzeError):                                    # the full run looks, and finds the gap
+        env.run(spy.reader())
+    assert len(spy.reads) > 0
+
+
+def test_a_replay_under_new_names_makes_the_count_differ_so_every_write_run_does_the_full_run(env):
+    land = busy_landing()
+    env.run(land.reader())
+    snapshots = env.snapshots()
+    land.flush(land.txs, clock=9)                                        # overlapping objects under new names
+    first = env.run(land.reader())
+    assert first.index_skipped is False and env.snapshots() == snapshots   # Bronze needed nothing from them
+    second = env.run(land.reader())                                      # the marker is not newer, so the count is stale
+    assert second.index_skipped is False and second.summary.duplicates > 0
+
+
+def test_a_table_that_moved_past_the_marker_is_not_skipped_and_the_full_run_catches_it(env):
+    land = busy_landing()
+    env.run(land.reader())
+    stray = event("merchant_transactions", "c", 0x7FFFFFF0, 0, 1)
+    append_event(env, "merchant_transactions", stray)                    # the landing is unchanged; a table is ahead
+    spy = Spy(land.sink)
+    stop = snapshots_unchanged_after(env, land, UnknownBronzeKeys)
+    assert "merchant_transactions" in str(stop)
 
 
 def test_a_plan_reads_every_object_once(env):

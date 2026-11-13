@@ -107,7 +107,12 @@ with DAG(
         retries=0,
         bash_command=(
             "rm -f /home/airflow/.config/fintech_bronze/catalog.db"
-            f" && cd {REPO} && ({VENV}/python -m bronze.main --rebuild-catalog || true)"
+            f" && cd {REPO} && ({VENV}/python -m bronze.main --rebuild-catalog"
+            " || (echo 'catalog rebuild failed, state follows' >&2"
+            " ; date -u >&2"
+            " ; ls -la --time-style=full-iso /home/airflow/.config/fintech_bronze >&2"
+            " ; (grep -a . /proc/[0-9]*/cmdline | tr '\\0' ' ' >&2 || true)"
+            " ; true))"
             f" && {VENV}/python -m bronze.main --write"
         ),
         env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_BRONZE},

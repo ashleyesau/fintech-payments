@@ -122,7 +122,7 @@ After the DAG became a layered, test-gated build. Each task was run on its own w
 | `dbt_build_dimensions` | about 50 sec (3 tables, 29 tests) |
 | `dbt_build_intermediate` | about 56 sec (2 incremental models, 4 tables, 43 tests) |
 | `dbt_build_marts` | about 70 sec (11 incremental models, 54 tests) |
-| `bronze_verify` | 56 min 36 s on 12 November 2026 (2,610 objects, 8.54M events), about 84% of that full DAG run; skipped when the landing is unchanged since a verified run marker (`force_verify` overrides) |
+| `bronze_verify` | 56 min 36 s on 12 November 2026 (2,610 objects, 8.54M events), about 84% of that full DAG run; skipped when the landing is unchanged since a verified run marker, or when `bronze_write` just read every object itself and recorded its marker as verified (`force_verify` overrides) |
 
 The four dbt layers total about 4.4 minutes. That includes about 168 data tests and a `dbt deps` per task, so it is not comparable with the 65 seconds for `dbt run --full-refresh` alone.
 
@@ -194,7 +194,7 @@ The billing cycle was not exhausted in any month where careful operation was mai
 
 The key constraint is Class A operations, dominated by the CDC consumer in `--follow` mode. The main rule: use `--once` for a production backfill. Reserve `--follow` for short streaming demos only.
 
-In November the constraint to watch is Class B. `bronze_verify` reads every landed object, about 2,610 reads, but only when something new has landed or `force_verify` is set. `bronze_write` reads none when nothing is new. A run with nothing new now costs about 300 Class B (the catalog rebuild's row-count scan) plus a few for the marker lookups, and a run with new data costs about 2,610 for the write's first pass, the new objects again, and about 2,610 for the check (estimates). With the month already at about 72% of Class B by the 10th, that leaves room for only a few runs with new data.
+In November the constraint to watch is Class B. `bronze_verify` reads every landed object, about 2,610 reads, but only when `force_verify` is set or `bronze_write` could not record its marker as verified. `bronze_write` reads none when nothing is new. A run with nothing new now costs about 300 Class B (the catalog rebuild's row-count scan) plus a few for the marker lookups, and a run with new data costs about 2,610 for the write's first pass, and the new objects again (estimates); `bronze_verify` is skipped after such a run, because `bronze_write` records its marker as verified (not yet measured on a run with new data). With the month already at about 72% of Class B by the 10th, that leaves room for only a few runs with new data.
 
 BigQuery has plenty of room: about 0.09 TiB of the 1 TiB allowance was used by the 10th of November, and one run of the dbt layers bills about 4.4 GB.
 

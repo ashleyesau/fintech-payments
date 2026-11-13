@@ -45,14 +45,16 @@ docker compose -f airflow/docker-compose.yml exec scheduler airflow dags unpause
 ```bash
 rm -f /home/airflow/.config/fintech_bronze/catalog.db \
   && (python -m bronze.main --rebuild-catalog || true) \
-  && python -m bronze.main --write
+  && python -m bronze.main --write --verified-marker-file /tmp/bronze_verified_marker \
+  && airflow variables set bronze_last_verified_marker "$(cat /tmp/bronze_verified_marker)"
 ```
 
-Three steps in one shell command:
+Four steps in one shell command (the DAG's version also prints the catalog folder and the running processes if the rebuild fails, and skips the last step when no verified marker was recorded):
 
 1. **Delete the local catalog file.** The Airflow container filesystem is ephemeral. If a catalog from a previous run exists, `--rebuild-catalog` refuses to overwrite it. Deleting it first is safe because the catalog is a cache, not the source of truth.
 2. **Rebuild the catalog** from the newest run marker in GCS. The `|| true` means a fresh Bronze bucket with no marker does not fail the task.
 3. **Write.** Read the landing, append new events to the Iceberg tables, write the run marker and catalog copy.
+4. **Record the marker as verified**, only when the write's first pass read every landed object (not when the write skipped its index). `bronze_verify` then skips, because that pass and `bronze.check` are the same index build.
 
 Runs with `GOOGLE_APPLICATION_CREDENTIALS` set to the bind-mounted `bronze_writer.json` file.
 
@@ -78,7 +80,7 @@ Reads every landed object, validates every event against the change-event contra
 
 Runs with `bronze_writer.json` credentials.
 
-**When it is skipped.** The check takes about an hour at 8.5M events (56 min 36 s on 12 November 2026) and reads every landed object, so it is skipped when the landing has not changed since a run marker that already passed it. The script reads the newest run marker (`python -m bronze.check --newest-marker`: one listing and one read, no landed object) and compares its id with the Airflow Variable `bronze_last_verified_marker`. If they are equal the task exits 99 and Airflow shows it as skipped. Otherwise it runs the check, and when the check passes it records the newest marker's id in the Variable. `bronze_write` runs first, so anything new in the landing has already produced a newer marker by the time this task starts. The skip trusts that landed objects are never overwritten, as the `bronze_write` skip does. If the Variable is lost or empty, the check simply runs.
+**When it is skipped.** The check takes about an hour at 8.5M events (56 min 36 s on 12 November 2026) and reads every landed object, so it is skipped when the landing has not changed since a run marker that already passed it. The script reads the newest run marker (`python -m bronze.check --newest-marker`: one listing and one read, no landed object) and compares its id with the Airflow Variable `bronze_last_verified_marker`. If they are equal the task exits 99 and Airflow shows it as skipped. Otherwise it runs the check, and when the check passes it records the newest marker's id in the Variable. `bronze_write` runs first, so anything new in the landing has already produced a newer marker by the time this task starts. When that run read every landed object itself, because pass 1 is the same index build as `bronze.check`, it records the new marker as verified (`--verified-marker-file`, then `airflow variables set`), so this task is skipped after a run with new data too. A run that skipped its own index records nothing. If `bronze.check` ever gains a check that pass 1 does not make, remove `--verified-marker-file` from the `bronze_write` command, or this task would skip it. The skip trusts that landed objects are never overwritten, as the `bronze_write` skip does. If the Variable is lost or empty, the check simply runs.
 
 `register_bq` has `trigger_rule="none_failed"`, so it runs after a skipped `bronze_verify` but still stops if `bronze_verify` fails.
 
@@ -197,7 +199,7 @@ Each step is idempotent. A re-trigger after the problem is fixed will:
 | Task | Behaviour on re-trigger |
 |---|---|
 | `bronze_write` | Skips events already written (content-hash idempotency). Writes any new ones. |
-| `bronze_verify` | Re-reads the landing and re-checks, unless the newest run marker already passed (then skipped; use `force_verify` to check again). |
+| `bronze_verify` | Re-reads the landing and re-checks, unless the newest run marker already passed, which includes a run where `bronze_write` read every landed object itself (then skipped; use `force_verify` to check again). |
 | `register_bq` | Re-points all five external tables to the current Bronze state. |
 | `dbt_marts` | Rebuilds all 11 mart tables with `--full-refresh`. |
 | `dbt_test` | Re-runs all schema tests. |

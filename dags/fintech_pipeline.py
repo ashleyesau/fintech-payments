@@ -113,7 +113,10 @@ with DAG(
             " ; ls -la --time-style=full-iso /home/airflow/.config/fintech_bronze >&2"
             " ; (grep -a . /proc/[0-9]*/cmdline | tr '\\0' ' ' >&2 || true)"
             " ; true))"
-            f" && {VENV}/python -m bronze.main --write"
+            f" && {VENV}/python -m bronze.main --write --verified-marker-file /tmp/bronze_verified_marker"
+            " && { [ ! -s /tmp/bronze_verified_marker ]"
+            " || airflow variables set bronze_last_verified_marker \"$(cat /tmp/bronze_verified_marker)\""
+            " || echo 'warning: could not record the verified marker, so bronze_verify will check the landing' >&2; }"
         ),
         env={"GOOGLE_APPLICATION_CREDENTIALS": CREDS_BRONZE},
         append_env=True,

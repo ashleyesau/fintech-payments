@@ -149,7 +149,7 @@ def test_the_scanner_sees_the_real_flags():
     """The scanner must not go blind (a renamed decorator would make 'no flags found' look like a pass)."""
     commands, problems = code_commands(ROOT)
     assert problems == []
-    assert commands["python -m bronze.main"] == {"--write", "--rebuild-catalog"}
+    assert commands["python -m bronze.main"] == {"--write", "--rebuild-catalog", "--verified-marker-file"}
     assert commands["python -m cdc.main"] == {"--once", "--follow"}
     assert commands["scripts/storage_request_counts.py"] == {"--project", "--start", "--first-end", "--end", "--planned-a"}
     assert commands["scripts/capture_pgoutput_fixtures.py"] == set()

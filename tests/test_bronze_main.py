@@ -610,10 +610,67 @@ def test_the_flags_reach_execute_and_nothing_is_written_by_default(monkeypatch):
     seen = []
     monkeypatch.setattr(main_module, "execute", lambda settings, **kwargs: seen.append(kwargs) or 0)
     assert main([]) == 0 and main(["--write"]) == 0 and main(["--rebuild-catalog"]) == 0
-    assert seen == [{"write": False, "rebuild": False}, {"write": True, "rebuild": False},
-                    {"write": False, "rebuild": True}]
+    assert seen == [{"write": False, "rebuild": False, "verified_marker_file": None},
+                    {"write": True, "rebuild": False, "verified_marker_file": None},
+                    {"write": False, "rebuild": True, "verified_marker_file": None}]
 
 
 def test_the_exit_code_of_execute_is_the_exit_code_of_the_command(monkeypatch):
     monkeypatch.setattr(main_module, "execute", lambda settings, **kwargs: 2)
     assert main(["--write"]) == 2
+
+
+def test_a_write_records_the_new_marker_as_verified_in_the_file_it_is_given(command, env, tmp_path):
+    path = tmp_path / "verified"
+    code, out, err = command(write=True, verified_marker_file=path)
+    assert code == 0 and errors(err) == []
+    marker = newest_marker(env.store)
+    assert path.read_text() == marker.run_id + "\n"
+    assert f"verified marker: {marker.run_id}" in out
+
+
+def test_a_write_that_skipped_the_index_leaves_no_file_and_removes_a_stale_one(command, env, tmp_path):
+    command(write=True)
+    path = tmp_path / "verified"
+    path.write_text("stale\n")
+    code, out, err = command(write=True, verified_marker_file=path)
+    assert code == 0 and errors(err) == [] and "the index was skipped" in out
+    assert not path.exists()
+
+
+def test_a_failed_write_leaves_no_verified_marker_file(env, creds, monkeypatch, tmp_path):
+    land = spread_landing(6)
+    objects = len(land.sink.objects)
+    state = {"n": 0}
+
+    def fail(key, n):
+        state["n"] += 1
+        if state["n"] == objects + 4:
+            raise SinkError("injected: the bucket gave up")
+
+    command = Command(env, land, creds, settings_for(env, monkeypatch, batch_rows=1, read_workers=1),
+                      source=type("S", (), {"reader": lambda self: Spy(land.sink, fail).reader()})())
+    path = tmp_path / "verified"
+    path.write_text("stale\n")
+    code, out, err = command(write=True, verified_marker_file=path)
+    assert code == 3
+    assert not path.exists()
+
+
+def test_the_verified_marker_file_without_write_is_a_usage_error_before_anything_is_opened(command, tmp_path):
+    path = tmp_path / "verified"
+    code, out, err = command(verified_marker_file=path)
+    assert code == 1 and len(errors(err)) == 1 and "needs --write" in errors(err)[0]
+    assert command.opened == [] and not path.exists()
+
+
+def test_a_write_over_an_existing_marker_records_the_new_one_as_verified(command, env, tmp_path):
+    command(write=True)
+    old = newest_marker(env.store).run_id
+    command.land.transaction(("merchants", "c"), ("merchant_transactions", "c"), date="2025-05-05")
+    command.land.flush()
+    path = tmp_path / "verified"
+    code, out, err = command(write=True, verified_marker_file=path)
+    new = newest_marker(env.store).run_id
+    assert code == 0 and errors(err) == [] and new != old
+    assert path.read_text() == new + "\n"

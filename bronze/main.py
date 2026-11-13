@@ -31,6 +31,8 @@ and one line per committed batch. The report goes to stdout.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import sys
 import time
 import traceback
@@ -135,6 +137,7 @@ def _marker_line(report: RunReport) -> str:
 
 
 def execute(settings: BronzeSettings, *, write: bool = False, rebuild: bool = False,
+            verified_marker_file: Optional[Path] = None,
             landing_factory: Optional[Callable[[BronzeSettings, Optional[Mapping[str, str]]], LandingReader]] = None,
             store_factory: Optional[Callable[[BronzeSettings, Optional[Mapping[str, str]]], Store]] = None,
             catalog_factory: Optional[Callable[[BronzeSettings], Catalog]] = None,
@@ -166,6 +169,10 @@ def execute(settings: BronzeSettings, *, write: bool = False, rebuild: bool = Fa
         if write and rebuild:
             raise ConfigError("--write and --rebuild-catalog cannot be used together: a rebuild only registers the "
                               "tables in an empty catalog and writes nothing to the bucket")
+        if verified_marker_file is not None:
+            if not write:
+                raise ConfigError("--verified-marker-file needs --write: only a write run records a verified marker")
+            verified_marker_file.unlink(missing_ok=True)
         credentials = require_credentials(environ)
         store = (store_factory or open_store)(settings, environ)
         catalog = (catalog_factory or open_catalog)(settings)
@@ -208,6 +215,16 @@ def execute(settings: BronzeSettings, *, write: bool = False, rebuild: bool = Fa
     say(render_tables(report))
     say("")
     say(_marker_line(report))
+    if verified_marker_file is not None and not report.index_skipped:
+        verified = report.marker.written or report.marker.newest
+        if verified:
+            try:
+                verified_marker_file.write_text(verified + "\n")
+            except OSError as error:
+                complain(f"warning: could not write {verified_marker_file} ({error}); "
+                         "bronze_verify will check the landing")
+            else:
+                say(f"verified marker: {verified}, pass 1 read every landed object in this run")
     seconds = clock() - started
     if write:
         m = report.marker
@@ -238,10 +255,16 @@ def execute(settings: BronzeSettings, *, write: bool = False, rebuild: bool = Fa
 @click.option("--rebuild-catalog", "rebuild", is_flag=True,
               help="Register the five tables in an empty local catalog from the newest run marker, after the catalog "
                    "file was lost. Writes nothing to the bucket; cannot be combined with --write.")
-def cli(write: bool, rebuild: bool) -> None:
+@click.option("--verified-marker-file", "verified_marker_file",
+              type=click.Path(dir_okay=False, path_type=Path), default=None,
+              help="With --write: when pass 1 read every landed object and the run finished, write the id of "
+                   "the run marker that now describes the landing to this file. The file is removed when the "
+                   "command starts, so it exists only after such a run.")
+def cli(write: bool, rebuild: bool, verified_marker_file: Optional[Path]) -> None:
     """Bring the Bronze Iceberg tables up to date with the landed CDC objects. Needs GOOGLE_APPLICATION_CREDENTIALS
     set to the bronze-writer credentials file."""
-    sys.exit(execute(BronzeSettings(), write=write, rebuild=rebuild))
+    sys.exit(execute(BronzeSettings(), write=write, rebuild=rebuild,
+                     verified_marker_file=verified_marker_file))
 
 
 def main(argv: Optional[list[str]] = None) -> int:

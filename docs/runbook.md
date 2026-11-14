@@ -321,7 +321,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/bronze_credentials.json python -m bronze
 6. Writes the run marker to `_runs/`
 7. Copies the catalog to `_catalog/catalog.db`
 
-A second `--write` over the same landing writes nothing. A failure mid-way leaves committed batches; running again continues from there.
+A second `--write` over the same landing writes nothing, and when nothing new has landed since the newest run marker it does not read the landing at all. A failure mid-way leaves committed batches; running again continues from there.
 
 **`--rebuild-catalog`:** registers the five tables in an empty local catalog from the newest run marker, after the catalog file was lost. Cannot be combined with `--write`.
 
@@ -406,6 +406,7 @@ The list is printed before anything is deleted. Read it first. **Soft delete is 
 | Exit 2 "catalog behind marker" | Run `--rebuild-catalog`. |
 | Exit 2 "pass 2 did not match pass 1" | The landing changed during the run. Run again when nothing is landing. |
 | Exit 3 (bucket failed during write) | Error says how many batches committed. Run again; it continues from there. |
+| `--rebuild-catalog` fails with a SQLite error (`table iceberg_tables already exists`, `UNIQUE constraint failed`, `attempt to write a readonly database`) | Intermittent in the Airflow container, cause unknown. The data is not at risk, because the catalog is a cache rebuilt from the run marker. In the DAG the `|| true` hides the failure and the write then refuses to run ("Nothing was written", exit 2). Run again. If it recurs, keep the complete task log from the top, which includes the time, the catalog folder with timestamps and the running processes. |
 
 ---
 
@@ -425,7 +426,7 @@ The list is printed before anything is deleted. Read it first. **Soft delete is 
 | `bronze.main` (plan) | ~3 | ~2,610 |
 | `bronze.main --write`, nothing new since the newest run marker | ~3 | ~1 to 10 (marker and table metadata; no landed object is read) |
 | `bronze.main --write` (new data to append) | ~190 to 220 | ~2,610 (pass 1) plus the new objects again (pass 2) |
-| `bronze.main --rebuild-catalog` | ~1 | ~300 |
+| `bronze.main --rebuild-catalog` | ~1 | not measured. About 300 was an estimate (a row-count scan over the Bronze data files), and the November counts suggest it is higher. |
 
 A `--write` run skips reading the landing when nothing is new: the tables are at the newest run marker's snapshots, the listing holds the marker's number of objects, and the highest `last_lsn` in the object names is the marker's `highest_commit_lsn`. It trusts that landed objects are never overwritten. Any doubt (a count or LSN that differs, a table ahead of the marker) does the full run. A plan (no `--write`) and `bronze.check` always read and check every object, so use them when you want the full proof.
 
@@ -437,6 +438,8 @@ env -u GOOGLE_APPLICATION_CREDENTIALS PYTHONPATH=. python scripts/storage_reques
 ```
 
 **When Class A headroom is low:** use `bronze.check` without `--roundtrip`. Defer `bronze.verify` to the next billing month.
+
+**When Class B headroom is low:** a DAG run, `bronze.check`, `bronze.verify` and `cdc.reconcile` all read many objects. On 13 November 2026 the month stood at 98.2% of Class B (49,085 of 50,000) and 68.3% of Class A, so runs were held until the new month. Check the standing before any run that reads the landing.
 
 ---
 

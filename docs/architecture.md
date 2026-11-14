@@ -21,7 +21,7 @@ Lightdash Cloud
   |-- queries BigQuery directly
 ```
 
-Airflow (DAG `fintech_pipeline`) runs the last five steps in sequence: `bronze_write >> bronze_verify >> register_bq >> dbt_marts >> dbt_test`. The generator and CDC consumer run independently before Airflow is triggered.
+Airflow (DAG `fintech_pipeline`) runs the last eight tasks in sequence: `bronze_write >> bronze_verify >> register_bq >> check_bq_schema >> dbt_build_staging >> dbt_build_dimensions >> dbt_build_intermediate >> dbt_build_marts`. The generator and CDC consumer run independently before Airflow is triggered.
 
 ---
 
@@ -90,9 +90,9 @@ Converts the landed NDJSON events into Apache Iceberg tables on GCS.
 - Pass 1: builds a streaming index of the landing. Records the event count, first-copy object number per key, and a content hash for each object.
 - Pass 2: reads the same objects again. Converts each event to an Arrow `RecordBatch` and commits in batches of 100,000 rows. Arrow matches Iceberg's columnar write path and keeps peak memory bounded.
 
-**Catalog.** PyIceberg uses a SQLite file as a local catalog. After each write, the catalog is rebuilt from the newest run marker in `gs://fintech_bronze/_runs/`. If the catalog file is lost, `--rebuild-catalog` reconstructs it without reading any landed objects.
+**Catalog.** PyIceberg uses a SQLite file as a local catalog. After each write, the catalog is rebuilt from the newest run marker in `gs://fintech_bronze/_runs/`. If the catalog file is lost, `--rebuild-catalog` reconstructs it without reading any landed objects (it does a row-count scan over the Bronze data files). In the DAG the catalog is deleted and rebuilt at the start of every `bronze_write`.
 
-**Idempotency.** A second `--write` over the same landing writes nothing. A refused object creation (HTTP 412) triggers a content comparison. Equal means success. Different stops the writer.
+**Idempotency.** A second `--write` over the same landing writes nothing, and when nothing new has landed since the newest run marker it does not read the landing at all. A refused object creation (HTTP 412) triggers a content comparison. Equal means success. Different stops the writer.
 
 **Crash recovery.** Three commit points inside a Parquet write are tested under injected failure: data files written, manifest written, manifest list written. After any crash, `bronze.orphans` finds and removes unused files. See `tests/test_bronze_crash.py`.
 
@@ -139,11 +139,14 @@ Eight dashboards: GPV Overview, Portfolio Quality, Settlement Reconciliation, Re
 
 Airflow 2.9.3 on Docker Compose with LocalExecutor. Three services: a Postgres container for Airflow metadata, the webserver, and the scheduler.
 
-The DAG `fintech_pipeline` runs five tasks in sequence:
+The DAG `fintech_pipeline` runs eight tasks in sequence:
 
 ```
-bronze_write >> bronze_verify >> register_bq >> dbt_marts >> dbt_test
+bronze_write >> bronze_verify >> register_bq >> check_bq_schema
+    >> dbt_build_staging >> dbt_build_dimensions >> dbt_build_intermediate >> dbt_build_marts
 ```
+
+`bronze_verify` is skipped when the landing has not changed since a verified run marker, and each dbt layer runs its tests with its models so a failing test stops the later layers.
 
 Each task is a `BashOperator` running inside an isolated Python virtualenv (`/opt/pipeline-venv`). This isolates the pipeline from a SQLAlchemy version conflict between Airflow (1.4.x) and PyIceberg (requires 2.x). Credential files are bind-mounted into the container at paths set in `airflow/.env`.
 

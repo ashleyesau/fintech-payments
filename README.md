@@ -19,7 +19,7 @@ This is a simplified version of what takes whole engineering teams to build. Clo
 - **Generates** stateful merchant and transaction history. Merchants activate, grow, stress, churn. Loans disburse and collect. Risk events fire from real causal rules. The largest run onboarded 1,185 merchants and produced 8.5 million events over 15 simulated months.
 - **Captures** every change from Postgres WAL via a custom `pgoutput` consumer, landing gzipped NDJSON to Google Cloud Storage without touching the source database.
 - **Writes** those events into Apache Iceberg Bronze tables on GCS, one Parquet file set per table and partition, with a full crash-recovery and idempotency proof.
-- **Transforms** through dbt: five staging views, eight intermediate models and eleven mart fact tables in BigQuery, rebuilt on each pipeline run.
+- **Transforms** through dbt: five staging views, eight intermediate models and eleven mart fact tables in BigQuery, built layer by layer with tests gating each layer; the large intermediate and mart models are incremental.
 - **Visualises** in Lightdash Cloud: eight dashboards covering GPV, settlement, lending portfolio quality, revenue, merchant health, and risk.
 
 ---
@@ -135,7 +135,6 @@ The full operational runbook, including CDC setup, Bronze write, BigQuery regist
 - [Data model](docs/data-model.md): schemas, layers, key tables, lineage
 - [Orchestration](docs/orchestration.md): DAG design, scheduling, failure handling
 - [Cost and performance](docs/cost-and-performance.md): GCS operations, timing, optimisations, BigQuery cost
-- [Warehouse cost study](docs/warehouse-cost-study.md): measured BigQuery cost of the dbt layers and the changes made to cut it
 - [Design decisions](docs/design-decisions.md): trade-offs and what went wrong first
 
 ---

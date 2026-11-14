@@ -4,7 +4,7 @@ The pipeline runs on GCP's Always Free tier for GCS: 5 GB storage, 5,000 Class A
 
 All GCS figures come from Google Cloud Monitoring billing estimates and `scripts/storage_request_counts.py`.
 
-BigQuery costs for the dbt layers come from dbt run results and BigQuery job statistics. They are summarised in [BigQuery cost (dbt layers)](#bigquery-cost-dbt-layers) below and measured in full in the [warehouse cost study](warehouse-cost-study.md). The BigQuery free tier is 1 TiB of queries and 10 GiB of storage per month.
+BigQuery costs for the dbt layers come from dbt run results and BigQuery job statistics. They are summarised in [BigQuery cost (dbt layers)](#bigquery-cost-dbt-layers) below and measured in full in the warehouse cost study (kept outside the repo). The BigQuery free tier is 1 TiB of queries and 10 GiB of storage per month.
 
 - **Class A**: writes, listings, object creates
 - **Class B**: reads
@@ -33,7 +33,7 @@ For the 1,000-merchant run (8,537,090 events):
 
 The partition-by-month design keeps the Class A count low. Without it, a per-day partition would produce roughly 10x more data files.
 
-A no-op write (all events already in Bronze) cost about 2,610 Class B plus one `_runs/` listing. Since 12 November 2026 a write run that finds nothing new since the newest run marker reads no landed object (see below); the figures in this document for a no-op run were measured before that change.
+A no-op write (all events already in Bronze) cost about 2,610 Class B plus one `_runs/` listing. Since 12 November 2026 a write run that finds nothing new since the newest run marker reads no landed object (see below); the figures in this document for a no-op run were measured before that change. The catalog rebuild that precedes every DAG write is separate: it scans the Bronze data files and costs Class B against `fintech_bronze`. The earlier estimate of about 300 per run is withdrawn, because the counts of 13 November suggest it is higher; one nothing-new run has not yet been measured with before-and-after counts.
 
 On 10 November 2026 a failed and a passing `bronze_write` attempt together raised the month's Class B count by about 3,600, which is consistent with that figure for the passing run.
 
@@ -62,6 +62,14 @@ By the 10th of November, before the first end-to-end Airflow run, the month had 
 - **~32,300 to 35,700 Class B** (65% to 72% of 50,000)
 
 `cdc_landing` is the largest source (about 23,000 Class B, almost all object reads). The script's cumulative counts shifted slightly between runs, so these are ranges. They are request counts, not invoice amounts.
+
+### Month totals (November 2026, to the 13th)
+
+Measured on 13 November 2026 at 18:18 UTC, month to date:
+- **3,415 to 3,416 Class A** (68.3% of 5,000; 3,408 by Google's billable estimate)
+- **49,085 Class B** (98.2% of 50,000; 48,894 by Google's billable estimate)
+
+By bucket, Class B was `cdc_landing` 32,532, `fintech_bronze` 16,500 and the Terraform state bucket 53. Class B rose by 7,718 between 10 and 13 November, which fits one full `bronze_verify` plus many catalog rebuilds and task tests, but the split was not measured. No pipeline runs are planned until the new month. The script's class mapping is its own and is not verified against Google's table.
 
 ---
 
@@ -97,9 +105,9 @@ The 1,000-merchant run consumed 8.95 million changes in two runs (a WiFi interru
 
 Bronze was reset before the 124-minute run. Before 12 November 2026 a rerun that appended nothing still read every landed object (pass 1). In Airflow it took about 40 minutes, about a third of the fresh write. The local scaling runs found 47% to 53%. That matches the per-event cost of pass 1 measured on the Air (about 271 microseconds an event, 8.54M events, about 39 minutes).
 
-A write run now skips pass 1 when the landing is unchanged since the newest run marker (tables at the marker's snapshots, the marker's object count, the marker's highest LSN). It lists the landing once and reads the marker, so it should take well under a minute and about 1 to 10 Class B. This has been tested on the local warehouse only; the time on the real bucket has not been measured. A run with new data still does the full two passes.
+A write run now skips pass 1 when the landing is unchanged since the newest run marker (tables at the marker's snapshots, the marker's object count, the marker's highest LSN). It lists the landing once and reads the marker, so it should take well under a minute and about 1 to 10 Class B. On the real bucket, the write step took 32 s and read zero landed objects (12 November 2026, three tests). A run with new data still does the full two passes.
 
-The 124-minute run (about 1,150 events per second) and the local 11.0M-event run (about 3,300 events per second) have not been reconciled. They differ in run, environment (Airflow in Docker against the host) and size.
+The 124-minute run is the 7 November fresh write of 8,537,090 events: pass 1 read all 2,610 objects in about 42 minutes (about 3,400 events per second) and pass 2 took about 82 minutes (about 1,700 events per second) in 87 commits. A 100,000-row batch of `merchant_transactions` took about 56 s on average, and the three small tables took 37 to 44 s per commit, which suggests a large fixed cost per commit. Whether that cost is network delay or compression is unmeasured. A local 400,000-event run on 13 November reached about 2,000 events per second natively and about 1,830 in Docker, so Docker costs about 10% and is not the main source of slowness.
 
 ### Airflow DAG
 
@@ -110,6 +118,16 @@ Before 10 November 2026 (1,000-merchant run, one `dbt_marts` task running `dbt r
 | `bronze_write` | 124 min |
 | `register_bq` | 23 sec |
 | `dbt_marts` | 65 sec |
+
+Measured full DAG runs (1,000-merchant run, nothing new landed):
+
+| Run | Total | Notes |
+|---|---|---|
+| 10 November 2026 | 1 h 35 min | `bronze_write` about 53 min, `bronze_verify` about 38 min |
+| 12 November 2026 | 1 h 7 min 34 s | After the `bronze_write` skip; `bronze_verify` 56 min 36 s |
+| 12 November 2026, 21:25 UTC | 11 min 33 s | After both skips |
+
+A run with new data was last measured at about 2 h 6 min (7 November, `bronze_write` about 124 min). A small increment is estimated at about 1 hour; that has not been measured.
 
 After the DAG became a layered, test-gated build. Each task was run on its own with `airflow tasks test` on 10 November 2026. Durations come from task-log timestamps and are approximate:
 
@@ -130,7 +148,7 @@ The four dbt layers total about 4.4 minutes. That includes about 168 data tests 
 
 ## BigQuery cost (dbt layers)
 
-Measured on synthetic data at 1,000 merchants (8.3M transactions). Bytes billed is the cost metric; BigQuery bills at least 10 MiB per table queried. The full method, estimates and limitations are in the [warehouse cost study](warehouse-cost-study.md). Every figure is a single run.
+Measured on synthetic data at 1,000 merchants (8.3M transactions). Bytes billed is the cost metric; BigQuery bills at least 10 MiB per table queried. The full method, estimates and limitations are in the warehouse cost study (kept outside the repo). Every figure is a single run.
 
 - A full rebuild of the 25-model graph billed 5.115 GB (38.2 s wall clock). Four models account for 94% of it.
 - The two large intermediates and two large marts were then made incremental, partitioned and bounded by a literal date. Output was checked identical against copies of the old tables.
@@ -142,7 +160,7 @@ Measured on synthetic data at 1,000 merchants (8.3M transactions). Bytes billed 
 | `fct_settlement_daily` | 991 MB | not attributed | 223 MB (-77%) |
 | `fct_revenue_daily` | 459 MB | not attributed | 105 MB (-77%) |
 
-- A whole run of the four dbt layers in Airflow, models and tests together, billed 4.379 GB across 200 jobs, about 0.4% of the monthly free allowance. A model-only estimate is about 1.2 GB. The rest is probably the roughly 168 data tests, each of which bills at least 10 MiB, but the split has not been measured.
+- A whole run of the four dbt layers in Airflow, models and tests together, billed 4.379 GB across 205 jobs, about 0.4% of the monthly free allowance. The 168 data tests billed 3.002 GB (68.6%) and the 37 model and other jobs billed 1.377 GB (31.4%), about 73% below the 5.115 GB full-refresh baseline. The baseline covered the 25 models only and did not include the tests.
 - The enriched model cost about three times its dry-run estimate. The cause has not been investigated.
 
 ---
@@ -190,14 +208,14 @@ The initial cap of 3 GB was too small. The 1,000-merchant backfill produced roug
 
 ## Free tier headroom
 
-The billing cycle was not exhausted in any month where careful operation was maintained.
+Before November the billing cycle was not exhausted in any month.
 
-The key constraint is Class A operations, dominated by the CDC consumer in `--follow` mode. The main rule: use `--once` for a production backfill. Reserve `--follow` for short streaming demos only.
+In November the binding constraint is Class B. By 13 November the month had used 98.2% of the 50,000 Class B allowance (49,085) and 68.3% of Class A. `bronze_verify` reads every landed object, about 2,610 reads, but only when `force_verify` is set or `bronze_write` could not record its marker as verified. `bronze_write` reads no landed object when nothing is new, but the catalog rebuild before it still costs Class B reads against `fintech_bronze`, and the cost of one run is unmeasured. A run with new data is estimated at about 2,610 for the write's first pass plus the new objects again, with `bronze_verify` skipped if the write records its marker as verified (not yet measured on a run with new data).
 
-In November the constraint to watch is Class B. `bronze_verify` reads every landed object, about 2,610 reads, but only when `force_verify` is set or `bronze_write` could not record its marker as verified. `bronze_write` reads none when nothing is new. A run with nothing new now costs about 300 Class B (the catalog rebuild's row-count scan) plus a few for the marker lookups, and a run with new data costs about 2,610 for the write's first pass, and the new objects again (estimates); `bronze_verify` is skipped after such a run, because `bronze_write` records its marker as verified (not yet measured on a run with new data). With the month already at about 72% of Class B by the 10th, that leaves room for only a few runs with new data.
+Any of these would exceed the allowance this month. At the unconfirmed overage rate of about $0.0004 per 1,000 Class B the excess would cost under a cent, but the decision is to stay inside the free tier, so no pipeline runs are planned until the new month. Class A, dominated by the CDC consumer in `--follow` mode, remains the other limit: use `--once` for a backfill and reserve `--follow` for short streaming demos.
 
-BigQuery has plenty of room: about 0.09 TiB of the 1 TiB allowance was used by the 10th of November, and one run of the dbt layers bills about 4.4 GB.
+BigQuery has plenty of room: 108.71 GiB of the 1 TiB query allowance (10.6%) and 3.38 GiB of the 10 GiB storage allowance were used by 13 November, and one run of the dbt layers bills about 4.4 GB.
 
 ---
 
-*For the DAG that runs these steps, see [Orchestration](orchestration.md). For the data layout that determines how many files are written, see [Data model](data-model.md). For the BigQuery measurements, see the [warehouse cost study](warehouse-cost-study.md).*
+*For the DAG that runs these steps, see [Orchestration](orchestration.md). For the data layout that determines how many files are written, see [Data model](data-model.md). For the BigQuery measurements, see the warehouse cost study (kept outside the repo).*

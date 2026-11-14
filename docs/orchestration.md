@@ -6,13 +6,18 @@ The pipeline uses Apache Airflow 2.9.3 on Docker Compose with a LocalExecutor. T
 
 ## Overview
 
-The DAG `fintech_pipeline` has five tasks:
+The DAG `fintech_pipeline` has eight tasks:
 
 ```
-bronze_write >> bronze_verify >> register_bq >> dbt_marts >> dbt_test
+bronze_write >> bronze_verify >> register_bq >> check_bq_schema
+    >> dbt_build_staging >> dbt_build_dimensions >> dbt_build_intermediate >> dbt_build_marts
 ```
 
-Each task is a `BashOperator`. Each depends on the previous one succeeding. If a task fails, the DAG run stops and downstream tasks do not execute.
+Each task is a `BashOperator`. Each depends on the previous one succeeding, with one exception: `register_bq` also runs when `bronze_verify` is skipped. If a task fails, the DAG run stops and downstream tasks do not execute.
+
+Tasks retry twice with a five-minute delay (`default_args`), except `bronze_write`, which has `retries=0`.
+
+Each `dbt_build_*` task runs `dbt build`, which runs the layer's models and its tests together, so a failing test stops every later layer. Tests tagged `periodic` are excluded and run only by hand (`dbt test -s tag:periodic`).
 
 The generator and CDC consumer are not Airflow tasks. They run separately to load new data before the DAG is triggered. The DAG assumes the GCS landing bucket already has data when it runs.
 
@@ -23,20 +28,28 @@ The generator and CDC consumer are not Airflow tasks. They run separately to loa
 ```python
 DAG(
     dag_id="fintech_pipeline",
-    schedule=None,          # manual trigger only by default
+    schedule=None,
     start_date=datetime(2026, 11, 6, tzinfo=timezone.utc),
     catchup=False,
     tags=["fintech", "bronze", "dbt"],
+    default_args={"retries": 2, "retry_delay": timedelta(minutes=5)},
 )
 ```
 
-`schedule=None` means the DAG only runs when triggered manually. To enable a cron schedule, set `schedule="0 6 * * *"` (06:00 UTC, 08:00 SAST) in `dags/fintech_pipeline.py` and unpause from the UI:
+`schedule=None` means the DAG only runs when triggered manually. Do not enable a schedule until the catalog rebuild failures in the `bronze_write` section are understood or an alerting and retry policy is decided. To enable a cron schedule, set `schedule="0 6 * * *"` (06:00 UTC, 08:00 SAST) in `dags/fintech_pipeline.py` and unpause from the UI:
 
 ```bash
 docker compose -f airflow/docker-compose.yml exec scheduler airflow dags unpause fintech_pipeline
 ```
 
 `catchup=False` means Airflow will not try to run past missed intervals if the schedule is re-enabled.
+
+**Params.** Two boolean params are set in the trigger form or with `--conf`:
+
+| Param | Default | Effect |
+|---|---|---|
+| `full_refresh` | false | Passes `--full-refresh` to every dbt layer. For controlled rebuilds only. |
+| `force_verify` | false | Makes `bronze_verify` check every landed object even if the landing is unchanged since a verified run marker. |
 
 ---
 
@@ -49,14 +62,14 @@ rm -f /home/airflow/.config/fintech_bronze/catalog.db \
   && airflow variables set bronze_last_verified_marker "$(cat /tmp/bronze_verified_marker)"
 ```
 
-Four steps in one shell command (the DAG's version also prints the catalog folder and the running processes if the rebuild fails, and skips the last step when no verified marker was recorded):
+Four steps in one shell command (the DAG's version also prints the time, the catalog folder and the running processes if the rebuild fails, and skips the last step when no verified marker was recorded):
 
 1. **Delete the local catalog file.** The Airflow container filesystem is ephemeral. If a catalog from a previous run exists, `--rebuild-catalog` refuses to overwrite it. Deleting it first is safe because the catalog is a cache, not the source of truth.
-2. **Rebuild the catalog** from the newest run marker in GCS. The `|| true` means a fresh Bronze bucket with no marker does not fail the task.
-3. **Write.** Read the landing, append new events to the Iceberg tables, write the run marker and catalog copy.
-4. **Record the marker as verified**, only when the write's first pass read every landed object (not when the write skipped its index). `bronze_verify` then skips, because that pass and `bronze.check` are the same index build.
+2. **Rebuild the catalog** from the newest run marker in GCS. The rebuild registers the five tables from the marker and includes a row-count scan over the Bronze data files (5 to 7 minutes, and Class B reads against `fintech_bronze`; the Class B cost of one run has not been measured). The `|| true` means a fresh Bronze bucket with no marker does not fail the task. If the rebuild fails, the command prints the time, the catalog folder with timestamps and the running processes, so the cause can be investigated.
+3. **Write.** If nothing new has landed since the newest run marker, the write reads no landed object and finishes in seconds (32 s measured on 12 November 2026). Otherwise it reads the landing, appends new events to the Iceberg tables, and writes the run marker and catalog copy.
+4. **Record the marker as verified**, only when the write's first pass read every landed object (not when the write skipped its index). `bronze_verify` then skips, because that pass and `bronze.check` are the same index build. This step has unit tests only and has not yet been run against a real new-data run.
 
-Runs with `GOOGLE_APPLICATION_CREDENTIALS` set to the bind-mounted `bronze_writer.json` file.
+Runs with `GOOGLE_APPLICATION_CREDENTIALS` set to the bind-mounted `bronze_writer.json` file. `retries=0`, because the task appends; re-trigger by hand after a failure.
 
 **What can go wrong:**
 
@@ -65,13 +78,16 @@ Runs with `GOOGLE_APPLICATION_CREDENTIALS` set to the bind-mounted `bronze_write
 | No new objects in the landing since the last run | Writes nothing. Exits 0. |
 | Missing or inaccessible credentials file | Exits 3 before any GCS operation. |
 | Schema drift in the landing | Stops before any rows are appended. |
+| Catalog rebuild fails | The `|| true` hides it. The write then refuses to run against an incomplete catalog, prints "Nothing was written" and exits 2. The data is not at risk. Re-trigger. |
+
+**Known issue: intermittent catalog rebuild failures.** The rebuild has failed intermittently with three different SQLite errors: `table iceberg_tables already exists` (10 November 2026), `UNIQUE constraint failed` while creating the `bronze` namespace, and `attempt to write a readonly database` (both 12 November). Each cleared on the next run. A competing run, a container crash, the filesystem and a one-step retry inside the command were all ruled out, and the root cause is unknown. If it recurs, keep the complete task log from the top: the diagnostics above are in it. The investigation notes are kept outside the repo.
 
 ---
 
 ## Task 2: bronze_verify
 
 ```bash
-bash scripts/verify_unless_unchanged.sh   # runs python -m bronze.check unless the landing is unchanged
+bash scripts/verify_unless_unchanged.sh
 ```
 
 Reads every landed object, validates every event against the change-event contract, and proves each one maps correctly to its Bronze row. Writes nothing. Never reads the Bronze tables, so it stays within container memory limits at any dataset size.
@@ -80,7 +96,7 @@ Reads every landed object, validates every event against the change-event contra
 
 Runs with `bronze_writer.json` credentials.
 
-**When it is skipped.** The check takes about an hour at 8.5M events (56 min 36 s on 12 November 2026) and reads every landed object, so it is skipped when the landing has not changed since a run marker that already passed it. The script reads the newest run marker (`python -m bronze.check --newest-marker`: one listing and one read, no landed object) and compares its id with the Airflow Variable `bronze_last_verified_marker`. If they are equal the task exits 99 and Airflow shows it as skipped. Otherwise it runs the check, and when the check passes it records the newest marker's id in the Variable. `bronze_write` runs first, so anything new in the landing has already produced a newer marker by the time this task starts. When that run read every landed object itself, because pass 1 is the same index build as `bronze.check`, it records the new marker as verified (`--verified-marker-file`, then `airflow variables set`), so this task is skipped after a run with new data too. A run that skipped its own index records nothing. If `bronze.check` ever gains a check that pass 1 does not make, remove `--verified-marker-file` from the `bronze_write` command, or this task would skip it. The skip trusts that landed objects are never overwritten, as the `bronze_write` skip does. If the Variable is lost or empty, the check simply runs.
+**When it is skipped.** The check takes about an hour at 8.5M events (56 min 36 s on 12 November 2026) and reads every landed object, so it is skipped when the landing has not changed since a run marker that already passed it. The script reads the newest run marker (`python -m bronze.check --newest-marker`: one listing and one read, no landed object) and compares its id with the Airflow Variable `bronze_last_verified_marker`. If they are equal the task exits 99 and Airflow shows it as skipped (7 to 11 s measured). Otherwise it runs the check, and when the check passes it records the newest marker's id in the Variable. `bronze_write` runs first, so anything new in the landing has already produced a newer marker by the time this task starts. When that run read every landed object itself, because pass 1 is the same index build as `bronze.check`, it records the new marker as verified (`--verified-marker-file`, then `airflow variables set`), so this task is skipped after a run with new data too. A run that skipped its own index records nothing. If `bronze.check` ever gains a check that pass 1 does not make, remove `--verified-marker-file` from the `bronze_write` command, or this task would skip it. The skip trusts that landed objects are never overwritten, as the `bronze_write` skip does. If the Variable is lost or empty, the check simply runs.
 
 `register_bq` has `trigger_rule="none_failed"`, so it runs after a skipped `bronze_verify` but still stops if `bronze_verify` fails.
 
@@ -105,39 +121,55 @@ This step is required after every Bronze write. BigQuery external Iceberg tables
 
 Runs with the bind-mounted `pipeline_runner.json` credentials.
 
-**What can go wrong:** a BigQuery metadata API failure on one table leaves the others registered and that table pointing at the old snapshot. The task exits non-zero and `dbt_marts` does not run.
+**What can go wrong:** a BigQuery metadata API failure on one table leaves the others registered and that table pointing at the old snapshot. The task exits non-zero and the dbt layers do not run.
 
 ---
 
-## Task 4: dbt_marts
+## Task 4: check_bq_schema
 
 ```bash
-cd /opt/repo/dbt && dbt deps && dbt run --full-refresh
+python scripts/check_bq_schema.py --project payments-512910 --location us-east1
 ```
 
-Installs dbt packages (`dbt_utils` from dbt Hub) then rebuilds all models with `--full-refresh`. This forces every incremental model to rebuild from scratch rather than appending to existing rows.
-
-`--full-refresh` is used because the Bronze source is append-only. Without it, an incremental run after a Bronze reset would add new rows on top of rows from the previous dataset.
-
-Runs with `pipeline_runner.json` credentials.
-
-**What can go wrong:** a dbt model compilation error or a BigQuery query failure stops the run. `dbt deps` failure (network issue reaching dbt Hub) would prevent packages from resolving, though they were already installed in the container image.
+Fails if a BigQuery external Bronze table's columns differ from the Bronze schema contract (`bronze.schema.build_schema`), so a stale registration stops the run before dbt. Reads table metadata only. Runs with `pipeline_runner.json` credentials.
 
 ---
 
-## Task 5: dbt_test
+## Tasks 5 to 8: the dbt layers
 
 ```bash
-cd /opt/repo/dbt && dbt test
+cd /opt/repo/dbt && dbt deps && dbt build --select path:models/<layer> --exclude tag:periodic
 ```
 
-Runs all dbt schema tests across every layer: 42 staging tests, 42 intermediate tests, 27 dimension tests and 54 mart tests. A model that builds without error but returns bad data fails here.
+One task per layer, in this order: `dbt_build_staging`, `dbt_build_dimensions`, `dbt_build_intermediate`, `dbt_build_marts`. `dbt deps` runs first in each so packages are present on a fresh container. `dbt build` runs each model and its tests together, so a failing test stops every later layer and bad data does not reach the marts.
 
-**Limitation:** `dbt_test` runs after `dbt_marts`, which means the mart tables are already built and Lightdash can read them before the tests confirm they are correct. A stricter gate would split the run: test staging, build intermediate, test intermediate, build marts, test marts. The current order catches failures before the next DAG run, not before the current one's output reaches dashboards.
+| Task | Models | Tests | Result on 10 November 2026 |
+|---|---|---|---|
+| `dbt_build_staging` | 5 views | 42 | 47 of 47 passed |
+| `dbt_build_dimensions` | 3 tables | 29 | 32 of 32 passed |
+| `dbt_build_intermediate` | 2 incremental models, 4 tables | 43 | 49 of 49 passed |
+| `dbt_build_marts` | 11 incremental models | 54 | 65 of 65 passed |
+
+`--full-refresh` is not passed by default. The four large models (the enriched and GPV intermediates and the settlement and revenue marts) are incremental with a literal 9-day lookback, so a normal run builds only recent days. Trigger the DAG with `full_refresh` set to true for a controlled rebuild, for example after a Bronze reset: an incremental run after a reset would add new rows on top of rows from the previous dataset.
 
 Runs with `pipeline_runner.json` credentials.
 
-**What can go wrong:** any failing assertion exits non-zero and stops the DAG run. Check the Airflow task logs for the specific test name and table.
+**What can go wrong:** a dbt model compilation error, a failing test or a BigQuery query failure stops the run. `dbt deps` failure (network issue reaching dbt Hub) would prevent packages from resolving, though they were already installed in the container image. Check the Airflow task logs for the specific test name and table.
+
+**Test cost.** The 168 tests executed in the DAG billed 3.002 GB, 68.6% of the 4.379 GB the whole DAG billed on 10 November 2026. The full breakdown is in the warehouse cost study, which is kept outside the repo.
+
+---
+
+## Run times
+
+| Run | Total | Notes |
+|---|---|---|
+| Full DAG, nothing new, 10 November 2026 | 1 h 35 min | `bronze_write` about 53 min, `bronze_verify` about 38 min, four dbt layers about 4 min |
+| Full DAG, nothing new, 12 November 2026 | 1 h 7 min 34 s | After the `bronze_write` skip; `bronze_verify` 56 min 36 s of it |
+| Full DAG, nothing new, 12 November 2026 (21:25 UTC) | 11 min 33 s | After both skips |
+| Full DAG with new data, 7 November 2026 (8.54M events) | about 2 h 6 min | `bronze_write` about 124 min |
+
+A run with a small amount of new data is estimated at about 1 hour (catalog rebuild 5 to 7 min, pass 1 about 42 min, pass 2 a few minutes, dbt about 5 min, `bronze_verify` skipped). That estimate has not been measured.
 
 ---
 
@@ -145,7 +177,7 @@ Runs with `pipeline_runner.json` credentials.
 
 Airflow 2.9.3 uses SQLAlchemy 1.4.x. PyIceberg 0.12.0 requires SQLAlchemy 2.x. These two cannot coexist in the same Python environment.
 
-The solution: an isolated virtualenv at `/opt/pipeline-venv`, built during the Docker image build from `airflow/requirements-pipeline.txt`. It contains PyIceberg, PyArrow, and dbt-bigquery, independent of Airflow's base packages. All five tasks call `${VENV}/python` and `${VENV}/dbt` directly, where `VENV=/opt/pipeline-venv/bin`.
+The solution: an isolated virtualenv at `/opt/pipeline-venv`, built during the Docker image build from `airflow/requirements-pipeline.txt`. It contains PyIceberg, PyArrow, and dbt-bigquery, independent of Airflow's base packages. All pipeline tasks call `${VENV}/python` and `${VENV}/dbt` directly, where `VENV=/opt/pipeline-venv/bin`.
 
 ---
 
@@ -156,8 +188,8 @@ Three paths are bind-mounted from the host into every container:
 | `airflow/.env` variable | Mounted at | Used by |
 |---|---|---|
 | `BRONZE_WRITER_CREDS_PATH` | `/opt/credentials/bronze_writer.json` | `bronze_write` and `bronze_verify` tasks |
-| `PIPELINE_CREDS_PATH` | `/opt/credentials/pipeline_runner.json` | `register_bq`, `dbt_marts` and `dbt_test` tasks |
-| `DBT_PROFILES_DIR` | `/home/airflow/.dbt/` | `dbt_marts` and `dbt_test` tasks |
+| `PIPELINE_CREDS_PATH` | `/opt/credentials/pipeline_runner.json` | `register_bq`, `check_bq_schema` and the four `dbt_build_*` tasks |
+| `DBT_PROFILES_DIR` | `/home/airflow/.dbt/` | the four `dbt_build_*` tasks |
 
 `airflow/.env` is gitignored. Copy `airflow/.env.example` and fill in the three absolute host paths before starting the stack.
 
@@ -198,11 +230,11 @@ Each step is idempotent. A re-trigger after the problem is fixed will:
 
 | Task | Behaviour on re-trigger |
 |---|---|
-| `bronze_write` | Skips events already written (content-hash idempotency). Writes any new ones. |
+| `bronze_write` | Skips events already written (content-hash idempotency) and writes any new ones. Reads no landed object when nothing is new. |
 | `bronze_verify` | Re-reads the landing and re-checks, unless the newest run marker already passed, which includes a run where `bronze_write` read every landed object itself (then skipped; use `force_verify` to check again). |
 | `register_bq` | Re-points all five external tables to the current Bronze state. |
-| `dbt_marts` | Rebuilds all 11 mart tables with `--full-refresh`. |
-| `dbt_test` | Re-runs all schema tests. |
+| `check_bq_schema` | Re-checks the five external tables against the contract. |
+| `dbt_build_*` | Rebuilds each layer's models incrementally (or fully, with `full_refresh`) and re-runs its tests. |
 
 **Lightdash** requires no Airflow step. It queries BigQuery directly and picks up new mart data on the next dashboard load.
 

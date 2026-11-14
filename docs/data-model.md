@@ -147,7 +147,7 @@ Five Iceberg tables managed by PyIceberg 0.12.0, backed by Parquet files. The Ic
 
 **Run marker.** After each write, the writer creates a JSON marker under `gs://fintech_bronze/_runs/<timestamp>Z.json`. It records the Iceberg metadata file path for each table, the row counts added, and the slot name.
 
-**Catalog.** The SQLite file at `_catalog/catalog.db` is a cache rebuilt from the run marker. It is not the source of truth. If lost, `--rebuild-catalog` reconstructs it without reading any landed objects.
+**Catalog.** The SQLite file at `_catalog/catalog.db` is a cache rebuilt from the run marker. It is not the source of truth. If lost, `--rebuild-catalog` reconstructs it without reading any landed objects (it does a row-count scan over the Bronze data files).
 
 The five Bronze tables mirror their OLTP sources. Each row gains `op` and `ingested_at` from the envelope, and `event_date` as the partition column.
 

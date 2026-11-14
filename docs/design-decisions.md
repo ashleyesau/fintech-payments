@@ -174,9 +174,9 @@ These required custom solutions: the two-pass writer, `bronze.orphans`, and no s
 
 **Choice:** LocalExecutor (single-node, tasks run as subprocesses of the scheduler).
 
-**Why:** CeleryExecutor requires a message broker (Redis or RabbitMQ) and worker nodes. For a five-task DAG running on a laptop, this is unnecessary. LocalExecutor handles the DAG with no additional services.
+**Why:** CeleryExecutor requires a message broker (Redis or RabbitMQ) and worker nodes. For an eight-task DAG running on a laptop, this is unnecessary. LocalExecutor handles the DAG with no additional services.
 
-**Trade-off:** no task parallelism across workers. The five tasks are strictly sequential, so parallelism is not needed.
+**Trade-off:** no task parallelism across workers. The eight tasks are strictly sequential, so parallelism is not needed.
 
 ---
 
